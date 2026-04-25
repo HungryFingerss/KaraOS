@@ -58,10 +58,6 @@ That's the goal. Not a smarter speaker. A companion.
 
 ---
 
-## The builder
-
-Built solo by Jagan Nivas, a frontend developer. Five weeks. No team, no funding, no ML background. Built by directing Claude Code in plain English, line by line, decision by decision.
-
 ## Get in touch
 
 If you're building in this space — robotics, ambient AI, companion systems — and want to compare notes, reach out.
