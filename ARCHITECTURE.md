@@ -109,5 +109,3 @@ The two layers communicate through a defined interface. The motion model can cha
 ## What's not in this document
 
 This is the public overview. The internal design document covers per-component thresholds, the full prompt architecture, the agent interaction graph, the calibration history, and a few hundred decisions that each trace to a specific incident or test failure. That document is private.
-
-If you're seriously evaluating KaraOS for a deployment, partnership, or role, reach out — that's the deepest answer to *"is this real?"* and it's available under conversation.
