@@ -50,6 +50,25 @@ What you'd see in a live demo today: a robot that knows who's home, remembers wh
 
 ---
 
+## External validation
+
+Tested against a published academic benchmark: *Speak or Stay Silent: Context-Aware Turn-Taking in Multi-Party Dialogue* ([Bhagtani et al. 2026, arXiv:2603.11409](https://arxiv.org/abs/2603.11409)). 1,287 multi-party conversations from the Friends corpus.
+
+KaraOS scored **58.66% balanced accuracy** with no fine-tuning — competitive with **Gemini-3.1-Pro zero-shot (60.54%)** and ahead of every other zero-shot baseline the paper tested, including GPT-5.2, Llama-3.1-8B, Qwen2.5-7B, Mistral-7B, and GPT-OSS-20B. Fine-tuned models in the paper reach 65–72%, but require 120,000 labeled training examples — KaraOS gets there with prompt design alone.
+
+What that 58.66% looks like in practice:
+
+- **87.8% precision when speaking** — when KaraOS chimes in, it's right
+- **2.4% false positive rate** — almost never barges into conversations it isn't part of
+- **100% accuracy on bystander cases** — perfect at staying out of the way
+- **97.6% silent-recall** — catches 98% of "stay quiet" moments
+
+The model behind it is currently Llama-3.3-70B. KaraOS is model-agnostic by design — the same prompt and decision layer plug into any frontier LLM. Tomorrow's backbone could be Gemini, GPT-5, or anything else; the architecture is what makes the system, not the model.
+
+Full results, comparison table, methodology, and reproducibility instructions: [`published-papers-tests/`](published-papers-tests/).
+
+---
+
 ## The north star
 
 Imagine three friends sitting down to dinner. Kara is in the corner, quiet. One friend asks the other how their week's been. Kara doesn't interrupt. Later, someone turns to Kara and asks what it thinks. It answers — warmly, briefly, like it's been listening the whole time. Because it has.

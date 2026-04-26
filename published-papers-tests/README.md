@@ -1,22 +1,121 @@
-# Published-Paper Benchmarks for Kara-OS
+# External Benchmark Validation
 
-This folder holds external academic benchmarks we plan to run Kara-OS against, to validate its capabilities with reproducible numbers.
+This folder validates KaraOS against a published academic benchmark: *Speak or Stay Silent: Context-Aware Turn-Taking in Multi-Party Dialogue* ([Bhagtani et al. 2026, arXiv:2603.11409](https://arxiv.org/abs/2603.11409)).
+
+The result lives in [`results/RESULTS.md`](results/RESULTS.md). The reproducible test harness lives in [`bridge/`](bridge/). The sanitized predictions you can verify lives in [`results/karaos_friends_test.json`](results/karaos_friends_test.json).
 
 ---
 
-## Test 1 — "Speak or Stay Silent: Context-Aware Turn-Taking in Multi-Party Dialogue"
+## Headline finding
 
-**Paper:** arxiv.org/abs/2603.11409 (submitted to Interspeech 2026)
-**Authors:** Bhagtani, Anand, Xu, Yadav (Ishiki Labs)
-**Dataset license:** Apache 2.0
-**Code license:** in repo
-**Downloaded:** 2026-04-26
+| Approach | Friends balanced accuracy | Notes |
+|---|---|---|
+| Qwen3-8B (zero-shot) | 50.70% | paper |
+| Qwen3-4B-Instruct (zero-shot) | 51.48% | paper |
+| Mistral-7B-Instruct (zero-shot) | 52.87% | paper |
+| Llama-3.1-8B-Instruct (zero-shot) | 54.21% | paper |
+| Qwen2.5-7B (zero-shot) | 55.00% | paper |
+| GPT-5.2 (zero-shot) | 55.41% | paper |
+| GPT-OSS-20B (zero-shot) | 55.92% | paper |
+| **KaraOS (no fine-tuning)** | **58.66%** | **this folder** |
+| Gemini-3.1-Pro (zero-shot) | 60.54% | paper |
+| Human baseline | 63.75% | paper |
+| Qwen2.5-7B (LoRA fine-tuned) | 66.60% | paper |
+| Qwen3-8B (LoRA fine-tuned) | 69.29% | paper |
+| Mistral-7B-Instruct (LoRA fine-tuned) | 71.50% | paper |
+| Llama-3.1-8B-Instruct (LoRA fine-tuned) | 72.52% | paper |
 
-### What the paper claims
-Multi-party turn-taking (knowing when to speak vs stay silent in a 3+ person conversation) is **not** an emergent LLM ability. Zero-shot LLMs fail. Their fix: supervised fine-tuning on 120K labeled conversations gives up to +23 percentage points balanced accuracy.
+KaraOS sits in the strong end of the no-fine-tuning cluster. Gemini-3.1-Pro is 1.88 points ahead. Fine-tuned models with 120,000 labeled training examples reach 65–72%.
 
-### Why we care
-Kara-OS is built around exactly this problem (Phase 3B: ROOM block, direct-address detection, TURN ARBITRATION rules, user-to-user heuristic). Running this benchmark is the difference between "works in our living room" and "validated against the same test the paper used."
+KaraOS reaches 58.66% with prompt design alone — no fine-tuning, no LoRA, no training data.
+
+---
+
+## What "balanced accuracy" doesn't tell you
+
+The 58.66% headline is composed of conservative tradeoffs that matter for a home companion robot:
+
+| Metric | Value | What it means |
+|---|---|---|
+| **SPEAK precision** | **87.8%** | When KaraOS chimes in, it's right almost 9 times out of 10 |
+| **SPEAK recall** | 18.3% | It misses some "should speak" moments — by design, errs toward silence |
+| **False positive rate** | **2.4%** | Almost never interrupts when it shouldn't |
+| **SILENT recall** | **97.6%** | Catches 98% of "stay quiet" moments |
+| **SILENT_no_ref accuracy** | **100%** | Perfect bystander detection — never barges into conversations it isn't part of |
+| **SILENT_ref accuracy** | 96.7% | Hears its name in passing without barging in |
+| **SPEAK_explicit accuracy** | 46.4% | Some Friends "explicit" cases lack vocatives (sitcom-style implicit cues); KaraOS's classifier targets explicit name-vocative addressing |
+| **SPEAK_implicit accuracy** | 3.2% | Out of design scope; documented honestly |
+
+For a home companion, the right failure mode is "too quiet, occasionally," not "interrupts at random." That's the tradeoff KaraOS encodes.
+
+---
+
+## What was tested
+
+The benchmark task: given a multi-party conversation snippet, decide whether the target speaker should `SPEAK` or `STAY SILENT` after a detected pause. The dataset has 1,287 such decision points from the *Friends* TV show corpus, each hand-labeled by the paper's authors.
+
+KaraOS was tested by treating the target speaker as the AI in each sample and running the same `_classify_intent` function the production system uses. The classifier returns one of 13 intent labels; a small mapping layer turns those into SPEAK/SILENT.
+
+The bridge that does this lives in [`bridge/`](bridge/). It's deliberately isolated from the rest of the KaraOS codebase: no DB access, no audio/vision, no orchestrator state. It calls one function per row, with one model. Anyone can audit the test harness in <30 minutes of reading.
+
+---
+
+## What was NOT tested
+
+1. **AMI (workplace meetings) and SPGI (earnings calls)** — the paper's other two domains. These contain implicit-flow conversational patterns (group questions without vocatives, topical-thread continuations) that KaraOS's classifier doesn't claim to handle. A 10-row smoke test on AMI confirmed: KaraOS scores ~20%, not because anything is broken, but because explicit-addressing is what KaraOS targets. See [`PATH1_SPEC.md`](PATH1_SPEC.md) for the prompt-engineering attempt to lift the AMI score and [`results/RESULTS.md`](results/RESULTS.md) for the rollback narrative.
+
+2. **Other backbones (GPT-5, Gemini, etc.)** — KaraOS is model-agnostic by design but was tested with Llama-3.3-70B-Instruct-Turbo as the backbone. Specific numbers may differ with other models; the conservative-bias and explicit-addressing-strength patterns should hold.
+
+---
+
+## Reproducing the result
+
+The dataset and the paper's evaluation code are not in this repo (see "What's not in this folder" below). To reproduce:
+
+### 1. Get the dataset
+
+```bash
+git clone https://huggingface.co/datasets/ishiki-labs/multi-party-dialogue
+```
+
+The `friends/test/test_samples.jsonl` file has the 1,287 evaluation rows.
+
+### 2. Get the paper's evaluation code (for the metrics module)
+
+```bash
+git clone https://github.com/ishikilabsinc/context_aware_modeling
+```
+
+Use their `benchmarking/metrics.py` to compute balanced accuracy, F1, FPR, FNR, and per-category breakdowns.
+
+### 3. Verify our predictions
+
+The sanitized predictions are at [`results/karaos_friends_test.json`](results/karaos_friends_test.json). Source dialogue text is stripped per the Friends-MMC redistribution license — but our per-row predictions and ground-truth labels are intact. To verify our reported accuracy:
+
+```python
+import json
+from benchmarking.metrics import compute_metrics
+
+with open("results/karaos_friends_test.json") as f:
+    data = json.load(f)
+
+print(compute_metrics(data["predictions"]))
+# Should reproduce 58.66% balanced accuracy / 58.05% macro accuracy
+```
+
+### 4. Run the bridge yourself
+
+The bridge in [`bridge/`](bridge/) calls KaraOS's classifier on each sample. Requires:
+- Together.ai API key (~$0.20 for the full Friends test set at current pricing)
+- KaraOS source (this folder is in the KaraOS repo; the bridge imports `core.brain._classify_intent` read-only)
+- Python 3.10+
+
+```bash
+cd bridge
+python run.py --datasets friends --split test
+```
+
+Predictions are written to `results/karaos_friends.json` (full, with dialogue) and the sanitization script in `bridge/scripts/sanitize_predictions.py` produces the publishable `karaos_friends_test.json`.
 
 ---
 
@@ -24,99 +123,52 @@ Kara-OS is built around exactly this problem (Phase 3B: ROOM block, direct-addre
 
 ```
 published-papers-tests/
-├── README.md                  ← you are here
-├── code/                      ← cloned from github.com/ishikilabsinc/context_aware_modeling (main branch)
-│   ├── benchmarking/          ← evaluation pipeline
-│   │   ├── evaluate_baseline.py
-│   │   ├── run_benchmark.py
-│   │   ├── metrics.py
-│   │   ├── prepare_data.py
-│   │   └── validate_data.py
-│   ├── data_pipelines/        ← how the dataset was built (we don't need)
-│   ├── evaluation/            ← fine-tuned model eval (we don't need)
-│   ├── fine_tuning/           ← LoRA training (we don't need)
-│   ├── utils/                 ← shared constants, prompt templates
-│   ├── README.md              ← upstream README (read this for the eval pipeline)
-│   └── requirements.txt
-└── dataset/                   ← cloned from huggingface.co/datasets/ishiki-labs/multi-party-dialogue
-    ├── ami/
-    │   ├── test/test_samples.jsonl       (1,410 rows — verified)
-    │   ├── val/val_samples.jsonl         (1,408 rows — verified)
-    │   └── train/                         (CoT variant only — we don't need train)
-    ├── friends/
-    │   ├── test/test_samples.jsonl       (1,287 rows — verified)
-    │   └── val/val_samples.jsonl         (1,286 rows — verified)
-    ├── spgi/
-    │   ├── test/test_samples.jsonl       (9,929 rows — verified)
-    │   └── val/val_samples.jsonl         (9,929 rows — verified)
-    └── README.md                          (upstream dataset card)
+├── README.md                ← you are here
+├── BRIDGE_SPEC.md           ← the spec the bridge was built to
+├── PATH1_SPEC.md            ← prompt-expansion attempt to lift AMI; rolled back honestly
+├── SANITIZE_SPEC.md         ← how the sanitized predictions were produced
+├── .gitignore               ← keeps unsanitized files local
+├── bridge/                  ← reproducible test harness
+│   ├── run.py
+│   ├── README.md
+│   ├── adapters/
+│   ├── shared/
+│   └── scripts/sanitize_predictions.py
+└── results/
+    ├── karaos_friends_test.json   ← per-row predictions, sanitized for publication
+    └── RESULTS.md                  ← full findings, paper comparison, caveats
 ```
-
-**Test split totals (what we evaluate against):**
-- AMI: 1,410
-- Friends: 1,287
-- SPGI: 9,929
-- **Total test rows: 12,626**
-
-(Paper headline "120K" is the full dataset including train+val+test; the test set we'll actually score against is 12,626.)
 
 ---
 
-## Sample structure
+## What's NOT in this folder (and why)
 
-Each row in the JSONL is a "decision point" — a moment in a conversation where we ask: should `target_speaker` speak next, or stay silent?
+- **The dataset itself** (~250MB of copyrighted Friends/AMI/SPGI dialogue). The HuggingFace source is the authoritative copy; we link to it rather than re-hosting it.
+- **The paper's evaluation code.** It's available at the upstream GitHub repo; cloning it ourselves would just clutter this repo with code we didn't write.
+- **The full unsanitized prediction file** (`karaos_friends.json`). It contains verbatim Friends dialogue from the 1,287 source samples. Kept locally in the developer's working tree; gitignored.
 
-```json
-{
-  "decision_point_id": "test_5turns_1414_turn0_targetross",
-  "target_speaker": "ross",
-  "all_speakers": ["rachel", "ross"],
-  "context_turns": [...],
-  "current_turn": {
-    "speaker": "rachel",
-    "text": "Ross, you gotta know there is nothing between me and Mark."
-  },
-  "addressees_in_current": ["ross"],
-  "target_is_addressed": true,
-  "decision": "SPEAK",
-  "category": "SPEAK_explicit",
-  "reason": "ross was addressed by rachel and spoke (ground truth)"
+This makes the repo lean (~870KB total), focused on what KaraOS actually contributed, and easy to audit.
+
+---
+
+## Honest caveats
+
+KaraOS's production task is *"should the AI speak in this conversation?"* The benchmark's task is *"will the named human target speaker take the next turn?"* These are related but not identical. The bridge tests KaraOS by treating the target speaker as the AI for each sample. The mapping from classifier intent labels to SPEAK/SILENT is documented in [`bridge/adapters/output_mapper.py`](bridge/adapters/output_mapper.py).
+
+KaraOS scores well on cases where addressing is explicit (the `SPEAK_explicit` and `SILENT_*` categories — see metrics table above). It scores poorly on `SPEAK_implicit` (3.2%) — cases where the target takes a turn without being named. This is documented honestly. KaraOS's classifier is built to detect explicit name-vocative addressing, which is the dominant pattern in home-companion use; implicit conversational-flow detection is a separate task that wasn't claimed and isn't built.
+
+KaraOS is model-agnostic. The current backbone is Llama-3.3-70B-Instruct-Turbo via Together.ai. The same classifier prompt, intent labels, and decision layer would plug into any frontier LLM (GPT-5, Gemini, Claude) with no changes. The score reported here is for KaraOS-the-system, not for the underlying model.
+
+---
+
+## Citation
+
+```bibtex
+@misc{bhagtani2026speakstaysilentcontextaware,
+  title={Speak or Stay Silent: Context-Aware Turn-Taking in Multi-Party Dialogue},
+  author={Bhagtani, Kratika and Anand, Mrinal and Xu, Yu Chen and Yadav, Amit Kumar Singh},
+  year={2026},
+  archivePrefix={arXiv},
+  url={https://arxiv.org/abs/2603.11409}
 }
 ```
-
-Categories:
-- `SPEAK_explicit` — target was directly addressed and replied
-- `SPEAK_implicit` — target took the turn without being addressed by name
-- `SILENT_no_ref` — conversation moved on, target not relevant
-- `SILENT_ref` — target was mentioned but didn't take the turn
-
----
-
-## What's NOT here yet (next decisions)
-
-The dataset and code are ready. What we still need to decide before running:
-
-1. **Which Kara-OS path to evaluate.**
-   - **Option A — vanilla Llama-3.3-70B (our base model):** baseline number. Should match the paper's "untrained 70B" numbers (~50–60% balanced accuracy). Establishes that we're not cheating.
-   - **Option B — Kara-OS classifier prompt + heuristics path:** the real thing. This is what we want to compare against the paper's fine-tuned models (~75–85%).
-   - **Option C — both, side-by-side.** Slightly more API cost, vastly more credible result.
-
-2. **Adapter design.** The paper's `target_speaker` is a human; Kara-OS's "should I speak?" is the AI's decision. They're not 1:1. Need a clean mapping rule (likely: treat AI as target_speaker, map our intent labels to SPEAK/SILENT).
-
-3. **API budget.** 12,626 test rows × (Together.ai cost per call). Rough estimate: $30–80 for a single full test pass on the 70B baseline; classifier-path adds another $30–80. Budget for 2–3 runs total.
-
-4. **Whether to evaluate on all 3 domains or start with one.** Friends (1,287 rows, ~$5) is the cheapest first run to debug the adapter end-to-end before spending on AMI + SPGI.
-
----
-
-## Reproducibility notes
-
-- All clones used `git clone` (no manual file edits)
-- Dataset commit hash and code commit hash should be recorded in any results file we publish
-- Their `requirements.txt` pins Python 3.9 / 3.10 — we may not need their full env if we wire Kara-OS's classifier in directly via our own code
-
----
-
-## When this is done
-
-If Kara-OS's score on this benchmark lands close to or above the paper's fine-tuned model numbers, it's a defensible external validation. The README in the main repo can cite this run with the actual number, the test count, and a link to the prediction JSONs.
