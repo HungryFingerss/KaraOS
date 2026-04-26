@@ -1,0 +1,12 @@
+# Full prediction file with verbatim Friends dialogue — license-restricted.
+# Kept locally as the full record but never committed to a public repo.
+# Use bridge/scripts/sanitize_predictions.py to generate the
+# license-safe karaos_friends_test.json that goes on GitHub instead.
+results/karaos_friends.json
+results/karaos_friends.partial.json
+results/karaos_ami.json
+results/karaos_ami.partial.json
+
+# Python bytecode
+**/__pycache__/
+*.pyc
