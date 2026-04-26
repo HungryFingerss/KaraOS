@@ -67,6 +67,8 @@ The model behind it is currently Llama-3.3-70B. KaraOS is model-agnostic by desi
 
 Full results, comparison table, methodology, and reproducibility instructions: [`published-papers-tests/`](published-papers-tests/).
 
+For a high-level walkthrough of how the system actually works — identity, memory, privacy, conversation, intent classification, safety — see [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
 ---
 
 ## The north star
