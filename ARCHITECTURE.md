@@ -72,7 +72,26 @@ This is the runtime behavior that makes KaraOS deployable in eldercare, family s
 
 The conversation layer is powered by a frontier LLM today, swapped through a thin interface. The classifier prompt, the intent label space, the decision-mapping layer, the privacy enforcement, the room orchestration — none of it depends on which model is doing the inference. Today's backbone is one of the leading open frontier models accessed through a hosted inference API. Tomorrow it could be a different model. The architecture is what's permanent.
 
-A second tier of asynchronous agents runs alongside the main conversation loop — fact extraction, contradiction-checking, mood tracking, prompt-preference learning, dream-cycle consolidation, household state management, and others. They run in the background so the main conversation never blocks on bookkeeping.
+A second tier of 18 asynchronous agents runs alongside the main conversation loop, coordinated by a central orchestrator. They run in the background so the main conversation never blocks on bookkeeping.
+
+- BriefingAgent
+- ConversationInsightAgent
+- ContradictionAgent
+- EmbeddingAgent
+- EmotionAgent
+- ExtractionAgent
+- FrictionDetectionAgent
+- HouseholdExtractionAgent
+- IdentityAgent
+- ObjectPatternAgent
+- ProactiveNudgeAgent
+- PromptPrefAgent
+- RoutineAgent
+- SchemaNormAgent
+- SocialGraphAgent
+- SpatialMemoryAgent
+- TriageAgent
+- WatchdogAgent
 
 ---
 
