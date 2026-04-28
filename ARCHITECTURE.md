@@ -68,11 +68,33 @@ Disclosures of harm, mentions of crisis, references to abuse — these aren't no
 
 This is the runtime behavior that makes KaraOS deployable in eldercare, family settings, and other contexts where trust matters more than tidiness. It's not a feature added on top — it's a structural choice in how the memory layer works.
 
-### Brain — model-agnostic by design
+### Brain — and a separate sub-brain for classification
 
-The conversation layer is powered by a frontier LLM today, swapped through a thin interface. The classifier prompt, the intent label space, the decision-mapping layer, the privacy enforcement, the room orchestration — none of it depends on which model is doing the inference. Today's backbone is one of the leading open frontier models accessed through a hosted inference API. Tomorrow it could be a different model. The architecture is what's permanent.
+The conversation layer is powered by a frontier LLM (one of the leading open or closed frontier models, accessed through a hosted inference API). The brain handles language: generating responses, holding multi-turn context, reasoning about what was said.
 
-A second tier of 18 asynchronous agents runs alongside the main conversation loop, coordinated by a central orchestrator. They run in the background so the main conversation never blocks on bookkeeping.
+The **classifier** — the part that decides who's being addressed, what kind of intent the utterance carries, whether to speak or stay silent — is not the brain LLM. It used to be. It isn't anymore.
+
+Originally KaraOS routed every turn through the brain LLM with a tuned classifier prompt. Over 30+ live iterations on a 70B model, that prompt accumulated rules, counter-examples, and edge-case patches — and it worked, on the 70B. The first published benchmark scored 58.66% balanced accuracy on the Friends turn-taking task, beating 7 of 8 zero-shot baselines.
+
+Then we ran the same classifier on a 7B model. It scored 52.32% — worse than the vanilla baseline (55.00%). The architecture wasn't model-agnostic; the prompt was over-fit to 70B-grade reasoning. So we rebuilt.
+
+The current classifier is a **deterministic graph**. Zero LLM calls in the classification hot path. ~2,000 abstracted dialogue scenarios sit in a separate database (factory-reset-immune — system intelligence persists even when personal memory is wiped). On every turn:
+
+1. Strip names, system_name, and places from the utterance text — placeholder substitutions that keep the graph privacy-clean and deployment-portable
+2. Embed the abstracted text via a local embedding model
+3. Query the graph for the K nearest scenarios via cosine similarity
+4. Aggregate their labels with an outcome-weighted vote (Wilson lower bound on confirmation rate)
+5. Return the winning label, confidence, and reasoning trace
+
+Every step is deterministic. Same input always produces the same output (given fixed graph state). No model selection in the classification path means **swap the brain LLM tomorrow and the classifier behaves identically** — the architectural claim made empirically real.
+
+The classifier learns from production. When a downstream gate confirms a decision (a tool fires successfully, no user correction within 3 turns), the scenarios that voted for that label get reinforced. When a user corrects KaraOS — *"no, I was talking to Friend 2"* — the classifier itself recognizes the correction (via a `correction_to_previous_response` intent label, also bootstrapped into the graph), penalizes the wrong scenarios, and inserts a new positive scenario from the corrected turn. No LLM in this update path either.
+
+Re-validating the rebuilt classifier on the same Friends benchmark: **64.56% balanced accuracy** — beating both prior LLM-classifier baselines and competitive with the lowest fine-tuned models in the paper (which used 120,000+ labeled training examples). Done with retrieval-based learning, not gradient descent on weights.
+
+Honest framing: KaraOS does NOT modify any model's parameters. But the graph is built from labeled training data (2,000 scenarios from external corpora, Friends held out). This is non-parametric learning — distinct from fine-tuning, but it IS labeled data and worth being transparent about. Different mechanism than the paper's LoRA approach; different scale (2K vs 120K rows); both are legitimate techniques in their respective categories.
+
+A second tier of 18 asynchronous agents runs alongside the brain (not the classifier), coordinated by a central orchestrator. They run in the background so the main conversation never blocks on bookkeeping.
 
 - BriefingAgent
 - ConversationInsightAgent
@@ -95,21 +117,32 @@ A second tier of 18 asynchronous agents runs alongside the main conversation loo
 
 ---
 
-## External validation
+## External validation — three benchmark runs, one architectural rewrite
 
 KaraOS was evaluated against the published *Speak or Stay Silent* benchmark (Bhagtani et al. 2026, [arXiv:2603.11409](https://arxiv.org/abs/2603.11409)) on 1,287 samples from the Friends multi-party turn-taking corpus.
 
-**58.66% balanced accuracy, no fine-tuning** — second of nine zero-shot systems on the benchmark, behind only Gemini-3.1-Pro (60.54%), ahead of GPT-5.2 (55.41%), GPT-OSS-20B (55.92%), and every other zero-shot baseline the paper reports. Fine-tuned models in the paper reach 65–72% but require 120,000 labeled training examples.
+The benchmark was run three times. The order matters.
 
-The metrics that matter for a home companion: **87.8% precision when speaking, 2.4% false-positive rate, 100% accuracy on bystander cases**. KaraOS trades recall for precision deliberately — a robot living in your home should err toward silence, not interruption.
+**Run 1 — original LLM classifier with Llama-3.3-70B (current production at the time):** **58.66% balanced accuracy.** Beat 7 of 8 zero-shot baselines the paper reports. We initially claimed "model-agnostic by design" based on this result.
 
-Full methodology, comparison table, and reproducibility instructions: [`published-papers-tests/results/RESULTS.md`](published-papers-tests/results/RESULTS.md).
+**Run 2 — falsifying experiment with Qwen2.5-7B:** the same classifier, dropped onto a smaller model the paper benchmarked at 55.00%. Result: **52.32%** — 2.68 percentage points worse than the vanilla baseline. The model-agnostic claim was empirically wrong. The 70B was carrying the win; the classifier prompt was over-fit to 70B-grade reasoning.
+
+**Run 3 — graph classifier (post-architectural rewrite):** zero LLM calls in the classification path. **64.56% balanced accuracy** — beats both prior LLM-classifier baselines, sits just below the paper's lowest fine-tuned model (Qwen2.5-7B fine-tuned: 66.60%, Qwen3-4B-Instruct fine-tuned: 65.12%) which used 120,000+ labeled training examples and gradient descent on model weights.
+
+The metrics that matter for a home companion (Run 3):
+- **88.9% precision when speaking** — when KaraOS chimes in, it's right ~4 times out of 5
+- **96.4% silent recall** — almost never barges into conversations it isn't part of
+- **15.2% overall SPEAK recall** — KaraOS misses many "should speak" moments. By design.
+
+The 15.2% overall recall breaks down to **31.4% on directly-addressed cases** (in-scope) vs **1.9% on implicit-flow cases** (out of scope — KaraOS targets explicit name-vocative addressing, not turn-taking inference from conversational drift). The gap is structural, not a defect: a robot living in your home should err toward silence, not interruption.
+
+Full benchmark journey, all three runs in detail, methodology, comparison table, honest caveats, and reproducibility instructions: [`published-papers-tests/results/RESULTS.md`](published-papers-tests/results/RESULTS.md).
 
 ---
 
 ## Engineering discipline
 
-- **1,273 automated tests** spanning identity, memory, privacy enforcement, room orchestration, conversation, intent classification, and safety preservation
+- **1,314 automated tests** spanning identity, memory, privacy enforcement, room orchestration, conversation, intent classification, the graph classifier, and safety preservation
 - **Closed-world privacy regression tests** assert internal state is never reachable through user-facing query paths
 - **Golden corpus** for the intent classifier with append-only regression rows; classifier prompt changes trigger explicit hash-based drift detection
 - **Shadow-mode classifiers** logging divergences between primary and fallback paths, so production drift is visible the moment it appears

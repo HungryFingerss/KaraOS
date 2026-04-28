@@ -2,75 +2,81 @@
 
 This folder validates KaraOS against a published academic benchmark: *Speak or Stay Silent: Context-Aware Turn-Taking in Multi-Party Dialogue* ([Bhagtani et al. 2026, arXiv:2603.11409](https://arxiv.org/abs/2603.11409)).
 
-The result lives in [`results/RESULTS.md`](results/RESULTS.md). The reproducible test harness lives in [`bridge/`](bridge/). The sanitized predictions you can verify lives in [`results/karaos_friends_test.json`](results/karaos_friends_test.json).
+The full benchmark journey lives in [`results/RESULTS.md`](results/RESULTS.md). This README is the short overview.
 
 ---
 
-## Headline finding
+## The journey in one paragraph
+
+We ran the benchmark three times. Run 1 (LLM classifier on Llama-3.3-70B): 58.66% — looked great, claimed "model-agnostic." Run 2 (same classifier on Qwen-7B, falsifying experiment we ran on ourselves): 52.32% — *worse* than vanilla Qwen-7B. The 70B was carrying the win; the model-agnostic claim was rhetoric. So we rebuilt the classifier as a deterministic graph operation with zero LLM calls in the classification path. Run 3: 64.56% — beats both prior runs, sits just below the lowest fine-tuned model in the paper, and the score genuinely doesn't depend on which LLM is the conversation brain anymore.
+
+---
+
+## Headline comparison
 
 | Approach | Friends balanced accuracy | Notes |
 |---|---|---|
 | Qwen3-8B (zero-shot) | 50.70% | paper |
 | Qwen3-4B-Instruct (zero-shot) | 51.48% | paper |
+| **KaraOS Run 2** (LLM classifier on Qwen-7B) | **52.32%** | this folder — falsifying experiment |
 | Mistral-7B-Instruct (zero-shot) | 52.87% | paper |
 | Llama-3.1-8B-Instruct (zero-shot) | 54.21% | paper |
-| Qwen2.5-7B (zero-shot) | 55.00% | paper |
+| Qwen2.5-7B (zero-shot, paper baseline) | 55.00% | paper |
 | GPT-5.2 (zero-shot) | 55.41% | paper |
 | GPT-OSS-20B (zero-shot) | 55.92% | paper |
-| **KaraOS (no fine-tuning)** | **58.66%** | **this folder** |
+| **KaraOS Run 1** (LLM classifier on Llama-70B) | **58.66%** | this folder — original published result |
 | Gemini-3.1-Pro (zero-shot) | 60.54% | paper |
 | Human baseline | 63.75% | paper |
+| **KaraOS Run 3** (graph classifier — current architecture) | **64.56%** | this folder — post-rewrite |
+| Qwen3-4B-Instruct (LoRA fine-tuned) | 65.12% | paper |
 | Qwen2.5-7B (LoRA fine-tuned) | 66.60% | paper |
 | Qwen3-8B (LoRA fine-tuned) | 69.29% | paper |
 | Mistral-7B-Instruct (LoRA fine-tuned) | 71.50% | paper |
 | Llama-3.1-8B-Instruct (LoRA fine-tuned) | 72.52% | paper |
 
-KaraOS sits in the strong end of the no-fine-tuning cluster. Gemini-3.1-Pro is 1.88 points ahead. Fine-tuned models with 120,000 labeled training examples reach 65–72%.
-
-KaraOS reaches 58.66% with prompt design alone — no fine-tuning, no LoRA, no training data.
+Run 3 places KaraOS above the human baseline and competitive with the lowest fine-tuned LoRA models — without modifying any model weights, without running gradient descent, without producing checkpoints.
 
 ---
 
-## What "balanced accuracy" doesn't tell you
+## What "no fine-tuning" honestly means
 
-The 58.66% headline is composed of conservative tradeoffs that matter for a home companion robot:
+KaraOS does not modify model weights. It does not train LoRA adapters. It does not run gradient descent. The brain LLM ships as-is.
 
-| Metric | Value | What it means |
+KaraOS does use ~2,000 labeled scenarios as a retrieval corpus. **The complete bootstrap seed is published** at [`classifier-seed/seed.jsonl`](classifier-seed/seed.jsonl) (~780 KB, all 2,081 scenarios, no PII, with source attribution). See the [`classifier-seed README`](classifier-seed/README.md) for the full breakdown of what's in it. This is **non-parametric learning** — distinct from fine-tuning, but it IS labeled training data, and we want to be transparent about that.
+
+The Friends test set was strictly held out from training. Test integrity is intact.
+
+For the precise distinction between Run 3's retrieval-based learning and the paper's LoRA fine-tuning, see the "Honest framing" section of [`results/RESULTS.md`](results/RESULTS.md).
+
+---
+
+## What 64.56% looks like in practice (Run 3)
+
+| Metric | Value | Interpretation |
 |---|---|---|
-| **SPEAK precision** | **87.8%** | When KaraOS chimes in, it's right almost 9 times out of 10 |
-| **SPEAK recall** | 18.3% | It misses some "should speak" moments — by design, errs toward silence |
-| **False positive rate** | **2.4%** | Almost never interrupts when it shouldn't |
-| **SILENT recall** | **97.6%** | Catches 98% of "stay quiet" moments |
-| **SILENT_no_ref accuracy** | **100%** | Perfect bystander detection — never barges into conversations it isn't part of |
-| **SILENT_ref accuracy** | 96.7% | Hears its name in passing without barging in |
-| **SPEAK_explicit accuracy** | 46.4% | Some Friends "explicit" cases lack vocatives (sitcom-style implicit cues); KaraOS's classifier targets explicit name-vocative addressing |
-| **SPEAK_implicit accuracy** | 3.2% | Out of design scope; documented honestly |
+| **SPEAK precision** | **80.2%** | When KaraOS chimes in, it's right ~4 times out of 5 |
+| **SILENT recall** | **96.4%** | Almost never barges into conversations it isn't part of |
+| **SPEAK recall (overall)** | **15.2%** | KaraOS misses many "should speak" moments — by design (errs toward silence) |
+| `SPEAK_explicit` accuracy | 31.4% | In-scope target met (directly-addressed cases) |
+| `SPEAK_implicit` accuracy | 1.9% | Out of scope by design (KaraOS targets explicit name-vocative addressing) |
 
-For a home companion, the right failure mode is "too quiet, occasionally," not "interrupts at random." That's the tradeoff KaraOS encodes.
+The 15.2% overall recall isn't a uniform miss — it splits cleanly into 31.4% on the cases KaraOS targets (`SPEAK_explicit`) and 1.9% on the cases it doesn't (`SPEAK_implicit`, where the target speaker takes a turn without being addressed by name). The gap is structural, not a defect.
 
----
-
-## What was tested
-
-The benchmark task: given a multi-party conversation snippet, decide whether the target speaker should `SPEAK` or `STAY SILENT` after a detected pause. The dataset has 1,287 such decision points from the *Friends* TV show corpus, each hand-labeled by the paper's authors.
-
-KaraOS was tested by treating the target speaker as the AI in each sample and running the same `_classify_intent` function the production system uses. The classifier returns one of 13 intent labels; a small mapping layer turns those into SPEAK/SILENT.
-
-The bridge that does this lives in [`bridge/`](bridge/). It's deliberately isolated from the rest of the KaraOS codebase: no DB access, no audio/vision, no orchestrator state. It calls one function per row, with one model. Anyone can audit the test harness in <30 minutes of reading.
+For a home companion, the right failure mode is "too quiet, occasionally," not "interrupts at random." KaraOS encodes that tradeoff structurally.
 
 ---
 
 ## What was NOT tested
 
-1. **AMI (workplace meetings) and SPGI (earnings calls)** — the paper's other two domains. These contain implicit-flow conversational patterns (group questions without vocatives, topical-thread continuations) that KaraOS's classifier doesn't claim to handle. A 10-row smoke test on AMI confirmed: KaraOS scores ~20%, not because anything is broken, but because explicit-addressing is what KaraOS targets. See [`PATH1_SPEC.md`](PATH1_SPEC.md) for the prompt-engineering attempt to lift the AMI score and [`results/RESULTS.md`](results/RESULTS.md) for the rollback narrative.
+1. **AMI (workplace meetings) and SPGI (earnings calls)** — the paper's other two domains. These contain implicit-flow conversational patterns that KaraOS's architecture doesn't target. A 10-row smoke test on AMI confirmed: KaraOS scores ~20%, not because anything is broken, but because explicit-addressing is what KaraOS is for.
 
-2. **Other backbones (GPT-5, Gemini, etc.)** — KaraOS is model-agnostic by design but was tested with Llama-3.3-70B-Instruct-Turbo as the backbone. Specific numbers may differ with other models; the conservative-bias and explicit-addressing-strength patterns should hold.
+2. **Run 3 with multiple brain LLMs side-by-side.** Run 3 is structurally model-agnostic (the classifier makes zero LLM calls), but we have not yet empirically tested it with multiple different brain models in parallel to confirm the classifier's score stays constant. Architectural commitment enforced by tests that mock the LLM client to fail; cross-backbone empirical validation is a follow-up experiment.
 
 ---
 
 ## Reproducing the result
 
-The dataset and the paper's evaluation code are not in this repo (see "What's not in this folder" below). To reproduce:
+The dataset and the paper's evaluation code are NOT in this repo. To reproduce:
 
 ### 1. Get the dataset
 
@@ -90,7 +96,7 @@ Use their `benchmarking/metrics.py` to compute balanced accuracy, F1, FPR, FNR, 
 
 ### 3. Verify our predictions
 
-The sanitized predictions are at [`results/karaos_friends_test.json`](results/karaos_friends_test.json). Source dialogue text is stripped per the Friends-MMC redistribution license — but our per-row predictions and ground-truth labels are intact. To verify our reported accuracy:
+The sanitized predictions for Run 1 are at [`results/karaos_friends_test.json`](results/karaos_friends_test.json). Source dialogue text is stripped per the Friends-MMC redistribution license — but per-row predictions and ground-truth labels are intact. Verify with:
 
 ```python
 import json
@@ -100,22 +106,27 @@ with open("results/karaos_friends_test.json") as f:
     data = json.load(f)
 
 print(compute_metrics(data["predictions"]))
-# Should reproduce 58.66% balanced accuracy / 58.05% macro accuracy
+# Should reproduce 58.66% balanced accuracy (Run 1)
 ```
+
+(Sanitized Run 3 predictions will be added in a future commit.)
 
 ### 4. Run the bridge yourself
 
-The bridge in [`bridge/`](bridge/) calls KaraOS's classifier on each sample. Requires:
-- Together.ai API key (~$0.20 for the full Friends test set at current pricing)
-- KaraOS source (this folder is in the KaraOS repo; the bridge imports `core.brain._classify_intent` read-only)
-- Python 3.10+
+The bridge in [`bridge/`](bridge/) calls KaraOS's classifier on each sample. Three runs the bridge supports:
 
 ```bash
 cd bridge
-python run.py --datasets friends --split test
-```
 
-Predictions are written to `results/karaos_friends.json` (full, with dialogue) and the sanitization script in `bridge/scripts/sanitize_predictions.py` produces the publishable `karaos_friends_test.json`.
+# Run 1 — LLM classifier path on Llama-70B (original)
+python run.py --datasets friends --split test
+
+# Run 2 — LLM classifier path on Qwen-7B (falsifying experiment)
+python run.py --datasets friends --split test --model "Qwen/Qwen2.5-7B-Instruct-Turbo"
+
+# Run 3 — graph classifier (no LLM in classification path)
+python run.py --datasets friends --split test --use-graph-classifier
+```
 
 ---
 
@@ -123,9 +134,9 @@ Predictions are written to `results/karaos_friends.json` (full, with dialogue) a
 
 ```
 published-papers-tests/
-├── README.md                ← you are here
+├── README.md                ← you are here (overview)
 ├── BRIDGE_SPEC.md           ← the spec the bridge was built to
-├── PATH1_SPEC.md            ← prompt-expansion attempt to lift AMI; rolled back honestly
+├── PATH1_SPEC.md            ← prompt-expansion attempt that was rolled back
 ├── SANITIZE_SPEC.md         ← how the sanitized predictions were produced
 ├── .gitignore               ← keeps unsanitized files local
 ├── bridge/                  ← reproducible test harness
@@ -134,30 +145,25 @@ published-papers-tests/
 │   ├── adapters/
 │   ├── shared/
 │   └── scripts/sanitize_predictions.py
+├── classifier-seed/         ← the labeled training data (NEW)
+│   ├── seed.jsonl                  ← all 2,081 abstracted scenarios + labels + source refs (~780 KB)
+│   └── README.md                   ← what's in the seed, composition, how to use it
 └── results/
-    ├── karaos_friends_test.json   ← per-row predictions, sanitized for publication
-    └── RESULTS.md                  ← full findings, paper comparison, caveats
+    ├── karaos_friends_test.json   ← Run 1 sanitized predictions
+    └── RESULTS.md                  ← full benchmark journey, all three runs, methodology, caveats
 ```
-
----
-
-## What's NOT in this folder (and why)
-
-- **The dataset itself** (~250MB of copyrighted Friends/AMI/SPGI dialogue). The HuggingFace source is the authoritative copy; we link to it rather than re-hosting it.
-- **The paper's evaluation code.** It's available at the upstream GitHub repo; cloning it ourselves would just clutter this repo with code we didn't write.
-- **The full unsanitized prediction file** (`karaos_friends.json`). It contains verbatim Friends dialogue from the 1,287 source samples. Kept locally in the developer's working tree; gitignored.
-
-This makes the repo lean (~870KB total), focused on what KaraOS actually contributed, and easy to audit.
 
 ---
 
 ## Honest caveats
 
-KaraOS's production task is *"should the AI speak in this conversation?"* The benchmark's task is *"will the named human target speaker take the next turn?"* These are related but not identical. The bridge tests KaraOS by treating the target speaker as the AI for each sample. The mapping from classifier intent labels to SPEAK/SILENT is documented in [`bridge/adapters/output_mapper.py`](bridge/adapters/output_mapper.py).
+KaraOS's production task is *"should the AI speak in this conversation?"* The benchmark's task is *"will the named human target speaker take the next turn?"* These are related but not identical. The bridge tests KaraOS by treating the target speaker as the AI for each sample.
 
-KaraOS scores well on cases where addressing is explicit (the `SPEAK_explicit` and `SILENT_*` categories — see metrics table above). It scores poorly on `SPEAK_implicit` (3.2%) — cases where the target takes a turn without being named. This is documented honestly. KaraOS's classifier is built to detect explicit name-vocative addressing, which is the dominant pattern in home-companion use; implicit conversational-flow detection is a separate task that wasn't claimed and isn't built.
+KaraOS scores well on `SPEAK_explicit` and `SILENT_*` categories. It scores poorly on `SPEAK_implicit` — by design, not by failure. The architecture targets explicit name-vocative addressing.
 
-KaraOS is model-agnostic. The current backbone is Llama-3.3-70B-Instruct-Turbo via Together.ai. The same classifier prompt, intent labels, and decision layer would plug into any frontier LLM (GPT-5, Gemini, Claude) with no changes. The score reported here is for KaraOS-the-system, not for the underlying model.
+Run 3's architecture is model-agnostic at the classification layer — the graph classifier makes zero LLM calls, regardless of which LLM is the brain. Run 1 and Run 2 used LLM classifiers and were therefore model-dependent (Run 2 confirmed this by collapsing on Qwen-7B). The Run 3 architecture exists today; Runs 1 and 2 are documented here for the complete history.
+
+KaraOS uses ~2,000 labeled scenarios in its classifier graph (retrieval corpus). This is non-parametric learning, distinct from fine-tuning model weights. Both KaraOS and the paper's fine-tuned approaches use labeled training data; the techniques and scales are different.
 
 ---
 
