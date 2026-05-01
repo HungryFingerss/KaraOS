@@ -1,0 +1,35 @@
+{
+  "run_label": "N1500_seed33",
+  "n": 1500,
+  "seed": 33,
+  "source_db": "..\\dog-ai\\data\\classifier_scenarios.db",
+  "ablation_db": "C:\\Users\\jagan\\dog-ai\\published-papers-tests\\ablation_dbs\\classifier_N1500_seed33.db",
+  "result_json": "C:\\Users\\jagan\\dog-ai\\published-papers-tests\\results\\karaos_friends_graph_N1500_seed33.json",
+  "elapsed_secs": 62.86,
+  "generated_at": "2026-04-30T22:11:37.471027+00:00",
+  "balanced_accuracy": 0.6676780951644699,
+  "f1_speak": 0.23913043478260873,
+  "f1_silent": 0.6974063400576369,
+  "macro_f1": 0.46826838742012283,
+  "precision_speak": 0.8048780487804879,
+  "recall_speak": 0.14042553191489363,
+  "precision_silent": 0.545045045045045,
+  "recall_silent": 0.968,
+  "confusion_matrix": {
+    "SPEAK_->_None": 161,
+    "SILENT_->_SILENT": 484,
+    "SILENT_->_None": 156,
+    "SPEAK_->_SILENT": 404,
+    "SPEAK_->_SPEAK": 66,
+    "SILENT_->_SPEAK": 16
+  },
+  "latency_stats": {
+    "mean": 0.04643844594859114,
+    "median": 0.0347752571105957,
+    "p50": 0.0347752571105957,
+    "p95": 0.04930317401885986,
+    "p99": 0.06645367622375493,
+    "min": 0.030013322830200195,
+    "max": 12.891725778579712
+  }
+}

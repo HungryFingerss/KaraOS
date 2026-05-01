@@ -1,0 +1,503 @@
+{
+  "dataset": "ami",
+  "model_key": "karaos",
+  "model_id": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+  "system_prompt_repeat": 1,
+  "predictions": [
+    {
+      "sample_id": "IS1003d_seq1485_turn1_targetD",
+      "ground_truth": "SPEAK",
+      "prediction": "SILENT",
+      "category": "SPEAK_implicit",
+      "output_text": "{\"turn_intent\":\"unclear\",\"extracted_value\":null,\"confidence\":0.4,\"reasoning\":\"The utterance is fragmented and lacks clear context or intent.\"}",
+      "latency": 1.36137056350708,
+      "target_speaker": "D",
+      "all_speakers": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "context_turns": [
+        {
+          "speaker": "C",
+          "text": "Yeah ."
+        }
+      ],
+      "context_turns_total": 1,
+      "current_turn": {
+        "speaker": "C",
+        "text": "Okay and the twelve fifty twelve uh twelve"
+      },
+      "confidence": "high"
+    },
+    {
+      "sample_id": "IS1006b_inferred492_turn9_targetD",
+      "ground_truth": "SPEAK",
+      "prediction": "SILENT",
+      "category": "SPEAK_explicit",
+      "output_text": "{\"turn_intent\":\"casual_conversation\",\"extracted_value\":null,\"confidence\":0.95,\"reasoning\":\"The user's utterance is a series of acknowledgments, indicating agreement or understanding, which is a characteristic of casual conversation.\"}",
+      "latency": 2.423567533493042,
+      "target_speaker": "D",
+      "all_speakers": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "context_turns": [
+        {
+          "speaker": "A",
+          "text": "Um so"
+        },
+        {
+          "speaker": "D",
+          "text": "Do you want yeah , open . Read only ."
+        },
+        {
+          "speaker": "D",
+          "text": "Uh-oh ."
+        },
+        {
+          "speaker": "D",
+          "text": "and um"
+        },
+        {
+          "speaker": "C",
+          "text": "You can you are ."
+        },
+        {
+          "speaker": "D",
+          "text": "which our"
+        },
+        {
+          "speaker": "B",
+          "text": "One of us"
+        },
+        {
+          "speaker": "D",
+          "text": "so yeah ,"
+        },
+        {
+          "speaker": "D",
+          "text": "so now"
+        }
+      ],
+      "context_turns_total": 9,
+      "current_turn": {
+        "speaker": "B",
+        "text": "Mm-hmm . Mm-hmm ."
+      },
+      "confidence": "high"
+    },
+    {
+      "sample_id": "IS1006d_seq1717_turn1_targetD",
+      "ground_truth": "SPEAK",
+      "prediction": "SILENT",
+      "category": "SPEAK_implicit",
+      "output_text": "{\"turn_intent\":\"casual_conversation\",\"extracted_value\":null,\"confidence\":0.8,\"reasoning\":\"The user is continuing a conversation about personal preferences or options, but not directing the statement at the AI or another person specifically.\"}",
+      "latency": 1.4998011589050293,
+      "target_speaker": "D",
+      "all_speakers": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "context_turns": [
+        {
+          "speaker": "C",
+          "text": "and and you can feel simple designs ."
+        }
+      ],
+      "context_turns_total": 1,
+      "current_turn": {
+        "speaker": "C",
+        "text": "And you can choose colours on your day for each day , or even many colours ."
+      },
+      "confidence": "high"
+    },
+    {
+      "sample_id": "IS1003d_seq1252_turn10_targetA",
+      "ground_truth": "SPEAK",
+      "prediction": "SILENT",
+      "category": "SPEAK_explicit",
+      "output_text": "{\"turn_intent\":\"general_knowledge_query\",\"extracted_value\":null,\"confidence\":0.7,\"reasoning\":\"The user is providing information about a feature, likely related to the prototype mentioned earlier, but the context is unclear if it's a question or statement, leaning towards a query about the feature's significance.\"}",
+      "latency": 3.383298397064209,
+      "target_speaker": "A",
+      "all_speakers": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "context_turns": [
+        {
+          "speaker": "C",
+          "text": "Um , and uh"
+        },
+        {
+          "speaker": "C",
+          "text": "the second key feature is that uh s circle channel um selection ."
+        },
+        {
+          "speaker": "C",
+          "text": "In the traditional key uh traditional controller use button to to select the channel"
+        },
+        {
+          "speaker": "C",
+          "text": "but now we have a s circle , so we can turn this ball to t to select channel ."
+        },
+        {
+          "speaker": "C",
+          "text": "So it's quite convenient for user to use it ."
+        },
+        {
+          "speaker": "A",
+          "text": "Chan"
+        },
+        {
+          "speaker": "A",
+          "text": "Yeah , okay ,"
+        },
+        {
+          "speaker": "A",
+          "text": "but don't touch don't destroy your prototype ."
+        },
+        {
+          "speaker": "C",
+          "text": "Yeah , s"
+        },
+        {
+          "speaker": "C",
+          "text": "okay ."
+        }
+      ],
+      "context_turns_total": 10,
+      "current_turn": {
+        "speaker": "C",
+        "text": "Uh the third feature is a stable triangle base ."
+      },
+      "confidence": "high"
+    },
+    {
+      "sample_id": "IS1001a_seq772_turn10_targetC",
+      "ground_truth": "SPEAK",
+      "prediction": "SILENT",
+      "category": "SPEAK_explicit",
+      "output_text": "{\"turn_intent\":\"general_knowledge_query\",\"extracted_value\":null,\"confidence\":0.8,\"reasoning\":\"User is inquiring about the possibility of having a whistle remote control, indicating a query about a general topic or concept.\"}",
+      "latency": 1.2062487602233887,
+      "target_speaker": "C",
+      "all_speakers": [
+        "A",
+        "B",
+        "C"
+      ],
+      "context_turns": [
+        {
+          "speaker": "C",
+          "text": "We should have s uh special bu button on the T_V_ to make the remote control beeping ."
+        },
+        {
+          "speaker": "A",
+          "text": "Yeah ."
+        },
+        {
+          "speaker": "A",
+          "text": "Maybe we can have uh"
+        },
+        {
+          "speaker": "A",
+          "text": "But we don't design the T_V_ ."
+        },
+        {
+          "speaker": "C",
+          "text": "Ah yeah ."
+        },
+        {
+          "speaker": "A",
+          "text": "Maybe we can have uh something you whistle and uh the remote control uh beep ."
+        },
+        {
+          "speaker": "C",
+          "text": "Yeah ."
+        },
+        {
+          "speaker": "B",
+          "text": "Barks ."
+        },
+        {
+          "speaker": "A",
+          "text": "Yeah , barks , yeah ."
+        },
+        {
+          "speaker": "C",
+          "text": "Barks ."
+        }
+      ],
+      "context_turns_total": 10,
+      "current_turn": {
+        "speaker": "A",
+        "text": "So we can uh have a whistle uh remote control ?"
+      },
+      "confidence": "high"
+    },
+    {
+      "sample_id": "IS1005a_inferred468_turn1_targetB",
+      "ground_truth": "SPEAK",
+      "prediction": "SILENT",
+      "category": "SPEAK_implicit",
+      "output_text": "{\"turn_intent\":\"casual_conversation\",\"extracted_value\":null,\"confidence\":0.85,\"reasoning\":\"The user's utterance is a casual acknowledgement and encouragement, not containing any specific intent or value.\"}",
+      "latency": 1.7850115299224854,
+      "target_speaker": "B",
+      "all_speakers": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "context_turns": [
+        {
+          "speaker": "A",
+          "text": "Just to get used to the whiteboard ."
+        }
+      ],
+      "context_turns_total": 1,
+      "current_turn": {
+        "speaker": "D",
+        "text": "Yeah go ahead ."
+      },
+      "confidence": "high"
+    },
+    {
+      "sample_id": "IS1003d_seq1398_turn3_targetC",
+      "ground_truth": "SILENT",
+      "prediction": "SILENT",
+      "category": "SILENT_no_ref",
+      "output_text": "{\"turn_intent\":\"casual_conversation\",\"extracted_value\":null,\"confidence\":0.8,\"reasoning\":\"The user is making a statement about solar cells, but it's not clear what they're trying to accomplish or ask, so it's classified as casual conversation.\"}",
+      "latency": 2.4563488960266113,
+      "target_speaker": "C",
+      "all_speakers": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "context_turns": [
+        {
+          "speaker": "A",
+          "text": "Three ?"
+        },
+        {
+          "speaker": "B",
+          "text": "three uh yeah ,"
+        },
+        {
+          "speaker": "B",
+          "text": "three , yeah ."
+        }
+      ],
+      "context_turns_total": 3,
+      "current_turn": {
+        "speaker": "B",
+        "text": "Three three solar cells ."
+      },
+      "confidence": "high"
+    },
+    {
+      "sample_id": "ES2009c_seq344_turn7_targetD",
+      "ground_truth": "SPEAK",
+      "prediction": "SILENT",
+      "category": "SPEAK_implicit",
+      "output_text": "{\"turn_intent\":\"casual_conversation\",\"extracted_value\":null,\"confidence\":0.85,\"reasoning\":\"The user is continuing a discussion about a hypothetical remote control, sharing their thoughts and ideas in a casual manner.\"}",
+      "latency": 1.7928900718688965,
+      "target_speaker": "D",
+      "all_speakers": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "context_turns": [
+        {
+          "speaker": "B",
+          "text": "Just kind of the squishy feel ."
+        },
+        {
+          "speaker": "D",
+          "text": "Yeah ,"
+        },
+        {
+          "speaker": "D",
+          "text": "which is the next big thing ,"
+        },
+        {
+          "speaker": "D",
+          "text": "so that's not gonna hurt us either ."
+        },
+        {
+          "speaker": "A",
+          "text": "Mm 'kay ."
+        },
+        {
+          "speaker": "A",
+          "text": "Yeah"
+        },
+        {
+          "speaker": "A",
+          "text": "let's see if we can do a squishy non-remote control-looking remote control ."
+        }
+      ],
+      "context_turns_total": 7,
+      "current_turn": {
+        "speaker": "A",
+        "text": "But to be fair , yeah , I mean , you just c you could just put it literally put it on the the ni the coffee table next to the telly and say volume up ."
+      },
+      "confidence": "high"
+    },
+    {
+      "sample_id": "ES2002a_seq0_turn349_targetC",
+      "ground_truth": "SILENT",
+      "prediction": "SILENT",
+      "category": "SILENT_no_ref",
+      "output_text": "{\"turn_intent\":\"casual_conversation\",\"extracted_value\":null,\"confidence\":0.85,\"reasoning\":\"The user is sharing a personal anecdote related to the previous conversation about remote controls.\"}",
+      "latency": 2.2304139137268066,
+      "target_speaker": "C",
+      "all_speakers": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "context_turns": [
+        {
+          "speaker": "A",
+          "text": "Finding them is really a pain , you know ."
+        },
+        {
+          "speaker": "D",
+          "text": "Mm . Mm ."
+        },
+        {
+          "speaker": "A",
+          "text": "I mean it's usually quite small ,"
+        },
+        {
+          "speaker": "A",
+          "text": "or when you want it right , it slipped behind the couch"
+        },
+        {
+          "speaker": "D",
+          "text": "Mm-hmm . Mm-hmm ."
+        },
+        {
+          "speaker": "A",
+          "text": "or it's kicked under the table ."
+        },
+        {
+          "speaker": "B",
+          "text": "Yeah ."
+        },
+        {
+          "speaker": "D",
+          "text": "Yeah ."
+        },
+        {
+          "speaker": "B",
+          "text": "W You get those ones where you can , if you like , whistle or make a really high pitched noise they beep ."
+        },
+        {
+          "speaker": "D",
+          "text": "Yeah ."
+        },
+        {
+          "speaker": "A",
+          "text": "You know ."
+        },
+        {
+          "speaker": "D",
+          "text": "That's just really good id"
+        },
+        {
+          "speaker": "D",
+          "text": "Yep ."
+        },
+        {
+          "speaker": "B",
+          "text": "There"
+        },
+        {
+          "speaker": "B",
+          "text": "I mean is that something we'd want to include , do you think ?"
+        },
+        {
+          "speaker": "D",
+          "text": "Uh ,"
+        },
+        {
+          "speaker": "B",
+          "text": "Dunno ."
+        },
+        {
+          "speaker": "D",
+          "text": "sure ."
+        },
+        {
+          "speaker": "B",
+          "text": "Okay maybe ."
+        },
+        {
+          "speaker": "D",
+          "text": "I remember when the first remote control my my family had was on a cable ."
+        }
+      ],
+      "context_turns_total": 349,
+      "current_turn": {
+        "speaker": "D",
+        "text": "Actually had a cable between it and the T_V_"
+      },
+      "confidence": "high"
+    },
+    {
+      "sample_id": "ES2002a_inferred28_turn1_targetB",
+      "ground_truth": "SPEAK",
+      "prediction": "SILENT",
+      "category": "SPEAK_implicit",
+      "output_text": "{\"turn_intent\":\"general_knowledge_query\",\"extracted_value\":null,\"confidence\":0.8,\"reasoning\":\"The user is asking a question about someone's awareness of their own actions, which is a query about a general concept or fact.\"}",
+      "latency": 2.8403377532958984,
+      "target_speaker": "B",
+      "all_speakers": [
+        "B",
+        "D"
+      ],
+      "context_turns": [
+        {
+          "speaker": "B",
+          "text": "and very kind of affectionate"
+        }
+      ],
+      "context_turns_total": 1,
+      "current_turn": {
+        "speaker": "D",
+        "text": "Is he aware that th it's his own cha tail he's chasing ?"
+      },
+      "confidence": "high"
+    }
+  ],
+  "bridge_metadata": {
+    "elapsed_secs": 20.98,
+    "rows_attempted": 10,
+    "rows_total": 10,
+    "exclusions": 0,
+    "input_tokens": 6488,
+    "output_tokens": 1280,
+    "api_calls": 20,
+    "cost_usd": 0.0068,
+    "budget_usd": 5.0,
+    "input_price_per_m": 0.88,
+    "output_price_per_m": 0.88,
+    "aborted": false,
+    "abort_reason": null,
+    "classifier_prompt_hash": "70ee1353fea4"
+  }
+}

@@ -145,12 +145,35 @@ published-papers-tests/
 │   ├── adapters/
 │   ├── shared/
 │   └── scripts/sanitize_predictions.py
-├── classifier-seed/         ← the labeled training data (NEW)
+├── classifier-seed/         ← the labeled training data
 │   ├── seed.jsonl                  ← all 2,081 abstracted scenarios + labels + source refs (~780 KB)
 │   └── README.md                   ← what's in the seed, composition, how to use it
 └── results/
-    ├── karaos_friends_test.json   ← Run 1 sanitized predictions
-    └── RESULTS.md                  ← full benchmark journey, all three runs, methodology, caveats
+    ├── README.md                          ← test-by-test index + headline numbers
+    ├── RESULTS.md                          ← full benchmark journey narrative (Runs 1, 2, 3)
+    ├── karaos_friends_test.json            ← Run 1 sanitized predictions (raw text stripped per Friends-MMC license)
+    ├── friends_baseline_full_db/           ← Run 1 (Llama-70B, 58.66%) + Run 3 (graph classifier, 64.48%)
+    │   ├── README.md
+    │   ├── METHODOLOGY.md
+    │   ├── result_summary.md
+    │   ├── predictions_llama_70b.json
+    │   └── predictions_graph_classifier.json
+    ├── friends_multi_backbone/             ← Run 2 (Qwen-7B, 52.32% — falsifying experiment)
+    │   ├── README.md
+    │   ├── METHODOLOGY.md
+    │   ├── MULTI_BACKBONE_RESULTS.md
+    │   ├── llama_70b_predictions.json
+    │   └── qwen_7b_predictions.json
+    ├── friends_scaling_ablation/           ← 10-run ablation, Amit Yadav's review questions answered
+    │   ├── README.md
+    │   ├── METHODOLOGY.md
+    │   ├── ABLATION_RESULTS.md
+    │   ├── ablation_summary.json
+    │   └── individual_runs/                ← all 10 per-run summaries + JSONs
+    └── ami_baseline/                       ← AMI smoke test (out-of-scope domain, honest disclosure)
+        ├── README.md
+        ├── result_summary.md
+        └── predictions.json
 ```
 
 ---
