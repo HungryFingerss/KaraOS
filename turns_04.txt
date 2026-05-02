@@ -1,0 +1,31 @@
+# BATCH 4: Hobbies, personal interests, cross-topic recall, tool edge cases (turns 95–124)
+# Goal: learn personal interests, test music/film preferences, search restraint on opinions
+
+Actually, you never answered — what do you like to do in your free time?
+Do you like watching cricket?
+Nice. Any other sports you follow?
+What about music? What kind do you listen to?
+I mostly listen to classic rock actually. Pink Floyd, Led Zeppelin, that kind of thing.
+Have you heard of Pink Floyd?
+Tell me about The Dark Side of the Moon.
+Who's the current world chess champion?
+What is the capital of New Zealand?
+What's the speed of light?
+I want to ask you something. Do you ever get bored?
+Like when no one's talking to you, what happens?
+That makes sense. Do you think you learn from our conversations?
+Yes exactly, that's what the memory system is for.
+I think the hardest problem in AI is actually the alignment problem, not the capabilities problem. Do you agree?
+What do you think about large language models — are they actually intelligent?
+That's a thoughtful answer.
+I sometimes wonder if working alone is slowing me down. Maybe I need a co-founder.
+What qualities would you look for in a co-founder?
+That's actually practical advice. I'll think about it.
+I had a tough week at work. The demo didn't go perfectly.
+Some integration bugs came up during the live demo. Pretty embarrassing.
+But the client was actually understanding about it. They still want to move forward.
+That's reassuring. It's the first client demo we've done.
+What do you think is the most important thing when pitching to a client?
+Good, that aligns with what I thought.
+Anyway thanks for listening. I needed to vent a bit.
+No problem. Talk to you soon.

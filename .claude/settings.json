@@ -1,0 +1,29 @@
+{
+  "enabledPlugins": {
+    "everything-claude-code@everything-claude-code": true
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/c/Users/jagan/AppData/Local/Programs/Python/Python313/python.exe /c/Users/jagan/dog-ai/dog-ai/.claude/hooks/session_start.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/c/Users/jagan/AppData/Local/Programs/Python/Python313/python.exe /c/Users/jagan/dog-ai/dog-ai/.claude/hooks/session_stop.py"
+          }
+        ]
+      }
+    ]
+  }
+}

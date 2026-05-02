@@ -1,0 +1,28 @@
+# BATCH 6: Deep preferences, self-reflection, project update, recall test (turns 155–184)
+# Goal: verify preference injection is stable, test emotional support, recall old specific facts
+
+Morning Kara.
+Do you remember what Bruno was going through last time?
+How's my work project going, from what you remember?
+Do you remember what music I like?
+What do you know about my family? Full summary please.
+Who is Kavya?
+Alright good memory. Let's talk about something else.
+I've been reading about emergent capabilities in AI. Do you think LLMs will keep surprising us?
+Do you think we'll achieve AGI in our lifetimes?
+What would you do differently if you could redesign your own architecture?
+That's a thoughtful answer.
+Let me tell you something. I'm actually pretty proud of how far this project has come.
+I started it as a side project about a year ago. Now it's basically my main focus.
+There's been a lot of late nights and frustration but also a lot of satisfaction.
+The moment you said "Yes, I heard you" for the first time — that was a milestone moment.
+Yeah. It felt real.
+You know what would really complete it? If you could remember people you've never met before, like from a description.
+Like if I say "my colleague Ravi, he's 28, works in backend, loves football" — could you remember that?
+And then if Ravi actually shows up and talks to you, you could connect the dots.
+That would be a really powerful feature.
+I agree it raises privacy questions too. How do you think about that?
+That's a balanced take.
+One last thing — what was the first thing you ever said to me?
+Good. That's the right answer.
+Let's wrap up. Take care of yourself.

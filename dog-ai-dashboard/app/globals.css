@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-mono:    'Space Mono', monospace;
+  --font-display: 'Syne', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar       { width: 4px; }
+::-webkit-scrollbar-track { background: #0d1117; }
+::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
+
+/* Noise grain overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.4;
+}
+
+/* Acid green glow utility */
+.glow-acid {
+  box-shadow: 0 0 20px rgba(184, 255, 53, 0.15),
+              0 0 40px rgba(184, 255, 53, 0.05);
+}
+
+.text-glow-acid {
+  text-shadow: 0 0 20px rgba(184, 255, 53, 0.4);
+}
+
+/* Border glow */
+.border-glow {
+  border: 1px solid rgba(184, 255, 53, 0.2);
+}
+
+/* Scan line animation */
+@keyframes scanline {
+  0%   { transform: translateY(-10px); }
+  100% { transform: translateY(100vh); }
+}
+
+.scanline::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(transparent, rgba(184,255,53,0.06), transparent);
+  animation: scanline 6s linear infinite;
+  pointer-events: none;
+}

@@ -1,0 +1,33 @@
+# BATCH 1: Introduction, identity, basic facts (turns 1–30)
+# Goal: test name learning, fact extraction, basic conversation quality
+
+Hi there, can you hear me?
+Yeah, it's working. What's your name by the way?
+Nice to meet you. My name is Jagan.
+I'm 32 years old, I live in Hyderabad, India.
+I'm a software engineer. I've been coding for about 10 years now.
+I'm building a robot dog called Dog AI. That's this project — you're the brain behind it.
+The idea is that you can see and recognise people through the camera, remember them, and have real conversations with them.
+It's been pretty exciting but also really challenging work.
+What do you think about AI systems that can recognise faces and remember people?
+Actually, can I give you a name? I want to call you Kara.
+I think Kara suits you well. Short, easy to say.
+Kara, do you remember my name?
+Good. And do you know what city I'm from?
+I also have a younger sister called Kavya. She's 28 and she's a doctor.
+My dad's name is Ramesh. He's retired now, used to be a school teacher.
+My mum's name is Lalitha. She's the best cook I know — especially her biryani.
+I have a dog at home actually, a golden retriever. His name is Bruno.
+Bruno is 3 years old. He's super playful and a little crazy honestly.
+So Kara, what do you know about me so far? Tell me everything you've remembered.
+That's good. What's my sister's name?
+And my dog's name?
+I work at a startup called NeuraLabs. We build AI-powered products.
+My role is lead engineer. I manage a team of 6 people.
+What's the biggest challenge in AI right now in your opinion?
+Actually, what's today's date? Do you know?
+What about the latest news in AI — anything interesting happening?
+I prefer short and direct answers by the way. I don't like long explanations.
+Also, I'm more of a casual conversation person. Don't be too formal with me.
+Kara, what's the capital of France?
+Alright, I think that's enough for now. Talk to you again soon.

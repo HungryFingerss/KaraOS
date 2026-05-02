@@ -1,0 +1,41 @@
+# SCENARIO 19: Stranger identity promotion
+# Setup: Run turns_11_known_alone.txt first so Kavya's session has mentioned
+# a friend with specific attributes. Then this stranger arrives with matching
+# attributes — auto-confirm should eventually trigger promotion.
+#
+# Also tests manual promotion: stranger says their own name,
+# LLM calls update_person_name → pipeline promotes stranger to known person.
+#
+# Verifies: person_type changes from stranger → known,
+# waiting_for_name cleared after promotion,
+# person_name updated in session dict.
+
+!CAST
+  JAGAN     id=sim_jagan    name=Jagan    type=best_friend
+  STRANGER  id=stranger_s6  name=visitor  type=stranger
+!END_CAST
+
+---ENTER JAGAN
+---ENTER STRANGER
+---ASSERT WAITING_FOR_NAME STRANGER
+
+[JAGAN] Hey Kara, someone's at the door.
+
+# Stranger says system name — gate clears
+[STRANGER] Hey Kara! I'm looking for Jagan.
+---ASSERT GATE_CLEARED STRANGER
+
+[JAGAN] Oh hi! Who are you?
+[STRANGER] I'm Ravi. Jagan's colleague from NeuraLabs.
+[JAGAN] Oh yeah, Ravi! I've mentioned him before.
+[STRANGER] We work on the backend team together.
+[STRANGER] Jagan told me about this robot dog project.
+[STRANGER] I'm 28 years old, been coding for 5 years.
+
+# At this point the LLM should try to learn who Ravi is
+# and may eventually auto-confirm or ask for his name
+[JAGAN] Kara, do you know who Ravi is? I've mentioned him.
+[STRANGER] Yeah, I'm the one who handles the APIs Jagan builds on.
+
+---CLOSE STRANGER
+---CLOSE JAGAN

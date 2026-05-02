@@ -1,0 +1,33 @@
+# SCENARIO 12: Stranger alone — system-name gate, progressive enrollment
+# Verifies: G4 gate blocks turns until system name is said,
+# progressive enrollment fires when system name heard,
+# gate clears exactly once (not per-turn),
+# visitor alert queued when session closes (stranger spoke ≥1 turn).
+
+!CAST
+  STRANGER  id=stranger_s1  name=visitor  type=stranger
+!END_CAST
+
+---ENTER STRANGER
+---ASSERT SESSION_OPEN STRANGER
+---ASSERT WAITING_FOR_NAME STRANGER
+
+# These turns should be BLOCKED — system name not said
+[STRANGER] Hello? Anyone there?
+[STRANGER] What are you?
+
+---ASSERT WAITING_FOR_NAME STRANGER
+
+# This turn says the system name — gate clears, progressive enrollment fires
+[STRANGER] Hey Kara, can you hear me?
+
+---ASSERT GATE_CLEARED STRANGER
+
+# From here, conversation should proceed normally
+[STRANGER] So what are you exactly?
+[STRANGER] My name is Priya by the way.
+[STRANGER] Nice to meet you Kara.
+
+# Closes stranger session → should queue visitor alert for best_friend (Jagan)
+---CLOSE STRANGER
+---ASSERT SESSION_CLOSED STRANGER

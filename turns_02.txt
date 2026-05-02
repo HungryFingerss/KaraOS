@@ -1,0 +1,32 @@
+# BATCH 2: Memory recall, preferences, deeper conversation, stress tool calling (turns 31–60)
+# Goal: test cross-conversation recall, preference injection, search restraint, natural flow
+
+Hey Kara, I'm back.
+Do you remember what we talked about last time?
+What do you know about my family?
+And my job?
+So you remember everything. That's good.
+I was thinking about my Dog AI project. I want the robot to greet people by name when it recognises their face.
+Yeah, and eventually it should remember what they talked about last time, ask follow-up questions, that kind of thing.
+The hardest part has been getting the conversation to feel natural. Not like talking to a chatbot.
+Kara, do you think you feel natural to talk to?
+Be honest with me.
+Fair enough. What do you think I should improve about how you respond?
+I notice sometimes you say the same person's name too many times in a single response. Like "Jagan, I think..." and then "Jagan, that's..." in the same sentence almost.
+Yeah exactly. It sounds a bit robotic when you do that.
+I'll keep that in mind. Anyway, what are you curious about me? What do you not know yet?
+That's a good question actually. I'll tell you more about that later.
+Right now I'm kind of stressed about a deadline at work. We have a product demo on Friday.
+Yeah, the team has been working really hard but there's still a lot of integration work left.
+I manage 6 people but honestly some of them are still learning. It takes time.
+Have you ever felt overwhelmed by something?
+That's an interesting way to put it.
+My sister Kavya called me yesterday. She's worried about my work hours, says I don't take breaks.
+She's right honestly. I barely left the office this week.
+What do you think I should do?
+Okay that's actually practical advice. Thanks.
+What year was the iPhone first released? Do you know that?
+Good. What about the latest iPhone model right now in 2026?
+What's the weather like in Hyderabad today?
+I prefer talking to you without you using my name in every sentence. Keep it natural.
+Got it. Anyway I should get back to work. Talk to you tomorrow.

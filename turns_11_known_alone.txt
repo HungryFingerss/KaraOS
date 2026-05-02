@@ -1,0 +1,21 @@
+# SCENARIO 11: Known person alone (Kavya, not the owner)
+# Verifies: enrolled non-owner gets a session, memory is scoped to her person_id,
+# brain builds context correctly without best_friend present,
+# room context is NOT injected (single person), session closes cleanly.
+
+!CAST
+  KAVYA  id=sim_kavya  name=Kavya  type=known
+!END_CAST
+
+---ENTER KAVYA
+---ASSERT SESSION_OPEN KAVYA
+
+[KAVYA] Hi, who are you?
+[KAVYA] What's your name?
+[KAVYA] My name is Kavya. Nice to meet you.
+[KAVYA] I'm Jagan's sister.
+[KAVYA] Do you know Jagan?
+[KAVYA] What do you think about AI?
+
+---CLOSE KAVYA
+---ASSERT SESSION_CLOSED KAVYA

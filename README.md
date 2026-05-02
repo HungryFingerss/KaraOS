@@ -1,0 +1,79 @@
+# DOG-AI
+
+Face recognition pipeline: See face → identify → greet → listen → respond → repeat.
+
+## Structure
+
+```
+dog-ai/
+├── core/
+│   ├── config.py      # all settings
+│   ├── vision.py      # RetinaFace detection + AdaFace recognition
+│   ├── db.py          # SQLite + FAISS face database
+│   ├── brain.py       # Gemini (primary) + Ollama (fallback)
+│   ├── audio.py       # Whisper STT + edge-tts TTS
+│   └── state.py       # shared state (pipeline → dashboard)
+├── dog-ai-dashboard/  # Next.js dashboard
+├── pipeline.py        # main loop
+├── enroll.py          # standalone enrollment script
+├── delete_person.py   # delete a person
+├── models/            # place ONNX models here (see below)
+├── faces/             # face DB (auto-created, gitignored)
+└── requirements.txt
+```
+
+## Setup
+
+### 1. Python environment
+
+```bash
+python -m venv venv
+venv\Scripts\activate       # Windows
+pip install -r requirements.txt
+```
+
+### 2. Download models
+
+Place these in `models/`:
+- `scrfd_10g_bnkps.onnx` — from: https://github.com/deepinsight/insightface
+- `adaface_ir101.onnx`   — from: https://github.com/mk-minchul/AdaFace
+
+### 3. Environment variables
+
+```bash
+copy .env.example .env
+# Edit .env and add your GEMINI_API_KEY
+```
+
+### 4. Dashboard
+
+```bash
+cd dog-ai-dashboard
+npm install
+npm run dev     # development
+npm run build   # production
+npm start
+```
+
+Dashboard runs on http://localhost:3000
+
+### 5. Run pipeline
+
+```bash
+# From dog-ai/ root
+python pipeline.py
+```
+
+## Enrollment
+
+**Voice:** Say "add me", "enroll me", "remember me" to the dog.
+The system asks your name then captures your face for 5 seconds.
+
+**Manual:** Go to http://localhost:3000/enroll, enter name, click start.
+
+**Script:** `python enroll.py --name "Your Name"`
+
+## Hardware targets
+
+- **Now:** Laptop (development + testing)
+- **Later:** Jetson AGX Orin 32GB (drop-in, same code, zero changes)

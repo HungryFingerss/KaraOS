@@ -1,0 +1,47 @@
+# SCENARIO 16: Owner + Known + Stranger (3-person mixed room)
+# Verifies: room context with 3 active sessions,
+# correct role labels (best_friend / known / visitor),
+# stranger gate works in a full room,
+# each person's memory remains isolated,
+# Kara handles being addressed by different people mid-conversation.
+
+!CAST
+  JAGAN     id=sim_jagan    name=Jagan    type=best_friend
+  KAVYA     id=sim_kavya    name=Kavya    type=known
+  STRANGER  id=stranger_s5  name=visitor  type=stranger
+!END_CAST
+
+---ENTER JAGAN
+---ENTER KAVYA
+---ENTER STRANGER
+---ASSERT SESSION_OPEN JAGAN
+---ASSERT SESSION_OPEN KAVYA
+---ASSERT SESSION_OPEN STRANGER
+---ASSERT WAITING_FOR_NAME STRANGER
+
+[JAGAN] Hey Kara, we've got a full house today.
+[KAVYA] Hi Kara! It's been a while.
+[STRANGER] Um hello? What is this thing?
+[JAGAN] Say her name and she'll talk to you.
+[STRANGER] Oh — hey Kara!
+---ASSERT GATE_CLEARED STRANGER
+
+[KAVYA] Kara, this is my friend Ananya.
+[STRANGER] Yeah, hi Kara. I'm Ananya.
+[JAGAN] Ananya, Kavya, and I all work together.
+[KAVYA] What do you know about Jagan, Kara?
+[STRANGER] Do you remember everyone you meet?
+[JAGAN] She has a pretty good memory.
+[KAVYA] Kara, do you know who I am?
+[STRANGER] This is kind of amazing actually.
+
+---CLOSE STRANGER
+---ASSERT SESSION_CLOSED STRANGER
+---ASSERT SESSION_OPEN JAGAN
+---ASSERT SESSION_OPEN KAVYA
+
+[JAGAN] Ananya left. Just the three of us now — wait, two of us.
+[KAVYA] Yeah she had to go. Kara, what did you think?
+
+---CLOSE KAVYA
+---CLOSE JAGAN

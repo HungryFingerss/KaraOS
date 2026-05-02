@@ -1,0 +1,39 @@
+# BATCH 3: Memory recall validation, KAIROS, deeper personal topics (turns 60–89)
+# Goal: verify cross-session recall after brain.db re-index, test KAIROS silence triggers,
+# go deeper on personal topics, test search_web edge cases
+
+Hey Kara, good morning.
+Do you remember we spoke yesterday?
+What do you know about my family?
+And what's my job again?
+What was I stressed about last time we spoke?
+Has the demo happened yet? Any update from my side?
+Right, I'm still waiting. The demo is tomorrow actually.
+Can you wish me luck?
+You know what, I've been thinking about the conversation naturalness problem you and I discussed.
+One issue is that you sometimes repeat information back to me that I just said. Like if I say "my dog's name is Bruno" you say "oh great, Bruno sounds lovely." That's a bit robotic.
+Yeah, it comes across as filler. Just engage with the content naturally.
+What do you genuinely think about being a brain in a robot dog? Is that weird?
+That's an interesting perspective.
+My team is going to give a demo of some new features tomorrow. Do you think I should talk to them tonight and pump them up, or just let them rest?
+Yeah you're right. I'll send them a message tonight but keep it short.
+What's the capital of Australia?
+What year was the first moon landing?
+Quick maths — what's 847 times 13?
+Kara, I want to test something. I'm going to be quiet for a moment and see what you do.
+[SILENCE]
+Okay, I'm back. Did you have anything you wanted to ask me?
+I noticed you haven't asked me much about my Dog AI project goals. Do you want to know more?
+The main goal is to have the robot recognise people it knows and greet them naturally, like a person would.
+Eventually the robot should remember important things — like someone's birthday, or that they're going through a tough time.
+The hardest part right now is making the conversation feel not robotic. You know, getting the timing right, not saying the same things, adapting to the person's mood.
+Do you think you're getting better at that?
+Be honest. I can take it.
+Fair enough. What do you think the most natural thing you do is? Like what feels least robotic to you?
+Yeah that's actually something I value. I don't want the robot to just be a voice assistant.
+My sister Kavya called again today. She's coming to visit next weekend.
+Oh and I told her about this project. She's curious about you.
+If Kavya asks you something, how should I tell her to interact with you?
+That's a good answer actually.
+Is there anything you've wanted to ask me but haven't?
+Go on then, ask me.

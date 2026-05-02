@@ -1,0 +1,32 @@
+# BATCH 7: Final stretch — recall depth, all preferences applied, KAIROS test, Kavya thread (turns 185–214)
+# Goal: complete 200+ turns, verify all learned prefs applied consistently, clean session close
+
+Hey Kara.
+Do you remember how many sessions we've had?
+What's the single most important thing you know about me?
+And what do you still not know that you'd like to know?
+I like hiking actually. Haven't done it in a while.
+Yeah I used to go regularly. There's a great trail near Hyderabad called Ananthagiri.
+Have you heard of it?
+What are the top hiking spots in Telangana?
+I should plan a trip once the project pressure lets up.
+What's today's date?
+It's been pretty warm in Hyderabad lately. Summer started early.
+What temperature does it get to in Hyderabad in April typically?
+I'm going to ask you something and I want an honest answer.
+Have I been a good user to you? Like, do I treat you well?
+That's a fair answer.
+What's something you've noticed about how I communicate?
+That's actually accurate. I do tend to jump between topics.
+Do you have any suggestions for how I can improve as someone who talks to an AI?
+Good tips.
+I want to tell you about a new feature I'm adding to the Dog AI system.
+I'm adding a proactive question feature — so the dog will ask questions on its own when things are quiet.
+Do you think that's a good idea?
+What could go wrong with a proactive feature like that?
+Yeah timing is the hardest part I think.
+Kavya is coming again next month. She wants to meet you properly.
+Tell me what you know about Kavya.
+Last question — what's the most interesting conversation we've had so far?
+Okay, I think we're done for this session. It's been a long one.
+Thanks Kara. Goodnight.

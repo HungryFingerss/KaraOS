@@ -1,0 +1,38 @@
+# SCENARIO 18: Within-utterance multi-voice (diarization)
+# Verifies: [A|B] format produces combined_text=[Name]: ...\n[Name]: ...,
+# voice_confidence is 0.75 on diarized turns (not 1.0),
+# Kara handles the two-speaker turn naturally,
+# no crash on combined text format.
+
+!CAST
+  JAGAN  id=sim_jagan  name=Jagan  type=best_friend
+  KAVYA  id=sim_kavya  name=Kavya  type=known
+!END_CAST
+
+---ENTER JAGAN
+---ENTER KAVYA
+---ASSERT SESSION_OPEN JAGAN
+---ASSERT SESSION_OPEN KAVYA
+
+# Normal single-speaker turns first
+[JAGAN] Hey Kara, Kavya and I have a question for you.
+[KAVYA] Yeah, we're both curious about the same thing.
+
+# Within-utterance: both speak in the same VAD window
+# Left of | = Jagan's text, right = Kavya's text
+[JAGAN|KAVYA] Do you prefer talking to one person or a group? | Yeah, which do you find easier?
+
+[JAGAN] Interesting answer.
+[KAVYA] Makes sense actually.
+
+# Another diarized turn — one person asking, other adding context
+[JAGAN|KAVYA] We've been working on this project together for months. | It's been quite a ride honestly.
+
+[JAGAN] Kavya helped with the design side.
+[KAVYA] And Jagan handled all the engineering.
+
+# Diarized question to Kara
+[JAGAN|KAVYA] What do you think of our team? | Do you think we work well together?
+
+---CLOSE JAGAN
+---CLOSE KAVYA

@@ -1,0 +1,40 @@
+# SCENARIO 17: Person enters and leaves mid-conversation
+# Verifies: new_face flag propagates on ENTER (Kara notices Kavya arrive),
+# room context updates when Kavya leaves,
+# LEAVE stops heartbeat for Kavya,
+# Jagan's session stays clean throughout.
+
+!CAST
+  JAGAN  id=sim_jagan  name=Jagan  type=best_friend
+  KAVYA  id=sim_kavya  name=Kavya  type=known
+!END_CAST
+
+---ENTER JAGAN
+---ASSERT SESSION_OPEN JAGAN
+
+[JAGAN] Hey Kara.
+[JAGAN] How are you doing today?
+[JAGAN] I wanted to ask you something about AI development.
+[JAGAN] What do you think is the most important thing to get right in robotics?
+
+# Kavya walks in mid-conversation — Kara should notice (new_face flag)
+---ENTER KAVYA
+---ASSERT SESSION_OPEN KAVYA
+
+[JAGAN] Oh hey Kavya, you made it.
+[KAVYA] Hi Jagan! Hey Kara, nice to finally meet you in person.
+[JAGAN] Kavya's been wanting to meet you for a while.
+[KAVYA] Jagan has told me so much about this project.
+[KAVYA] Can you remember who I am?
+[JAGAN] She knows about you actually. I've mentioned you.
+
+# Kavya leaves
+---LEAVE KAVYA
+---CLOSE KAVYA
+---ASSERT SESSION_CLOSED KAVYA
+---ASSERT SESSION_OPEN JAGAN
+
+[JAGAN] Kavya had to run. Just us again.
+[JAGAN] Did you recognize her?
+
+---CLOSE JAGAN

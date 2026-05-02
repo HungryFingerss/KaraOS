@@ -1,0 +1,43 @@
+# SCENARIO 15: Two strangers, neither enrolled
+# Verifies: waiting_for_name is per-session (clearing A doesn't clear B),
+# each stranger must independently say system name,
+# room context shows two visitors,
+# both visitor alerts fire on close.
+
+!CAST
+  STRANGER_A  id=stranger_s3  name=visitor  type=stranger
+  STRANGER_B  id=stranger_s4  name=visitor  type=stranger
+!END_CAST
+
+---ENTER STRANGER_A
+---ENTER STRANGER_B
+---ASSERT SESSION_OPEN STRANGER_A
+---ASSERT SESSION_OPEN STRANGER_B
+---ASSERT WAITING_FOR_NAME STRANGER_A
+---ASSERT WAITING_FOR_NAME STRANGER_B
+
+# A says the system name — only A's gate clears
+[STRANGER_A] Hey Kara, what are you?
+
+---ASSERT GATE_CLEARED STRANGER_A
+---ASSERT WAITING_FOR_NAME STRANGER_B
+
+# B still blocked
+[STRANGER_B] Hello? Can you hear us?
+
+---ASSERT WAITING_FOR_NAME STRANGER_B
+
+# B now says the system name
+[STRANGER_B] Oh, Kara! Hi there.
+---ASSERT GATE_CLEARED STRANGER_B
+
+# Both can converse freely now
+[STRANGER_A] My name is Ravi.
+[STRANGER_B] And I'm Meena.
+[STRANGER_A] We work together.
+[STRANGER_B] Are you always here?
+
+---CLOSE STRANGER_A
+---CLOSE STRANGER_B
+---ASSERT SESSION_CLOSED STRANGER_A
+---ASSERT SESSION_CLOSED STRANGER_B

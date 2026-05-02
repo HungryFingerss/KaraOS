@@ -1,0 +1,41 @@
+# SCENARIO 20: Visitor alert — stranger visits while owner is absent, then owner returns
+# Verifies: stranger's session ends → notify_session_end → _run_visitor_alert fires,
+# nudge is queued for best_friend (Jagan),
+# when Jagan's session opens, prompt_addendum includes the visitor nudge.
+
+!CAST
+  JAGAN     id=sim_jagan    name=Jagan    type=best_friend
+  STRANGER  id=stranger_s7  name=visitor  type=stranger
+!END_CAST
+
+# Only stranger enters first — Jagan is absent
+---ENTER STRANGER
+---ASSERT SESSION_OPEN STRANGER
+---ASSERT WAITING_FOR_NAME STRANGER
+
+# Stranger says system name — gate clears
+[STRANGER] Hey Kara, is anyone home?
+---ASSERT GATE_CLEARED STRANGER
+
+[STRANGER] I'm looking for Jagan. Is he around?
+[STRANGER] My name is Deepa by the way.
+[STRANGER] I'm his friend from college.
+[STRANGER] Can you tell him I stopped by?
+[STRANGER] Tell him Deepa came to visit.
+
+# Stranger leaves — should queue visitor alert for Jagan
+---CLOSE STRANGER
+---ASSERT SESSION_CLOSED STRANGER
+
+# Pause to let brain drain the session-end event queue
+---PAUSE 5.0
+
+# Now Jagan arrives — brain should mention the visitor in context
+---ENTER JAGAN
+---ASSERT SESSION_OPEN JAGAN
+
+[JAGAN] Hey Kara.
+[JAGAN] Did anyone come by while I was out?
+[JAGAN] Anyone knock on the door or anything?
+
+---CLOSE JAGAN

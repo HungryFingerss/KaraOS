@@ -1,0 +1,45 @@
+# SCENARIO 14: Owner + Stranger
+# Verifies: stranger gate active while Jagan talks freely,
+# Jagan can still converse while stranger is blocked,
+# stranger gate clears when system name heard,
+# visitor alert fires when stranger leaves,
+# Kara naturally asks stranger's name after gate clears.
+
+!CAST
+  JAGAN     id=sim_jagan    name=Jagan    type=best_friend
+  STRANGER  id=stranger_s2  name=visitor  type=stranger
+!END_CAST
+
+---ENTER JAGAN
+---ENTER STRANGER
+---ASSERT SESSION_OPEN JAGAN
+---ASSERT SESSION_OPEN STRANGER
+---ASSERT WAITING_FOR_NAME STRANGER
+
+# Jagan talks freely — stranger is blocked (hasn't said system name)
+[JAGAN] Hey Kara, I brought a friend.
+[STRANGER] Um, hi? What are you?
+[JAGAN] She's my robot dog. Say hi to her.
+[STRANGER] Okay... hi robot?
+
+---ASSERT WAITING_FOR_NAME STRANGER
+
+# Stranger finally says system name
+[STRANGER] Hey Kara! Nice to meet you.
+---ASSERT GATE_CLEARED STRANGER
+
+[JAGAN] Her name is Priya.
+[STRANGER] Yeah, I'm Priya. Jagan told me about you.
+[JAGAN] Priya works with me at NeuraLabs.
+[STRANGER] How long have you known Jagan?
+[JAGAN] We've worked together for about 2 years.
+
+# Stranger leaves — visitor alert should fire (they spoke, so nudge is queued)
+---CLOSE STRANGER
+---ASSERT SESSION_CLOSED STRANGER
+---ASSERT SESSION_OPEN JAGAN
+
+[JAGAN] Priya just left. What did you think of her?
+
+---CLOSE JAGAN
+---ASSERT SESSION_CLOSED JAGAN

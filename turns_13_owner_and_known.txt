@@ -1,0 +1,39 @@
+# SCENARIO 13: Owner + Known person (Jagan + Kavya)
+# Verifies: two enrolled people in session simultaneously,
+# room context injected (both sessions active),
+# memory isolation (each person's history is separate),
+# last_face_seen heartbeat keeps both sessions alive,
+# Kara responds correctly to each person,
+# session close for one doesn't affect the other.
+
+!CAST
+  JAGAN  id=sim_jagan  name=Jagan  type=best_friend
+  KAVYA  id=sim_kavya  name=Kavya  type=known
+!END_CAST
+
+---ENTER JAGAN
+---ENTER KAVYA
+---ASSERT SESSION_OPEN JAGAN
+---ASSERT SESSION_OPEN KAVYA
+
+[JAGAN] Hey Kara, Kavya's here with me.
+[KAVYA] Hi Kara! I've heard a lot about you.
+[JAGAN] What do you know about me?
+[KAVYA] What do you know about Jagan?
+[JAGAN] Kavya is my sister.
+[KAVYA] Yeah, he talks about this project all the time.
+[JAGAN] Do you remember what I do for work?
+[KAVYA] And what do you know about me so far?
+[JAGAN] Kavya works in design.
+[KAVYA] That's right! UX design.
+
+---CLOSE KAVYA
+---ASSERT SESSION_CLOSED KAVYA
+---ASSERT SESSION_OPEN JAGAN
+
+# Jagan continues alone — room context should drop (back to single person)
+[JAGAN] Kavya just left. It's just us now.
+[JAGAN] Did you enjoy talking to her?
+
+---CLOSE JAGAN
+---ASSERT SESSION_CLOSED JAGAN

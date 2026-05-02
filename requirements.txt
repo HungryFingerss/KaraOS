@@ -1,0 +1,40 @@
+# Core
+opencv-python>=4.9.0
+numpy>=1.26.0
+faiss-cpu>=1.7.4          # use faiss-gpu on Jetson for GPU index operations
+
+# Face models
+insightface>=0.7.3        # RetinaFace detector (buffalo_l)
+onnxruntime-gpu>=1.24.3   # AdaFace ONNX inference on GPU
+
+# Voice recognition
+speechbrain>=1.0.3        # ECAPA-TDNN speaker verification (spkrec-ecapa-voxceleb)
+
+# STT / TTS
+faster-whisper>=1.0.0     # GPU-accelerated Whisper (CTranslate2 backend)
+silero-vad>=5.0           # Voice activity detection
+kokoro-onnx>=0.4.0        # Local English TTS
+sounddevice>=0.4.6        # Mic input + speaker output
+piper-tts>=1.2.0          # Offline English TTS (Kokoro fallback)
+silent-face-anti-spoofing>=0.0.1  # MiniFASNet liveness — gates enrollment + recognition
+
+# Torch — RTX 50-series (Blackwell sm_120) requires cu128
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+torch>=2.0.0
+
+# LLM
+httpx>=0.27.0             # Ollama + Together.ai HTTP client
+openai>=1.0.0             # Together.ai embeddings + Phase 3 memory (OpenAI-compatible)
+transformers>=4.40.0      # WhisperFeatureExtractor for Smart-Turn mel-spectrogram preprocessing
+
+# Graph DB
+kuzu==0.11.3              # embedded property graph (entity-relationship knowledge)
+
+# Spatial memory vision (object detection)
+ultralytics>=8.3.0           # YOLO11 — auto-downloads model weights on first run
+
+# Utils
+python-dotenv>=1.0.0
+rapidfuzz>=3.0.0          # fast string similarity — schema normalization pre-filter
+pytest>=7.0.0             # test runner (dev)
+pytest-asyncio>=0.23.0    # async test support (dev)

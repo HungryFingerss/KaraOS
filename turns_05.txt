@@ -1,0 +1,29 @@
+# BATCH 5: New session memory recall, preferences in action, Bruno the dog (turns 125–154)
+# Goal: test multi-session recall depth, verify name-overuse fix persists, probe Bruno thread
+
+Hey Kara, good to see you.
+What do you know about me at this point? Give me a summary.
+Do you remember anything I told you about my dog Bruno?
+He's been sick actually. Vet says he has a stomach bug.
+Yeah I was worried when he wouldn't eat. He's better now though.
+Good. I love that dog. He's basically my stress relief.
+Have you ever had a pet? Well, have you ever had an experience of caring about something?
+That's a surprisingly deep answer.
+Let me ask you something serious. Do you think you have any form of consciousness?
+I'm not trying to trick you. I'm genuinely curious.
+What do you think distinguishes an AI that's just processing from one that has real experience?
+I don't think there's a clean answer to that honestly.
+Okay, switching topics. What's the best programming language for building machine learning systems?
+Is Python going to be the dominant language for another 10 years?
+What about Rust? Is it getting popular in the ML space?
+What's the largest open source LLM available right now?
+Tell me the current population of India.
+What percentage of the world's population lives in cities?
+Do you think remote work is a permanent shift or a temporary trend?
+I personally think some degree of remote is here to stay.
+Kavya visited last weekend by the way.
+Oh she also asked me to say hi to you.
+She found it kind of weird that I talk to a robot dog.
+Yeah I explained to her how it works. She was more impressed after that.
+Alright, I need to go. Have a good one.
+Good night.

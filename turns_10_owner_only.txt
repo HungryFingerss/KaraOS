@@ -1,0 +1,22 @@
+# SCENARIO 10: Owner alone — multi-person format validation
+# Verifies: new format parses correctly, session opens on ENTER (not on first turn),
+# heartbeat keeps session alive, ASSERTs pass throughout, normal conversation works.
+
+!CAST
+  JAGAN  id=sim_jagan  name=Jagan  type=best_friend
+!END_CAST
+
+---ENTER JAGAN
+---ASSERT SESSION_OPEN JAGAN
+
+[JAGAN] Hey Kara, can you hear me?
+[JAGAN] What's your name again?
+[JAGAN] I'm 32 years old, live in Hyderabad.
+[JAGAN] I work as a software engineer.
+[JAGAN] What do you know about me so far?
+[JAGAN] I have a sister named Kavya.
+[JAGAN] What day is it today?
+[JAGAN] Do you remember what I just told you?
+
+---CLOSE JAGAN
+---ASSERT SESSION_CLOSED JAGAN
