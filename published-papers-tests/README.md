@@ -170,10 +170,16 @@ published-papers-tests/
     │   ├── ABLATION_RESULTS.md
     │   ├── ablation_summary.json
     │   └── individual_runs/                ← all 10 per-run summaries + JSONs
-    └── ami_baseline/                       ← AMI smoke test (out-of-scope domain, honest disclosure)
+    ├── ami_baseline/                       ← AMI smoke test (out-of-scope domain, honest disclosure)
+    │   ├── README.md
+    │   ├── result_summary.md
+    │   └── predictions.json
+    └── multilayer_classifier_ablation/     ← 16-run multi-layer architecture ablation (2026-05-05)
         ├── README.md
-        ├── result_summary.md
-        └── predictions.json
+        ├── METHODOLOGY.md
+        ├── RESULTS.md
+        ├── phase_a_6_stage/                ← 6-stage matrix + summary.json
+        └── sweeps_phases_b_c_d/            ← parameter sweeps + final stack + phases_b_c_d_summary.json
 ```
 
 ---

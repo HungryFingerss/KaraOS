@@ -1,0 +1,63 @@
+{
+  "total_samples": 1287,
+  "accuracy": 0.48562548562548563,
+  "macro_accuracy": 0.5628104344632987,
+  "correct": 625,
+  "incorrect": 662,
+  "category_accuracy": {
+    "SPEAK_explicit": {
+      "accuracy": 0.11363636363636363,
+      "correct": 25,
+      "total": 220
+    },
+    "SILENT_no_ref": {
+      "accuracy": 0.9421965317919075,
+      "correct": 163,
+      "total": 173
+    },
+    "SILENT_ref": {
+      "accuracy": 0.8944099378881988,
+      "correct": 432,
+      "total": 483
+    },
+    "SPEAK_implicit": {
+      "accuracy": 0.012165450121654502,
+      "correct": 5,
+      "total": 411
+    }
+  },
+  "confusion_matrix": {
+    "SPEAK_->_SILENT": 545,
+    "SILENT_->_SILENT": 595,
+    "SILENT_->_None": 54,
+    "SPEAK_->_None": 56,
+    "SILENT_->_SPEAK": 7,
+    "SPEAK_->_SPEAK": 30
+  },
+  "latency_stats": {
+    "mean": 0.02522303550905315,
+    "median": 0.02693899998848792,
+    "p50": 0.02693899998848792,
+    "p95": 0.031404129997827115,
+    "p99": 0.03377137399686035,
+    "min": 0.015500399997108616,
+    "max": 0.04000240001187194
+  },
+  "false_positive_rate": 0.010670731707317074,
+  "false_negative_rate": 0.8637083993660856,
+  "precision_speak": 0.8108108108108109,
+  "recall_speak": 0.05217391304347826,
+  "precision_silent": 0.5219298245614035,
+  "recall_silent": 0.9883720930232558,
+  "f1_speak": 0.09803921568627451,
+  "f1_silent": 0.6831228473019518,
+  "macro_f1": 0.39058103149411316,
+  "stage": "all_v2",
+  "total_rows_loaded": 1287,
+  "excluded_count": 110,
+  "evaluated_count": 1177,
+  "stage_elapsed_secs": 32.5,
+  "avg_k_used": 15.0,
+  "fallback_rate": 0.0,
+  "abstain_rate": 0.08547008547008547
+}
