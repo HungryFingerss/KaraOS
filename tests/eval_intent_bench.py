@@ -429,7 +429,8 @@ async def _run_live_bench(rows: list[dict]) -> tuple[list["dict | None"], float,
     for i, row in enumerate(rows, 1):
         user_text = row["user_text"]
         short     = user_text[:60] + ("..." if len(user_text) > 60 else "")
-        print(f"[Bench] {i:3d}/{len(rows)} — {short!r}", flush=True)
+        short_safe = short.encode("ascii", errors="replace").decode("ascii")
+        print(f"[Bench] {i:3d}/{len(rows)} — {short_safe!r}", flush=True)
         try:
             sidecar = await _classify_intent(user_text, conversation_history=[])
         except Exception as e:
