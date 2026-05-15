@@ -215,10 +215,14 @@ def test_cloudstate_initial_is_online():
 
 
 def test_root_conftest_session_reset_fixture_is_active(request):
-    """Guard against future removal of the root-level _reset_session_state_between_tests fixture."""
-    assert "_reset_session_state_between_tests" in request.fixturenames, (
-        "Root conftest.py autouse fixture '_reset_session_state_between_tests' is missing — "
-        "_session_store leaks between tests in test_pipeline.py without it."
+    """Guard against future removal of the root-level store-reset autouse fixture.
+
+    Renamed from _reset_session_state_between_tests to
+    _reset_pipeline_state_between_tests in P0.6.1 to cover all P0.6 Stores.
+    """
+    assert "_reset_pipeline_state_between_tests" in request.fixturenames, (
+        "Root conftest.py autouse fixture '_reset_pipeline_state_between_tests' is missing — "
+        "Store state (SessionStore + P0.6 Stores) leaks between tests without it."
     )
 
 
