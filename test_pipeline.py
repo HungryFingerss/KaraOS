@@ -228,13 +228,11 @@ def test_root_conftest_session_reset_fixture_is_active(request):
 def reset_pipeline_globals():
     """Restore pipeline module globals after each test to avoid cross-test bleed."""
     import pipeline
-    orig_sessions          = dict(getattr(pipeline, '_active_sessions', {}))
     orig_system_name       = pipeline._active_system_name
     orig_detected_lang     = pipeline._detected_lang
     orig_conversation      = dict(pipeline._conversation)
     orig_ambient_wake      = set(pipeline._ambient_wake_pending)
     yield
-    pipeline._active_sessions      = orig_sessions
     pipeline._active_system_name   = orig_system_name
     pipeline._detected_lang        = orig_detected_lang
     pipeline._conversation         = orig_conversation
@@ -250,7 +248,6 @@ async def test_execute_tool_shutdown_returns_signal():
     import pipeline
     from pipeline import _execute_tool
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
     result = await _execute_tool("shutdown", {}, "p1", "Jagan", db=None,
                                   user_text="shut down")
     assert result == "shutdown"
@@ -261,7 +258,6 @@ async def test_execute_tool_shutdown_with_explicit_phrase():
     import pipeline
     from pipeline import _execute_tool
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
     result = await _execute_tool("shutdown", {}, "p1", "Jagan", db=None,
                                   user_text="please shut down")
     assert result == "shutdown"
@@ -276,13 +272,9 @@ async def test_execute_tool_shutdown_rejected_on_mention():
     import pipeline
     from pipeline import _execute_tool
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
-    try:
-        result = await _execute_tool("shutdown", {}, "p1", "Jagan", db=None,
-                                      user_text="why did you shut down last time?")
-        assert result == "rejected"
-    finally:
-        pipeline._active_sessions = {}
+    result = await _execute_tool("shutdown", {}, "p1", "Jagan", db=None,
+                                  user_text="why did you shut down last time?")
+    assert result == "rejected"
 
 
 async def test_execute_tool_shutdown_rejected_on_unrelated():
@@ -291,13 +283,9 @@ async def test_execute_tool_shutdown_rejected_on_unrelated():
     import pipeline
     from pipeline import _execute_tool
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
-    try:
-        result = await _execute_tool("shutdown", {}, "p1", "Jagan", db=None,
-                                      user_text="You are my project that I am developing")
-        assert result == "rejected"
-    finally:
-        pipeline._active_sessions = {}
+    result = await _execute_tool("shutdown", {}, "p1", "Jagan", db=None,
+                                  user_text="You are my project that I am developing")
+    assert result == "rejected"
 
 
 # set_language tool was removed in Step 2 of the robustness refactor (English-only).
@@ -320,10 +308,6 @@ async def test_execute_tool_update_person_name_calls_db():
     from pipeline import _execute_tool
     import time as _t
     await pipeline._session_store.open_session("p1", "OldName", "stranger", "face", now=__import__("time").time())
-    pipeline._active_sessions = {"p1": {"person_id": "p1", "person_name": "OldName",
-        "person_type": "stranger",
-        "session_type": "face", "last_face_seen": _t.time(), "last_spoke_at": _t.time(),
-        "voice_confidence": 1.0, "started_at": _t.time()}}
     pipeline._conversation = {"p1": []}
     mock_db = MagicMock()
     await _execute_tool(
@@ -343,9 +327,7 @@ async def test_execute_tool_update_person_name_no_op_when_same():
     import pipeline
     from pipeline import _execute_tool
     import time as _t
-    pipeline._active_sessions = {"p1": {"person_id": "p1", "person_name": "Jagan",
-        "session_type": "face", "last_face_seen": _t.time(), "last_spoke_at": _t.time(),
-        "voice_confidence": 1.0, "started_at": _t.time()}}
+    await pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=_t.time())
     pipeline._conversation = {"p1": []}
     mock_db = MagicMock()
     await _execute_tool(
@@ -362,10 +344,6 @@ async def test_execute_tool_update_person_name_fixes_history():
     from pipeline import _execute_tool
     import time as _t
     await pipeline._session_store.open_session("p1", "Jaren", "stranger", "face", now=__import__("time").time())
-    pipeline._active_sessions = {"p1": {"person_id": "p1", "person_name": "Jaren",
-        "person_type": "stranger",
-        "session_type": "face", "last_face_seen": _t.time(), "last_spoke_at": _t.time(),
-        "voice_confidence": 1.0, "started_at": _t.time()}}
     pipeline._conversation = {
         "p1": [
             {"role": "assistant", "content": "Hello Jaren, how are you?"},
@@ -392,14 +370,6 @@ async def test_execute_tool_update_person_name_promotes_stranger():
     import time as _t
 
     await pipeline._session_store.open_session("stranger_001", "visitor", "stranger", "face", now=__import__("time").time())
-    pipeline._active_sessions = {
-        "stranger_001": {
-            "person_id": "stranger_001", "person_name": "visitor",
-            "person_type": "stranger",
-            "session_type": "face", "last_face_seen": _t.time(),
-            "last_spoke_at": _t.time(), "voice_confidence": 1.0, "started_at": _t.time(),
-        }
-    }
     pipeline._conversation = {"stranger_001": []}
     pipeline._identity_hints = {}
 
@@ -450,10 +420,6 @@ async def test_execute_tool_update_person_name_classifier_allows_fires_tool():
     from pipeline import _execute_tool
     import time as _t
     await pipeline._session_store.open_session("p1", "OldName", "stranger", "face", now=__import__("time").time())
-    pipeline._active_sessions = {"p1": {"person_id": "p1", "person_name": "OldName",
-        "person_type": "stranger",
-        "session_type": "face", "last_face_seen": _t.time(), "last_spoke_at": _t.time(),
-        "voice_confidence": 1.0, "started_at": _t.time()}}
     pipeline._conversation = {"p1": []}
     mock_db = MagicMock()
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
@@ -496,10 +462,6 @@ async def test_execute_tool_update_person_name_classifier_rejects_blocks_tool():
     from pipeline import _execute_tool
     import time as _t
     await pipeline._session_store.open_session("p1", "OldName", "stranger", "face", now=__import__("time").time())
-    pipeline._active_sessions = {"p1": {"person_id": "p1", "person_name": "OldName",
-        "person_type": "stranger",
-        "session_type": "face", "last_face_seen": _t.time(), "last_spoke_at": _t.time(),
-        "voice_confidence": 1.0, "started_at": _t.time()}}
     pipeline._conversation = {"p1": []}
     mock_db = MagicMock()
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
@@ -547,10 +509,6 @@ async def test_execute_tool_update_person_name_classifier_unavail_fallback_to_re
     assert INTENT_FALLBACK_TO_REGEX is True, "P1.17 flip invalidates this test"
 
     await pipeline._session_store.open_session("p1", "OldName", "stranger", "face", now=__import__("time").time())
-    pipeline._active_sessions = {"p1": {"person_id": "p1", "person_name": "OldName",
-        "person_type": "stranger",
-        "session_type": "face", "last_face_seen": _t.time(), "last_spoke_at": _t.time(),
-        "voice_confidence": 1.0, "started_at": _t.time()}}
     pipeline._conversation = {"p1": []}
     mock_db = MagicMock()
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
@@ -587,10 +545,6 @@ async def test_execute_tool_update_person_name_classifier_unavail_fallback_disab
     monkeypatch.setattr("core.config.INTENT_FALLBACK_TO_REGEX", False)
 
     await pipeline._session_store.open_session("p1", "OldName", "stranger", "face", now=__import__("time").time())
-    pipeline._active_sessions = {"p1": {"person_id": "p1", "person_name": "OldName",
-        "person_type": "stranger",
-        "session_type": "face", "last_face_seen": _t.time(), "last_spoke_at": _t.time(),
-        "voice_confidence": 1.0, "started_at": _t.time()}}
     pipeline._conversation = {"p1": []}
     mock_db = MagicMock()
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
@@ -626,7 +580,6 @@ async def test_execute_tool_update_system_name_classifier_allows_fires_tool():
     from pipeline import _execute_tool
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
     pipeline._active_system_name = "Atlas"
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
     mock_db = MagicMock()
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
@@ -662,7 +615,6 @@ async def test_execute_tool_update_system_name_classifier_rejects_on_grounding_f
     from pipeline import _execute_tool
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
     pipeline._active_system_name = "Atlas"
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
     mock_db = MagicMock()
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
@@ -697,11 +649,6 @@ async def test_execute_tool_report_identity_mismatch_classifier_allows():
     from pipeline import _execute_tool
     import time as _t
     await pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=__import__("time").time())
-    pipeline._active_sessions = {"p1": {
-        "person_id": "p1", "person_name": "Jagan", "person_type": "known",
-        "session_type": "face", "last_face_seen": _t.time(),
-        "last_spoke_at": _t.time(), "voice_confidence": 1.0, "started_at": _t.time(),
-    }}
     mock_db = MagicMock()
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
@@ -739,11 +686,6 @@ async def test_execute_tool_report_identity_mismatch_classifier_rejects_question
     from pipeline import _execute_tool
     import time as _t
     await pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=__import__("time").time())
-    pipeline._active_sessions = {"p1": {
-        "person_id": "p1", "person_name": "Jagan", "person_type": "known",
-        "session_type": "face", "last_face_seen": _t.time(),
-        "last_spoke_at": _t.time(), "voice_confidence": 1.0, "started_at": _t.time(),
-    }}
     mock_db = MagicMock()
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
@@ -780,7 +722,6 @@ async def test_execute_tool_shutdown_classifier_allows_fires():
     import pipeline
     from pipeline import _execute_tool
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
     pipeline._brain_orchestrator = mock_orch
@@ -815,7 +756,6 @@ async def test_execute_tool_shutdown_ambiguous_farewell_both_gates_reject():
     import pipeline
     from pipeline import _execute_tool
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
     pipeline._brain_orchestrator = mock_orch
@@ -852,7 +792,6 @@ async def test_execute_tool_shutdown_classifier_unavail_falls_through_to_3_regex
     import pipeline
     from pipeline import _execute_tool
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
     pipeline._brain_orchestrator = mock_orch
@@ -870,8 +809,7 @@ async def test_execute_tool_shutdown_classifier_unavail_falls_through_to_3_regex
         # Reset the Session 70 tool-repeat guard state — same (tool, args)
         # fired twice in a unit-test context would trip it before the new
         # regex-fallback code even runs.
-        pipeline._active_sessions["p1"].pop("_tool_repeat_last",  None)
-        pipeline._active_sessions["p1"].pop("_tool_repeat_count", None)
+        await pipeline._session_store.update_tool_repeat("p1", None, 0)
         # Reject path: the question-about-shutdown exclusion in the 3-regex
         # chain — "why did you shut down?" has the phrase but is wrapped
         # in a question.
@@ -919,7 +857,6 @@ async def test_execute_tool_update_system_name_updates_global():
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
     pipeline._active_system_name = "Dog"
     pipeline._brain_orchestrator = None
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
     mock_db = MagicMock()
     await _execute_tool(
         "update_system_name", {"name": "Rex"},
@@ -935,17 +872,13 @@ async def test_execute_tool_update_system_name_no_op_when_same():
     from pipeline import _execute_tool
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
     pipeline._active_system_name = "Rex"
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
     mock_db = MagicMock()
-    try:
-        await _execute_tool(
-            "update_system_name", {"name": "rex"},
-            "p1", "Jagan", db=mock_db,
-            user_text="call you Rex",  # Session 73 gate
-        )
-        mock_db.set_system_identity.assert_not_called()
-    finally:
-        pipeline._active_sessions = {}
+    await _execute_tool(
+        "update_system_name", {"name": "rex"},
+        "p1", "Jagan", db=mock_db,
+        user_text="call you Rex",  # Session 73 gate
+    )
+    mock_db.set_system_identity.assert_not_called()
 
 
 # ── Bugs P + Q (2026-04-21 live run) — tool dispatch hygiene ────────────────
@@ -956,17 +889,14 @@ async def test_execute_tool_unknown_log_message_distinct_from_blocked(capsys):
     signal that distinguishes model artifacts from security violations."""
     import pipeline
     from pipeline import _execute_tool
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
-    try:
-        await _execute_tool("Buddy", {}, "p1", "Jagan", db=None)
-        out = capsys.readouterr().out
-        assert "unknown tool, discarded" in out
-        assert "BLOCKED" not in out, (
-            "unknown-tool path must NOT emit the BLOCKED log — that's the "
-            "privilege-denied path and conflating them is the Bug P root cause"
-        )
-    finally:
-        pipeline._active_sessions = {}
+    await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
+    await _execute_tool("Buddy", {}, "p1", "Jagan", db=None)
+    out = capsys.readouterr().out
+    assert "unknown tool, discarded" in out
+    assert "BLOCKED" not in out, (
+        "unknown-tool path must NOT emit the BLOCKED log — that's the "
+        "privilege-denied path and conflating them is the Bug P root cause"
+    )
 
 
 async def test_execute_tool_unknown_tool_does_not_fire_privilege_gate():
@@ -976,12 +906,9 @@ async def test_execute_tool_unknown_tool_does_not_fire_privilege_gate():
     the privilege gate's 'not in table' fallback and logged BLOCKED."""
     import pipeline
     from pipeline import _execute_tool
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
-    try:
-        result = await _execute_tool("Buddy", {}, "p1", "Jagan", db=None)
-        assert result == "unknown"
-    finally:
-        pipeline._active_sessions = {}
+    await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
+    result = await _execute_tool("Buddy", {}, "p1", "Jagan", db=None)
+    assert result == "unknown"
 
 
 async def test_execute_tool_update_system_name_noop_returns_handled_noop():
@@ -992,19 +919,15 @@ async def test_execute_tool_update_system_name_noop_returns_handled_noop():
     import pipeline
     from pipeline import _execute_tool
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
     pipeline._active_system_name = "Kara"
-    try:
-        result = await _execute_tool(
-            "update_system_name", {"name": "Kara"}, "p1", "Jagan", db=None,
-            user_text="call you Kara",
-        )
-        assert result == "handled_noop", (
-            f"no-op call must return 'handled_noop', got {result!r} — "
-            f"without this the canonical ack fires and feeds the feedback loop"
-        )
-    finally:
-        pipeline._active_sessions = {}
+    result = await _execute_tool(
+        "update_system_name", {"name": "Kara"}, "p1", "Jagan", db=None,
+        user_text="call you Kara",
+    )
+    assert result == "handled_noop", (
+        f"no-op call must return 'handled_noop', got {result!r} — "
+        f"without this the canonical ack fires and feeds the feedback loop"
+    )
 
 
 async def test_execute_tool_update_person_name_noop_returns_handled_noop():
@@ -1013,15 +936,11 @@ async def test_execute_tool_update_person_name_noop_returns_handled_noop():
     import pipeline
     from pipeline import _execute_tool
     await pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=__import__("time").time())
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "known"}}
-    try:
-        result = await _execute_tool(
-            "update_person_name", {"name": "Jagan"}, "p1", "Jagan", db=None,
-            user_text="my name is Jagan",
-        )
-        assert result == "handled_noop"
-    finally:
-        pipeline._active_sessions = {}
+    result = await _execute_tool(
+        "update_person_name", {"name": "Jagan"}, "p1", "Jagan", db=None,
+        user_text="my name is Jagan",
+    )
+    assert result == "handled_noop"
 
 
 def test_conversation_turn_no_longer_resets_repeat_guard_per_turn():
@@ -1324,18 +1243,14 @@ async def test_update_system_name_rejected_when_user_did_not_assign():
     wrong reason."""
     import pipeline, time as _t
     from pipeline import _execute_tool
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
     pipeline._active_system_name = "Dog"
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=_t.time())
-    try:
-        result = await _execute_tool(
-            "update_system_name", {"name": "Kara"}, "p1", "Jagan", db=None,
-            user_text="Do you know the game called Detroit?",
-        )
-        assert result == "rejected"
-        assert pipeline._active_system_name == "Dog", "name must NOT change on rejected call"
-    finally:
-        pipeline._active_sessions = {}
+    result = await _execute_tool(
+        "update_system_name", {"name": "Kara"}, "p1", "Jagan", db=None,
+        user_text="Do you know the game called Detroit?",
+    )
+    assert result == "rejected"
+    assert pipeline._active_system_name == "Dog", "name must NOT change on rejected call"
 
 
 # ── Session 73 / Bugs G1-G4 — shared user-text gate primitive ────────────────
@@ -2524,18 +2439,14 @@ async def test_update_system_name_accepted_when_name_in_turn():
     import pipeline
     import time as _t
     from pipeline import _execute_tool
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
     pipeline._active_system_name = "Dog"
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=_t.time())
-    try:
-        result = await _execute_tool(
-            "update_system_name", {"name": "Kara"}, "p1", "Jagan", db=None,
-            user_text="I want to name you Kara.",
-        )
-        assert result == "handled"
-        assert pipeline._active_system_name == "Kara"
-    finally:
-        pipeline._active_sessions = {}
+    result = await _execute_tool(
+        "update_system_name", {"name": "Kara"}, "p1", "Jagan", db=None,
+        user_text="I want to name you Kara.",
+    )
+    assert result == "handled"
+    assert pipeline._active_system_name == "Kara"
 
 
 async def test_update_system_name_accepted_on_assign_intent_phrase():
@@ -2545,17 +2456,13 @@ async def test_update_system_name_accepted_on_assign_intent_phrase():
     import pipeline
     import time as _t
     from pipeline import _execute_tool
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
     pipeline._active_system_name = "Dog"
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=_t.time())
-    try:
-        result = await _execute_tool(
-            "update_system_name", {"name": "Kara"}, "p1", "Jagan", db=None,
-            user_text="from now on you're Kara okay?",
-        )
-        assert result == "handled"
-    finally:
-        pipeline._active_sessions = {}
+    result = await _execute_tool(
+        "update_system_name", {"name": "Kara"}, "p1", "Jagan", db=None,
+        user_text="from now on you're Kara okay?",
+    )
+    assert result == "handled"
 
 
 async def test_update_person_name_rejected_when_user_did_not_self_identify():
@@ -2565,33 +2472,27 @@ async def test_update_person_name_rejected_when_user_did_not_self_identify():
     path where rename is a legitimate promotion (stranger → known)."""
     import pipeline
     from pipeline import _execute_tool
-    pipeline._active_sessions = {"stranger_x": {"person_name": "visitor", "person_type": "stranger"}}
-    try:
-        result = await _execute_tool(
-            "update_person_name", {"name": "Sarah"}, "stranger_x", "visitor", db=None,
-            user_text="okay, that's fine",
-        )
-        assert result == "rejected"
-    finally:
-        pipeline._active_sessions = {}
+    await pipeline._session_store.open_session("stranger_x", "visitor", "stranger", "face", now=__import__("time").time())
+    result = await _execute_tool(
+        "update_person_name", {"name": "Sarah"}, "stranger_x", "visitor", db=None,
+        user_text="okay, that's fine",
+    )
+    assert result == "rejected"
 
 
 async def test_update_person_name_accepted_when_self_identifies():
     """Bug S-parallel: 'my name is Sarah' satisfies the gate."""
     import pipeline
     from pipeline import _execute_tool
-    pipeline._active_sessions = {"stranger_x": {"person_name": "visitor", "person_type": "stranger"}}
-    try:
-        # db=None so the rename doesn't hit real DB; we just verify gate passes.
-        result = await _execute_tool(
-            "update_person_name", {"name": "Sarah"}, "stranger_x", "visitor", db=None,
-            user_text="my name is Sarah, by the way.",
-        )
-        assert result == "handled", (
-            f"gate must accept a self-ID phrase; got {result!r}"
-        )
-    finally:
-        pipeline._active_sessions = {}
+    await pipeline._session_store.open_session("stranger_x", "visitor", "stranger", "face", now=__import__("time").time())
+    # db=None so the rename doesn't hit real DB; we just verify gate passes.
+    result = await _execute_tool(
+        "update_person_name", {"name": "Sarah"}, "stranger_x", "visitor", db=None,
+        user_text="my name is Sarah, by the way.",
+    )
+    assert result == "handled", (
+        f"gate must accept a self-ID phrase; got {result!r}"
+    )
 
 
 # ── Bug G1 (2026-04-22 live run) — Detroit rename end-to-end ────────────────
@@ -2603,21 +2504,17 @@ async def test_update_system_name_rejected_on_detroit_cameo():
     import pipeline
     from pipeline import _execute_tool
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
     pipeline._active_system_name = "Dog"
-    try:
-        result = await _execute_tool(
-            "update_system_name", {"name": "Detroit"}, "p1", "Jagan", db=None,
-            user_text="Yeah, do you know the name called Detroit? I'm playing it",
-        )
-        assert result == "rejected", (
-            f"Detroit rename must be blocked by capture-group gate, got {result!r}"
-        )
-        assert pipeline._active_system_name == "Dog", (
-            "system name must NOT change when gate rejects"
-        )
-    finally:
-        pipeline._active_sessions = {}
+    result = await _execute_tool(
+        "update_system_name", {"name": "Detroit"}, "p1", "Jagan", db=None,
+        user_text="Yeah, do you know the name called Detroit? I'm playing it",
+    )
+    assert result == "rejected", (
+        f"Detroit rename must be blocked by capture-group gate, got {result!r}"
+    )
+    assert pipeline._active_system_name == "Dog", (
+        "system name must NOT change when gate rejects"
+    )
 
 
 async def test_update_system_name_rejected_on_empty_user_text_by_default():
@@ -2627,14 +2524,11 @@ async def test_update_system_name_rejected_on_empty_user_text_by_default():
     from pipeline import _execute_tool
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
     pipeline._active_system_name = "Dog"
-    try:
-        result = await _execute_tool(
-            "update_system_name", {"name": "Kara"}, "p1", "Jagan", db=None,
-            user_text="",
-        )
-        assert result == "rejected"
-    finally:
-        pass
+    result = await _execute_tool(
+        "update_system_name", {"name": "Kara"}, "p1", "Jagan", db=None,
+        user_text="",
+    )
+    assert result == "rejected"
 
 
 # ── Bug G3 (2026-04-22 live run) — report_identity_mismatch gate ────────────
@@ -2645,21 +2539,19 @@ async def test_report_identity_mismatch_rejected_on_benign_question():
     → session flipped DISPUTED → 15 broken turns. Gate must reject."""
     import pipeline
     from pipeline import _execute_tool
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
-    try:
-        result = await _execute_tool(
-            "report_identity_mismatch", {"reason": "speaker asks who they are talking to"},
-            "p1", "Jagan", db=None,
-            user_text="Hey, who are you talking to?",
-        )
-        assert result == "rejected", (
-            "legit multi-person-scene question must NOT trigger dispute"
-        )
-        assert pipeline._active_sessions["p1"]["person_type"] == "best_friend", (
-            "session must stay best_friend — NOT flip to disputed"
-        )
-    finally:
-        pipeline._active_sessions = {}
+    await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
+    result = await _execute_tool(
+        "report_identity_mismatch", {"reason": "speaker asks who they are talking to"},
+        "p1", "Jagan", db=None,
+        user_text="Hey, who are you talking to?",
+    )
+    assert result == "rejected", (
+        "legit multi-person-scene question must NOT trigger dispute"
+    )
+    snap = pipeline._session_store.peek_snapshot("p1")
+    assert snap.person_type == "best_friend", (
+        "session must stay best_friend — NOT flip to disputed"
+    )
 
 
 def test_update_person_name_tool_description_includes_stranger_promotion_trigger():
@@ -2807,21 +2699,17 @@ async def test_report_identity_mismatch_accepted_on_explicit_denial():
     from pipeline import _execute_tool
     import time as _t
     await pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=_t.time())
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "known"}}
-    try:
-        result = await _execute_tool(
-            "report_identity_mismatch", {"reason": "speaker denies being Jagan"},
-            "p1", "Jagan", db=None,
-            user_text="No, I'm not Jagan, you've got the wrong person.",
-        )
-        await asyncio.sleep(0)
-        assert result == "handled"
-        _snap = pipeline._session_store.peek_snapshot("p1")
-        assert _snap is not None and _snap.person_type == "disputed"
-        # Session 73: prior_person_type must be captured for auto-clear restore.
-        assert _snap.prior_person_type == "known"
-    finally:
-        pipeline._active_sessions = {}
+    result = await _execute_tool(
+        "report_identity_mismatch", {"reason": "speaker denies being Jagan"},
+        "p1", "Jagan", db=None,
+        user_text="No, I'm not Jagan, you've got the wrong person.",
+    )
+    await asyncio.sleep(0)
+    assert result == "handled"
+    _snap = pipeline._session_store.peek_snapshot("p1")
+    assert _snap is not None and _snap.person_type == "disputed"
+    # Session 73: prior_person_type must be captured for auto-clear restore.
+    assert _snap.prior_person_type == "known"
 
 
 def test_report_identity_mismatch_preserves_prior_person_type_for_best_friend():
@@ -2900,14 +2788,10 @@ async def test_execute_tool_unknown_tool_returns_unknown_status():
     conversation_turn can retry for text rather than emit the error filler."""
     import pipeline
     from pipeline import _execute_tool
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
-    try:
-        result = await _execute_tool("nonexistent_tool", {}, "p1", "Jagan", db=None)
-        assert result == "unknown", (
-            f"unknown tool name must return 'unknown' status, got {result!r}"
-        )
-    finally:
-        pipeline._active_sessions = {}
+    result = await _execute_tool("nonexistent_tool", {}, "p1", "Jagan", db=None)
+    assert result == "unknown", (
+        f"unknown tool name must return 'unknown' status, got {result!r}"
+    )
 
 
 # ── enrollment anti-spoofing ───────────────────────────────────────────────────
@@ -3163,7 +3047,6 @@ async def test_dream_runs_when_idle():
 
     from core.session_state import SessionStore
     pipeline._shutdown_event = asyncio.Event()
-    pipeline._active_sessions = {}
     pipeline._session_store = SessionStore()
     pipeline._brain_orchestrator = MagicMock()
     pipeline._brain_orchestrator.dream = AsyncMock()
@@ -3185,8 +3068,6 @@ async def test_dream_runs_when_idle():
         pipeline._brain_orchestrator.dream.assert_called()
     finally:
         pipeline._shutdown_event = None
-        pipeline._active_sessions = {}
-        pipeline._session_store = SessionStore()
 
 
 @pytest.mark.asyncio
@@ -3196,7 +3077,6 @@ async def test_dream_force_trigger_fires_during_active_session():
     from pipeline import _dream_loop
 
     pipeline._shutdown_event = asyncio.Event()
-    pipeline._active_sessions = {"p1": {}}
     pipeline._brain_orchestrator = MagicMock()
     pipeline._brain_orchestrator.dream = AsyncMock()
     mock_db = MagicMock()
@@ -3216,7 +3096,6 @@ async def test_dream_force_trigger_fires_during_active_session():
         pipeline._brain_orchestrator.dream.assert_called()
     finally:
         pipeline._shutdown_event = None
-        pipeline._active_sessions = {}
 
 
 @pytest.mark.asyncio
@@ -3226,7 +3105,6 @@ async def test_dream_skips_when_busy_and_not_forced():
     from pipeline import _dream_loop
 
     pipeline._shutdown_event = asyncio.Event()
-    pipeline._active_sessions = {"p1": {}}
     pipeline._brain_orchestrator = MagicMock()
     pipeline._brain_orchestrator.dream = AsyncMock()
     mock_db = MagicMock()
@@ -3248,7 +3126,6 @@ async def test_dream_skips_when_busy_and_not_forced():
         pipeline._brain_orchestrator.dream.assert_not_called()
     finally:
         pipeline._shutdown_event = None
-        pipeline._active_sessions = {}
 
 
 # ── cloud retry loop ───────────────────────────────────────────────────────────
@@ -3359,105 +3236,77 @@ async def test_cloud_retry_loop_skips_ping_when_online():
 # ── G4: stranger system-name gate ─────────────────────────────────────────────
 
 
-def test_stranger_session_waits_for_name_by_default():
+async def test_stranger_session_waits_for_name_by_default():
     """Face-detected stranger session has waiting_for_name=True and person_type='stranger'."""
     import pipeline
     import time as _t
 
-    pipeline._active_sessions = {}
-    pipeline._active_sessions["stranger_abc"] = {
-        "person_id": "stranger_abc", "person_name": "visitor",
-        "session_type": "face", "last_face_seen": _t.time(),
-        "last_spoke_at": _t.time(), "voice_confidence": 1.0, "started_at": _t.time(),
-    }
-    # Simulate what the face-detected stranger path now does
-    pipeline._active_sessions["stranger_abc"]["person_type"] = "stranger"
-    pipeline._active_sessions["stranger_abc"]["waiting_for_name"] = True
+    await pipeline._session_store.open_session("stranger_abc", "visitor", "stranger", "face", now=_t.time())
+    await pipeline._session_store.set_waiting_for_name("stranger_abc", True)
 
-    sess = pipeline._active_sessions["stranger_abc"]
-    assert sess["person_type"] == "stranger"
-    assert sess["waiting_for_name"] is True
-
-    pipeline._active_sessions = {}
+    snap = pipeline._session_store.peek_snapshot("stranger_abc")
+    assert snap.person_type == "stranger"
+    assert snap.waiting_for_name is True
 
 
-def test_voice_only_stranger_not_waiting():
+async def test_voice_only_stranger_not_waiting():
     """Voice-only stranger (already said system name) has waiting_for_name=False."""
     import pipeline
     import time as _t
 
-    pipeline._active_sessions = {}
-    pipeline._active_sessions["stranger_xyz"] = {
-        "person_id": "stranger_xyz", "person_name": "visitor",
-        "session_type": "voice", "last_face_seen": _t.time(),
-        "last_spoke_at": _t.time(), "voice_confidence": 1.0, "started_at": _t.time(),
-    }
-    # Simulate what voice-only path now does
-    pipeline._active_sessions["stranger_xyz"]["person_type"] = "stranger"
-    pipeline._active_sessions["stranger_xyz"]["waiting_for_name"] = False
+    await pipeline._session_store.open_session("stranger_xyz", "visitor", "stranger", "voice", now=_t.time())
+    # waiting_for_name defaults to False in the Session dataclass
 
-    sess = pipeline._active_sessions["stranger_xyz"]
-    assert sess["person_type"] == "stranger"
-    assert sess["waiting_for_name"] is False
-
-    pipeline._active_sessions = {}
+    snap = pipeline._session_store.peek_snapshot("stranger_xyz")
+    assert snap.person_type == "stranger"
+    assert snap.waiting_for_name is False
 
 
-def test_stranger_name_gate_activates_on_system_name():
+async def test_stranger_name_gate_activates_on_system_name():
     """When text contains system name, waiting_for_name is cleared."""
     import pipeline
     import time as _t
 
-    pipeline._active_sessions = {
-        "stranger_001": {
-            "person_id": "stranger_001", "person_name": "visitor",
-            "person_type": "stranger", "waiting_for_name": True,
-            "session_type": "face", "last_face_seen": _t.time(),
-            "last_spoke_at": _t.time(), "voice_confidence": 1.0, "started_at": _t.time(),
-        }
-    }
+    await pipeline._session_store.open_session("stranger_001", "visitor", "stranger", "face", now=_t.time())
+    await pipeline._session_store.set_waiting_for_name("stranger_001", True)
     pipeline._active_system_name = "Rex"
 
     text = "Hey Rex, are you awake?"
     pid = "stranger_001"
 
-    # Simulate the name gate logic
-    if pipeline._active_sessions.get(pid, {}).get("waiting_for_name"):
+    # Simulate the name gate logic (mirrors production _session_store read path)
+    _snap_gate = pipeline._session_store.peek_snapshot(pid)
+    if _snap_gate and _snap_gate.waiting_for_name:
         if pipeline._active_system_name.lower() in text.lower():
-            pipeline._active_sessions[pid]["waiting_for_name"] = False
+            await pipeline._session_store.set_waiting_for_name(pid, False)
 
-    assert pipeline._active_sessions[pid]["waiting_for_name"] is False
+    _snap_after = pipeline._session_store.peek_snapshot(pid)
+    assert _snap_after is not None and not _snap_after.waiting_for_name
 
-    pipeline._active_sessions = {}
     pipeline._active_system_name = "Dog"
 
 
-def test_stranger_name_gate_stays_silent_without_name():
+async def test_stranger_name_gate_stays_silent_without_name():
     """When text does NOT contain system name, waiting_for_name remains True."""
     import pipeline
     import re
     import time as _t
 
-    pipeline._active_sessions = {
-        "stranger_002": {
-            "person_id": "stranger_002", "person_name": "visitor",
-            "person_type": "stranger", "waiting_for_name": True,
-            "session_type": "face", "last_face_seen": _t.time(),
-            "last_spoke_at": _t.time(), "voice_confidence": 1.0, "started_at": _t.time(),
-        }
-    }
+    await pipeline._session_store.open_session("stranger_002", "visitor", "stranger", "face", now=_t.time())
+    await pipeline._session_store.set_waiting_for_name("stranger_002", True)
     pipeline._active_system_name = "Rex"
 
     pid = "stranger_002"
     name_pattern = r'\b' + re.escape(pipeline._active_system_name.lower()) + r'\b'
 
-    # Name absent → no fire
+    # Name absent → no fire; gate does not clear waiting_for_name
     gate_fired = False
     for text in ["hello there, how are you doing today?", "I see a reflex in the mirror"]:
         if re.search(name_pattern, text.lower()):
             gate_fired = True
     assert gate_fired is False
-    assert pipeline._active_sessions[pid]["waiting_for_name"] is True
+    _snap_check = pipeline._session_store.peek_snapshot(pid)
+    assert _snap_check is not None and _snap_check.waiting_for_name is True
 
     # Word-boundary: "reflex" must NOT match "rex"
     pipeline._active_system_name = "rex"
@@ -3465,7 +3314,6 @@ def test_stranger_name_gate_stays_silent_without_name():
     assert not re.search(name_pattern2, "reflex is a thing")
     assert re.search(name_pattern2, "hey rex, wake up")
 
-    pipeline._active_sessions = {}
     pipeline._active_system_name = "Dog"
 
 
@@ -3477,14 +3325,7 @@ async def test_promotion_clears_waiting_for_name():
 
     import time as _t2
     await pipeline._session_store.open_session("stranger_003", "visitor", "stranger", "face", now=_t2.time())
-    pipeline._active_sessions = {
-        "stranger_003": {
-            "person_id": "stranger_003", "person_name": "visitor",
-            "person_type": "stranger", "waiting_for_name": True,
-            "session_type": "face", "last_face_seen": _t.time(),
-            "last_spoke_at": _t.time(), "voice_confidence": 1.0, "started_at": _t.time(),
-        }
-    }
+    await pipeline._session_store.set_waiting_for_name("stranger_003", True)
     pipeline._conversation = {"stranger_003": []}
     pipeline._identity_hints = {}
 
@@ -3507,7 +3348,6 @@ async def test_promotion_clears_waiting_for_name():
     # and db.update_person_type; verify the DB write happened.
     mock_db.update_person_type.assert_called_once_with("stranger_003", "known")
 
-    pipeline._active_sessions = {}
     pipeline._brain_orchestrator = None
 
 
@@ -3549,13 +3389,12 @@ async def test_background_scan_uses_temporal_pooling():
     mock_temporal.pool_depth.return_value = 5  # deep pool → no penalty threshold
     mock_db       = MagicMock(); mock_db.recognize.return_value = (None, None, 0.0)
 
-    orig_sessions       = pipeline._active_sessions
     orig_scan_last      = pipeline._vision_face_scan_last
     orig_prev_count     = pipeline._vision_prev_det_count
     orig_track_identity = pipeline._track_identity
     orig_unrec_tracks   = pipeline._unrecognized_tracks
 
-    pipeline._active_sessions      = {"pid_001": {"last_face_seen": _t.time(), "person_name": "Alice"}}
+    await pipeline._session_store.open_session("pid_001", "Alice", "known", "face", now=_t.time())
     pipeline._vision_face_scan_last = 0.0
     pipeline._vision_prev_det_count = 0
     pipeline._track_identity        = {}   # brand-new track 7 → _should_run_recognition → True
@@ -3580,7 +3419,6 @@ async def test_background_scan_uses_temporal_pooling():
         len(call_kwargs.args) >= 3 and call_kwargs.args[2] == 7
     )
 
-    pipeline._active_sessions      = orig_sessions
     pipeline._vision_face_scan_last = orig_scan_last
     pipeline._vision_prev_det_count = orig_prev_count
     pipeline._track_identity        = orig_track_identity
@@ -3604,13 +3442,12 @@ async def test_background_scan_uses_adaptive_threshold():
     mock_temporal.pool_depth.return_value = 5  # deep pool → no penalty threshold
     mock_db       = MagicMock(); mock_db.recognize.return_value = (None, None, 0.0)
 
-    orig_sessions       = pipeline._active_sessions
     orig_scan_last      = pipeline._vision_face_scan_last
     orig_prev_count     = pipeline._vision_prev_det_count
     orig_track_identity = pipeline._track_identity
     orig_unrec_tracks   = pipeline._unrecognized_tracks
 
-    pipeline._active_sessions      = {"pid_001": {"last_face_seen": _t.time(), "person_name": "Alice"}}
+    await pipeline._session_store.open_session("pid_001", "Alice", "known", "face", now=_t.time())
     pipeline._vision_face_scan_last = 0.0
     pipeline._vision_prev_det_count = 0
     pipeline._track_identity        = {}   # brand-new track 7 → _should_run_recognition → True
@@ -3638,7 +3475,6 @@ async def test_background_scan_uses_adaptive_threshold():
         f"recognize called with {actual_thresh}, expected adaptive {expected}"
     )
 
-    pipeline._active_sessions      = orig_sessions
     pipeline._vision_face_scan_last = orig_scan_last
     pipeline._vision_prev_det_count = orig_prev_count
     pipeline._track_identity        = orig_track_identity
@@ -3659,11 +3495,10 @@ async def test_background_scan_skips_when_temporal_buffer_none():
     mock_embedder = MagicMock(); mock_embedder.embed.return_value = _np.ones(512, dtype=_np.float32)
     mock_db       = MagicMock(); mock_db.recognize.return_value = (None, None, 0.0)
 
-    orig_sessions   = pipeline._active_sessions
     orig_scan_last  = pipeline._vision_face_scan_last
     orig_prev_count = pipeline._vision_prev_det_count
 
-    pipeline._active_sessions      = {"pid_001": {"last_face_seen": _t.time(), "person_name": "Alice"}}
+    await pipeline._session_store.open_session("pid_001", "Alice", "known", "face", now=_t.time())
     pipeline._vision_face_scan_last = 0.0
     pipeline._vision_prev_det_count = 0
 
@@ -3681,7 +3516,6 @@ async def test_background_scan_skips_when_temporal_buffer_none():
 
     mock_db.recognize.assert_not_called()
 
-    pipeline._active_sessions      = orig_sessions
     pipeline._vision_face_scan_last = orig_scan_last
     pipeline._vision_prev_det_count = orig_prev_count
 
@@ -3696,7 +3530,6 @@ async def test_auto_confirm_promotion_runs_full_chain():
     import time as _t
 
     # ── Global state setup ─────────────────────────────────────────────────────
-    orig_sessions       = pipeline._active_sessions
     orig_conversation   = pipeline._conversation
     orig_identity_hints = pipeline._identity_hints
     orig_cloud_state    = pipeline._cloud_state
@@ -3706,18 +3539,6 @@ async def test_auto_confirm_promotion_runs_full_chain():
     orig_detected_lang  = pipeline._detected_lang
     orig_system_name    = pipeline._active_system_name
 
-    pipeline._active_sessions = {
-        "stranger_001": {
-            "person_id":       "stranger_001",
-            "person_name":     "visitor",
-            "person_type":     "stranger",
-            "session_type":    "face",
-            "last_face_seen":  _t.time(),
-            "last_spoke_at":   _t.time(),
-            "voice_confidence": 1.0,
-            "started_at":      _t.time(),
-        }
-    }
     pipeline._conversation        = {"stranger_001": []}
     pipeline._identity_hints      = {}
     pipeline._cloud_state         = CloudState.ONLINE
@@ -3777,16 +3598,15 @@ async def test_auto_confirm_promotion_runs_full_chain():
             "stranger_001", "visitor", "Priya"
         )
 
-        # Session dict: waiting_for_name gate must be cleared synchronously
-        sess = pipeline._active_sessions["stranger_001"]
-        assert "waiting_for_name" not in sess
+        # waiting_for_name must be False after auto-confirm promotion
+        _snap = pipeline._session_store.peek_snapshot("stranger_001")
+        assert _snap is None or not _snap.waiting_for_name
 
         # identity_hints entry should be cleared after auto-confirm
         assert "stranger_001" not in pipeline._identity_hints
 
     finally:
         # ── Restore globals ───────────────────────────────────────────────────
-        pipeline._active_sessions       = orig_sessions
         pipeline._conversation          = orig_conversation
         pipeline._identity_hints        = orig_identity_hints
         pipeline._cloud_state           = orig_cloud_state
@@ -4305,7 +4125,6 @@ async def test_tool_repeat_guard_fires_on_second_consecutive_call():
     """L3: Same (tool, args) fired twice in a row — second call returns None."""
     import pipeline
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_sessions    = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
     pipeline._active_system_name = "OldName"
 
     r1 = await pipeline._execute_tool(
@@ -4328,7 +4147,6 @@ async def test_tool_repeat_guard_resets_on_different_args():
     """L3: Different args hash — guard does not fire, second call proceeds."""
     import pipeline
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_sessions    = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
     pipeline._active_system_name = "OldName"
 
     r1 = await pipeline._execute_tool(
@@ -4348,7 +4166,6 @@ async def test_tool_repeat_guard_resets_after_pop():
     """L3: After guard keys are popped (simulates new user message), same tool proceeds."""
     import pipeline
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_sessions    = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
     pipeline._active_system_name = "OldName"
 
     await pipeline._execute_tool(
@@ -4370,7 +4187,7 @@ async def test_tool_repeat_guard_resets_after_pop():
 async def test_tool_repeat_guard_different_tool_unaffected():
     """L3: Guard counter is per (tool+args) key — a different tool is not blocked."""
     import pipeline
-    pipeline._active_sessions    = {"p1": {"person_name": "Jagan"}}
+    await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
     pipeline._active_system_name = "OldName"
 
     # Fire update_system_name once (count=1 for that key)
@@ -4395,7 +4212,6 @@ async def test_history_override_update_system_name():
     from unittest.mock import patch, AsyncMock
 
     await pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=__import__("time").time())
-    pipeline._active_sessions    = {"p1": {"person_name": "Jagan", "person_type": "known"}}
     pipeline._conversation       = {"p1": []}
     pipeline._active_system_name = "Kara"
     pipeline._cloud_state        = CloudState.ONLINE
@@ -4432,7 +4248,6 @@ async def test_history_override_update_person_name():
     from unittest.mock import patch, AsyncMock
 
     await pipeline._session_store.open_session("p1", "Jay", "known", "face", now=__import__("time").time())
-    pipeline._active_sessions    = {"p1": {"person_name": "Jay", "person_type": "known"}}
     pipeline._conversation       = {"p1": []}
     pipeline._active_system_name = "Rex"
     pipeline._cloud_state        = CloudState.ONLINE
@@ -4471,7 +4286,6 @@ async def test_history_override_not_fired_for_set_language():
     from unittest.mock import patch, AsyncMock
 
     await pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=__import__("time").time())
-    pipeline._active_sessions    = {"p1": {"person_name": "Jagan", "person_type": "known"}}
     pipeline._conversation       = {"p1": []}
     pipeline._active_system_name = "Rex"
     pipeline._cloud_state        = CloudState.ONLINE
@@ -4512,7 +4326,6 @@ async def test_layer4_stop_audio_called_for_action_tool():
     from unittest.mock import patch, AsyncMock, MagicMock
 
     await pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=time.time())
-    pipeline._active_sessions    = {"p1": {"person_name": "Jagan", "person_type": "known"}}
     pipeline._conversation       = {"p1": []}
     pipeline._active_system_name = "Rex"
     pipeline._cloud_state        = CloudState.ONLINE
@@ -4547,7 +4360,7 @@ async def test_layer4_stop_audio_not_called_for_non_action_tool():
     from pipeline import CloudState
     from unittest.mock import patch, AsyncMock
 
-    pipeline._active_sessions    = {"p1": {"person_name": "Jagan", "person_type": "known"}}
+    await pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=__import__("time").time())
     pipeline._conversation       = {"p1": []}
     pipeline._active_system_name = "Rex"
     pipeline._cloud_state        = CloudState.ONLINE
@@ -4579,7 +4392,7 @@ async def test_layer4_stop_audio_not_called_when_no_tool_calls():
     from pipeline import CloudState
     from unittest.mock import patch, AsyncMock
 
-    pipeline._active_sessions    = {"p1": {"person_name": "Jagan", "person_type": "known"}}
+    await pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=__import__("time").time())
     pipeline._conversation       = {"p1": []}
     pipeline._active_system_name = "Rex"
     pipeline._cloud_state        = CloudState.ONLINE
@@ -4618,7 +4431,6 @@ async def test_shutdown_accepted_for_exact_good_night():
     import pipeline
     from pipeline import _execute_tool
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
     result = await _execute_tool("shutdown", {}, "p1", "Jagan", db=None,
                                   user_text="good night")
     assert result == "shutdown"
@@ -4654,7 +4466,6 @@ async def test_rejected_shutdown_response_overridden_to_neutral():
     import pipeline
     from pipeline import conversation_turn, CloudState
 
-    orig_sessions  = pipeline._active_sessions
     orig_conv      = pipeline._conversation
     orig_cloud     = pipeline._cloud_state
     orig_emotion_agents   = pipeline._emotion_agents
@@ -4665,7 +4476,6 @@ async def test_rejected_shutdown_response_overridden_to_neutral():
     orig_hints     = pipeline._identity_hints
     orig_shutdown  = pipeline._shutdown_event
 
-    pipeline._active_sessions       = {"p_sd": _make_shutdown_session()}
     await pipeline._session_store.open_session("p_sd", "Jagan", "best_friend", "face", now=__import__("time").time())
     pipeline._conversation          = {"p_sd": []}
     pipeline._cloud_state           = CloudState.ONLINE
@@ -4697,7 +4507,6 @@ async def test_rejected_shutdown_response_overridden_to_neutral():
         assert hist[-1]["content"] == "Okay.", \
             f"Expected 'Okay.' but got {hist[-1]['content']!r}"
     finally:
-        pipeline._active_sessions       = orig_sessions
         pipeline._conversation          = orig_conv
         pipeline._cloud_state           = orig_cloud
         pipeline._emotion_agents         = orig_emotion_agents
@@ -4714,7 +4523,6 @@ async def test_rejected_shutdown_does_not_write_goodbye_to_history():
     import pipeline
     from pipeline import conversation_turn, CloudState
 
-    orig_sessions  = pipeline._active_sessions
     orig_conv      = pipeline._conversation
     orig_cloud     = pipeline._cloud_state
     orig_emotion_agents   = pipeline._emotion_agents
@@ -4725,7 +4533,6 @@ async def test_rejected_shutdown_does_not_write_goodbye_to_history():
     orig_hints     = pipeline._identity_hints
     orig_shutdown  = pipeline._shutdown_event
 
-    pipeline._active_sessions       = {"p_sd": _make_shutdown_session()}
     await pipeline._session_store.open_session("p_sd", "Jagan", "best_friend", "face", now=__import__("time").time())
     pipeline._conversation          = {"p_sd": []}
     pipeline._cloud_state           = CloudState.ONLINE
@@ -4757,7 +4564,6 @@ async def test_rejected_shutdown_does_not_write_goodbye_to_history():
         assert "goodbye" not in hist[-1]["content"].lower(), \
             f"'Goodbye!' leaked into history: {hist[-1]['content']!r}"
     finally:
-        pipeline._active_sessions       = orig_sessions
         pipeline._conversation          = orig_conv
         pipeline._cloud_state           = orig_cloud
         pipeline._emotion_agents         = orig_emotion_agents
@@ -4774,7 +4580,6 @@ async def test_approved_shutdown_override_does_not_fire():
     import pipeline
     from pipeline import conversation_turn, CloudState
 
-    orig_sessions  = pipeline._active_sessions
     orig_conv      = pipeline._conversation
     orig_cloud     = pipeline._cloud_state
     orig_emotion_agents   = pipeline._emotion_agents
@@ -4785,7 +4590,7 @@ async def test_approved_shutdown_override_does_not_fire():
     orig_hints     = pipeline._identity_hints
     orig_shutdown  = pipeline._shutdown_event
 
-    pipeline._active_sessions       = {"p_sd": _make_shutdown_session()}
+    await pipeline._session_store.open_session("p_sd", "Jagan", "best_friend", "face", now=__import__("time").time())
     pipeline._conversation          = {"p_sd": []}
     pipeline._cloud_state           = CloudState.ONLINE
     pipeline._emotion_agents       = {}
@@ -4817,7 +4622,6 @@ async def test_approved_shutdown_override_does_not_fire():
         assert hist[-1]["content"] != "Okay.", \
             "Override fired on an approved shutdown — it should only fire on rejected calls"
     finally:
-        pipeline._active_sessions       = orig_sessions
         pipeline._conversation          = orig_conv
         pipeline._cloud_state           = orig_cloud
         pipeline._emotion_agents         = orig_emotion_agents
@@ -4837,7 +4641,6 @@ async def test_auto_confirm_retroactively_fixes_history():
     from pipeline import conversation_turn, CloudState
     import time as _t
 
-    orig_sessions       = pipeline._active_sessions
     orig_conversation   = pipeline._conversation
     orig_identity_hints = pipeline._identity_hints
     orig_cloud_state    = pipeline._cloud_state
@@ -4847,18 +4650,6 @@ async def test_auto_confirm_retroactively_fixes_history():
     orig_detected_lang  = pipeline._detected_lang
     orig_system_name    = pipeline._active_system_name
 
-    pipeline._active_sessions = {
-        "stranger_x": {
-            "person_id":       "stranger_x",
-            "person_name":     "visitor",
-            "person_type":     "stranger",
-            "session_type":    "face",
-            "last_face_seen":  _t.time(),
-            "last_spoke_at":   _t.time(),
-            "voice_confidence": 1.0,
-            "started_at":      _t.time(),
-        }
-    }
     pipeline._conversation = {"stranger_x": [
         {"role": "user",      "content": "visitor said hello"},
         {"role": "assistant", "content": "Nice to meet you, visitor!"},
@@ -4913,7 +4704,6 @@ async def test_auto_confirm_retroactively_fixes_history():
         assert "priya" in combined.lower()
 
     finally:
-        pipeline._active_sessions       = orig_sessions
         pipeline._conversation          = orig_conversation
         pipeline._identity_hints        = orig_identity_hints
         pipeline._cloud_state           = orig_cloud_state
@@ -5058,20 +4848,12 @@ def test_unrecognized_tracks_pruned_after_scene_stale_secs():
 
 def test_speaker_switch_enrolled_action_opens_new_session():
     """switch_enrolled: a second enrolled person session is opened when not already active."""
-    import pipeline, time
+    import asyncio, pipeline, time
     from unittest.mock import MagicMock, patch
-    orig_sessions = pipeline._active_sessions
     orig_conv     = pipeline._conversation
     orig_sys_name = pipeline._active_system_name
 
-    pipeline._active_sessions = {
-        "p1": {
-            "person_id": "p1", "person_name": "Jagan", "session_type": "face",
-            "last_face_seen": 0.0, "last_spoke_at": 0.0,
-            "voice_confidence": 0.0, "started_at": 0.0,
-            "person_type": "known", "waiting_for_name": False,
-        }
-    }
+    asyncio.run(pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=0.0))
     pipeline._conversation       = {"p1": []}
     pipeline._active_system_name = "Rex"
 
@@ -5079,47 +4861,33 @@ def test_speaker_switch_enrolled_action_opens_new_session():
     mock_db.load_conversation_history.return_value = []
 
     def fake_open_session(pid, name, stype, **kw):
-        pipeline._active_sessions[pid] = {
-            "person_id": pid, "person_name": name, "session_type": stype,
-            "last_face_seen": 0.0, "last_spoke_at": 0.0,
-            "voice_confidence": kw.get("voice_confidence", 0.0),
-            "started_at": 0.0, "person_type": "known", "waiting_for_name": False,
-        }
+        asyncio.run(pipeline._session_store.open_session(pid, name, "known", stype, now=0.0))
 
     with patch("pipeline._open_session", side_effect=fake_open_session):
         resolved, action = pipeline._resolve_actual_speaker(
             "p2", 0.55, "p1", {}, {}, {}, time.time()
         )
         assert action == "switch_enrolled"
-        if resolved not in pipeline._active_sessions:
+        if pipeline._session_store.peek_snapshot(resolved) is None:
             fake_open_session(resolved, "Venkat", "voice", voice_confidence=0.55)
             if resolved not in pipeline._conversation:
                 pipeline._conversation[resolved] = mock_db.load_conversation_history(resolved)
 
-    assert "p2" in pipeline._active_sessions
+    assert pipeline._session_store.peek_snapshot("p2") is not None
     assert "p2" in pipeline._conversation
 
-    pipeline._active_sessions    = orig_sessions
     pipeline._conversation       = orig_conv
     pipeline._active_system_name = orig_sys_name
 
 
 def test_new_stranger_session_created_for_unrecognized_voice():
     """new_stranger: a stranger_ session is created when score < threshold."""
-    import pipeline, time
+    import asyncio, pipeline, time
     import uuid as _uuid_mod
     from unittest.mock import patch
-    orig_sessions = pipeline._active_sessions
     orig_conv     = pipeline._conversation
 
-    pipeline._active_sessions = {
-        "p1": {
-            "person_id": "p1", "person_name": "Jagan", "session_type": "face",
-            "last_face_seen": 0.0, "last_spoke_at": 0.0,
-            "voice_confidence": 0.0, "started_at": 0.0,
-            "person_type": "known", "waiting_for_name": False,
-        }
-    }
+    asyncio.run(pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=0.0))
     pipeline._conversation = {"p1": []}
 
     resolved, action = pipeline._resolve_actual_speaker(
@@ -5131,24 +4899,16 @@ def test_new_stranger_session_created_for_unrecognized_voice():
     _sid = f"stranger_{_uuid_mod.uuid4().hex[:8]}"
 
     def fake_open_session(pid, name, stype, **kw):
-        pipeline._active_sessions[pid] = {
-            "person_id": pid, "person_name": name, "session_type": stype,
-            "last_face_seen": 0.0, "last_spoke_at": time.time(),
-            "voice_confidence": 0.0, "started_at": 0.0,
-            "person_type": "stranger", "waiting_for_name": False,
-        }
+        asyncio.run(pipeline._session_store.open_session(pid, name, "stranger", stype, now=time.time()))
 
     with patch("pipeline._open_session", side_effect=fake_open_session):
         fake_open_session(_sid, "visitor", "voice")
-        pipeline._active_sessions[_sid]["person_type"]      = "stranger"
-        pipeline._active_sessions[_sid]["waiting_for_name"] = False
         pipeline._conversation[_sid] = []
 
-    assert any(pid.startswith("stranger_") for pid in pipeline._active_sessions)
+    assert any(s.person_id.startswith("stranger_") for s in pipeline._session_store.peek_all_snapshots())
     assert any(pid.startswith("stranger_") for pid in pipeline._conversation)
-    assert "p1" in pipeline._active_sessions
+    assert pipeline._session_store.peek_snapshot("p1") is not None
 
-    pipeline._active_sessions = orig_sessions
     pipeline._conversation    = orig_conv
 
 
@@ -5193,22 +4953,13 @@ def test_unrecognized_tracks_stale_entry_excluded_from_routing():
 
 def test_stranger_track_map_binds_single_track_to_new_session():
     """With exactly 1 unrecognized track, routing creates a session and maps track -> session."""
-    import pipeline
-    import time
-    orig_sessions  = pipeline._active_sessions
+    import asyncio, pipeline, time
     orig_conv      = pipeline._conversation
     orig_unrt      = pipeline._unrecognized_tracks
     orig_stmap     = pipeline._stranger_track_map
     orig_sys_name  = pipeline._active_system_name
 
-    pipeline._active_sessions = {
-        "p1": {
-            "person_id": "p1", "person_name": "Jagan", "session_type": "face",
-            "last_face_seen": 0.0, "last_spoke_at": 0.0,
-            "voice_confidence": 0.0, "started_at": 0.0,
-            "person_type": "known", "waiting_for_name": False,
-        }
-    }
+    asyncio.run(pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=0.0))
     pipeline._conversation        = {"p1": []}
     pipeline._unrecognized_tracks = {42: time.time()}  # one fresh track
     pipeline._stranger_track_map  = {}
@@ -5229,12 +4980,7 @@ def test_stranger_track_map_binds_single_track_to_new_session():
     assert _target_sid is None  # no existing mapping yet
 
     _sid = f"stranger_{_uuid_mod.uuid4().hex[:8]}"
-    pipeline._active_sessions[_sid] = {
-        "person_id": _sid, "person_name": "visitor", "session_type": "voice",
-        "last_face_seen": 0.0, "last_spoke_at": _now_route,
-        "voice_confidence": 0.0, "started_at": _now_route,
-        "person_type": "stranger", "waiting_for_name": False,
-    }
+    asyncio.run(pipeline._session_store.open_session(_sid, "visitor", "stranger", "voice", now=_now_route))
     pipeline._conversation[_sid] = []
     if _speaker_track is not None:
         pipeline._stranger_track_map[_speaker_track] = _sid
@@ -5242,7 +4988,6 @@ def test_stranger_track_map_binds_single_track_to_new_session():
     assert _speaker_track in pipeline._stranger_track_map
     assert pipeline._stranger_track_map[_speaker_track].startswith("stranger_")
 
-    pipeline._active_sessions    = orig_sessions
     pipeline._conversation       = orig_conv
     pipeline._unrecognized_tracks = orig_unrt
     pipeline._stranger_track_map  = orig_stmap
@@ -5251,27 +4996,15 @@ def test_stranger_track_map_binds_single_track_to_new_session():
 
 def test_stranger_track_map_resumes_existing_session():
     """Same SORT track speaks again → routing reuses the previously bound session."""
-    import pipeline
-    import time
+    import asyncio, pipeline, time
     from core.config import VOICE_ROUTING_FACE_STALE_SECS
-    orig_sessions = pipeline._active_sessions
     orig_unrt     = pipeline._unrecognized_tracks
     orig_stmap    = pipeline._stranger_track_map
 
-    pipeline._active_sessions = {
-        "p1": {
-            "person_id": "p1", "person_name": "Jagan", "session_type": "face",
-            "last_face_seen": 0.0, "last_spoke_at": 0.0,
-            "voice_confidence": 0.0, "started_at": 0.0,
-            "person_type": "known", "waiting_for_name": False,
-        },
-        "stranger_abc": {
-            "person_id": "stranger_abc", "person_name": "visitor", "session_type": "voice",
-            "last_face_seen": 0.0, "last_spoke_at": time.time() - 5.0,
-            "voice_confidence": 0.0, "started_at": 0.0,
-            "person_type": "stranger", "waiting_for_name": False,
-        },
-    }
+    asyncio.run(pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=0.0))
+    asyncio.run(pipeline._session_store.open_session(
+        "stranger_abc", "visitor", "stranger", "voice", now=time.time() - 5.0
+    ))
     pipeline._unrecognized_tracks = {42: time.time()}   # track 42 is active
     pipeline._stranger_track_map  = {42: "stranger_abc"}  # already bound
 
@@ -5284,31 +5017,23 @@ def test_stranger_track_map_resumes_existing_session():
     _target_sid    = pipeline._stranger_track_map.get(_speaker_track) if _speaker_track is not None else None
 
     assert _target_sid == "stranger_abc"
-    assert _target_sid in pipeline._active_sessions
+    assert pipeline._session_store.peek_snapshot(_target_sid) is not None
 
-    pipeline._active_sessions    = orig_sessions
     pipeline._unrecognized_tracks = orig_unrt
     pipeline._stranger_track_map  = orig_stmap
 
 
 def test_two_unrecognized_tracks_routes_to_most_recent_stranger():
     """With 2 unrecognized tracks (ambiguous), routing reuses most recently active voice stranger."""
-    import pipeline
-    import time
+    import asyncio, pipeline, time
     from core.config import VOICE_ROUTING_FACE_STALE_SECS
-    orig_sessions = pipeline._active_sessions
     orig_unrt     = pipeline._unrecognized_tracks
     orig_stmap    = pipeline._stranger_track_map
 
     t_now = time.time()
-    pipeline._active_sessions = {
-        "stranger_abc": {
-            "person_id": "stranger_abc", "person_name": "visitor", "session_type": "voice",
-            "last_face_seen": 0.0, "last_spoke_at": t_now - 3.0,
-            "voice_confidence": 0.0, "started_at": 0.0,
-            "person_type": "stranger", "waiting_for_name": False,
-        },
-    }
+    asyncio.run(pipeline._session_store.open_session(
+        "stranger_abc", "visitor", "stranger", "voice", now=t_now - 3.0
+    ))
     pipeline._unrecognized_tracks = {1: t_now, 2: t_now}  # 2 tracks — ambiguous
     pipeline._stranger_track_map  = {}
 
@@ -5321,29 +5046,26 @@ def test_two_unrecognized_tracks_routes_to_most_recent_stranger():
     assert _speaker_track is None  # 2 tracks → ambiguous → no definitive speaker
 
     _candidate = max(
-        (pid for pid, sess in pipeline._active_sessions.items()
-         if pid.startswith("stranger_") and sess.get("session_type") == "voice"),
-        key=lambda pid: pipeline._active_sessions[pid]["last_spoke_at"],
+        (s.person_id for s in pipeline._session_store.peek_all_snapshots()
+         if s.person_id.startswith("stranger_") and s.session_type == "voice"),
+        key=lambda pid: pipeline._session_store.peek_snapshot(pid).last_spoke_at,
         default=None,
     ) if len(_active_unrec) > 1 else None
 
     assert _candidate == "stranger_abc"
 
-    pipeline._active_sessions    = orig_sessions
     pipeline._unrecognized_tracks = orig_unrt
     pipeline._stranger_track_map  = orig_stmap
 
 
 def test_two_unrecognized_tracks_creates_new_session_when_none_exist():
     """With 2 unrecognized tracks and no stranger sessions, routing creates a new one."""
-    import pipeline
-    import time
+    import pipeline, time
     from core.config import VOICE_ROUTING_FACE_STALE_SECS
-    orig_sessions = pipeline._active_sessions
     orig_unrt     = pipeline._unrecognized_tracks
 
     t_now = time.time()
-    pipeline._active_sessions    = {}  # no sessions at all
+    # store is already empty via autouse _reset_session_state_between_tests
     pipeline._unrecognized_tracks = {1: t_now, 2: t_now}
 
     _now_route    = time.time()
@@ -5352,15 +5074,14 @@ def test_two_unrecognized_tracks_creates_new_session_when_none_exist():
         if _now_route - ts < VOICE_ROUTING_FACE_STALE_SECS
     }
     _candidate = max(
-        (pid for pid, sess in pipeline._active_sessions.items()
-         if pid.startswith("stranger_") and sess.get("session_type") == "voice"),
-        key=lambda pid: pipeline._active_sessions[pid]["last_spoke_at"],
+        (s.person_id for s in pipeline._session_store.peek_all_snapshots()
+         if s.person_id.startswith("stranger_") and s.session_type == "voice"),
+        key=lambda pid: pipeline._session_store.peek_snapshot(pid).last_spoke_at,
         default=None,
     ) if len(_active_unrec) > 1 else None
 
     assert _candidate is None  # no existing stranger sessions → must create new
 
-    pipeline._active_sessions    = orig_sessions
     pipeline._unrecognized_tracks = orig_unrt
 
 
@@ -5467,38 +5188,26 @@ async def test_open_session_existing_session_does_not_set_flag():
 
 def test_kairos_clock_not_reset_on_reentry_after_no_speech():
     """Issue 4: When the conversation loop re-enters after 'No speech detected',
-    _last_user_speech_at must NOT be reset (no kairos_clock_reset flag in session)."""
-    import pipeline
-    import time
-    orig_sessions = pipeline._active_sessions
+    _last_user_speech_at must NOT be reset (kairos_clock_reset already consumed)."""
+    import asyncio, pipeline, time
     orig_speech_at = pipeline._last_user_speech_at
     try:
         past = time.time() - 50  # 50 seconds ago
         pipeline._last_user_speech_at = past
 
-        # Session without the flag — simulates re-entry after "No speech detected"
-        pipeline._active_sessions = {
-            "p1": {
-                "person_id":        "p1",
-                "person_name":      "Jagan",
-                "session_type":     "face",
-                "last_face_seen":   time.time(),
-                "last_spoke_at":    time.time(),
-                "voice_confidence": 1.0,
-                "started_at":       time.time(),
-                # No kairos_clock_reset key
-            }
-        }
+        # Session with flag already consumed — simulates re-entry after "No speech detected"
+        asyncio.run(pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=time.time()))
+        asyncio.run(pipeline._session_store.consume_kairos_reset("p1"))  # flag now False
 
-        # Inline the conditional from pipeline.py line ~2356
-        if pipeline._active_sessions.get("p1", {}).pop("kairos_clock_reset", False):
+        # Inline the conditional from pipeline.py (reads from session store)
+        _snap = pipeline._session_store.peek_snapshot("p1")
+        if _snap is not None and _snap.kairos_clock_reset:
             pipeline._last_user_speech_at = time.time()
 
         # Clock must NOT have been reset — silence should still be ~50s
         assert time.time() - pipeline._last_user_speech_at > 40, \
             "Kairos clock was incorrectly reset on re-entry without the flag"
     finally:
-        pipeline._active_sessions    = orig_sessions
         pipeline._last_user_speech_at = orig_speech_at
 
 
@@ -6001,17 +5710,16 @@ def test_primary_person_id_no_tie_uses_recency():
 async def test_kairos_does_not_fire_with_fresh_speech_at():
     """BUG-6: When _last_user_speech_at is current time, the KAIROS silence gate
     (now - _last_user_speech_at < KAIROS_SILENCE_THRESHOLD) must block firing."""
-    import pipeline
+    import pipeline, time
     from unittest.mock import MagicMock
 
     orig_speech_at    = pipeline._last_user_speech_at
     orig_kairos_at    = pipeline._last_kairos_at
-    orig_sessions     = pipeline._active_sessions
     orig_orchestrator = pipeline._brain_orchestrator
 
+    await pipeline._session_store.open_session("p1", "Alice", "known", "face", now=time.time())
     pipeline._last_user_speech_at = pipeline.time.time()   # just spoke
     pipeline._last_kairos_at      = 0.0                    # cooldown gate would pass
-    pipeline._active_sessions     = {"p1": {}}
     pipeline._brain_orchestrator  = MagicMock()
     pipeline._brain_orchestrator.get_pending_question.return_value = {"id": "q1", "text": "Hi?"}
 
@@ -6020,7 +5728,6 @@ async def test_kairos_does_not_fire_with_fresh_speech_at():
     finally:
         pipeline._last_user_speech_at = orig_speech_at
         pipeline._last_kairos_at      = orig_kairos_at
-        pipeline._active_sessions     = orig_sessions
         pipeline._brain_orchestrator  = orig_orchestrator
 
     assert result is False   # silence gate blocked — user just spoke
@@ -6030,17 +5737,16 @@ async def test_kairos_does_not_fire_with_fresh_speech_at():
 async def test_kairos_fires_after_silence_threshold():
     """BUG-6 regression: KAIROS must still fire (not return False early at silence gate)
     when the user has genuinely been silent longer than KAIROS_SILENCE_THRESHOLD."""
-    import pipeline
+    import pipeline, time
     from unittest.mock import MagicMock, AsyncMock, patch
 
     orig_speech_at    = pipeline._last_user_speech_at
     orig_kairos_at    = pipeline._last_kairos_at
-    orig_sessions     = pipeline._active_sessions
     orig_orchestrator = pipeline._brain_orchestrator
 
+    await pipeline._session_store.open_session("p1", "Alice", "known", "face", now=time.time())
     pipeline._last_user_speech_at = 0.0   # long ago — silence gate opens
     pipeline._last_kairos_at      = 0.0   # cooldown gate opens too
-    pipeline._active_sessions     = {"p1": {}}
     mock_orch = MagicMock()
     mock_orch.get_pending_question.return_value = {"id": "q1", "text": "How are you?"}
     pipeline._brain_orchestrator = mock_orch
@@ -6058,7 +5764,6 @@ async def test_kairos_fires_after_silence_threshold():
     finally:
         pipeline._last_user_speech_at = orig_speech_at
         pipeline._last_kairos_at      = orig_kairos_at
-        pipeline._active_sessions     = orig_sessions
         pipeline._brain_orchestrator  = orig_orchestrator
 
     # The silence gate opened; KAIROS attempted to run (didn't return False early)
@@ -6153,17 +5858,16 @@ async def test_autocompact_no_retry_on_4xx():
 async def test_kairos_tick_passes_memory_search_fn():
     """BUG-12: ask_stream inside _kairos_tick must receive memory_search_fn so that
     the search_memory tool is not silently skipped when the LLM calls it."""
-    import pipeline
+    import pipeline, time
     from unittest.mock import MagicMock, AsyncMock, patch
 
     orig_speech_at    = pipeline._last_user_speech_at
     orig_kairos_at    = pipeline._last_kairos_at
-    orig_sessions     = pipeline._active_sessions
     orig_orchestrator = pipeline._brain_orchestrator
 
+    await pipeline._session_store.open_session("p1", "Alice", "known", "face", now=time.time())
     pipeline._last_user_speech_at = 0.0
     pipeline._last_kairos_at      = 0.0
-    pipeline._active_sessions     = {"p1": {}}
     mock_orch = MagicMock()
     mock_orch.get_pending_question.return_value = {"id": "q1", "text": "Do you exercise?"}
     pipeline._brain_orchestrator = mock_orch
@@ -6192,7 +5896,6 @@ async def test_kairos_tick_passes_memory_search_fn():
     finally:
         pipeline._last_user_speech_at = orig_speech_at
         pipeline._last_kairos_at      = orig_kairos_at
-        pipeline._active_sessions     = orig_sessions
         pipeline._brain_orchestrator  = orig_orchestrator
 
     assert captured_kwargs.get("memory_search_fn") is my_memory_search, \
@@ -6203,17 +5906,16 @@ async def test_kairos_tick_passes_memory_search_fn():
 async def test_kairos_tick_memory_search_fn_none_by_default():
     """BUG-12: _kairos_tick must still work when memory_search_fn is omitted (default None).
     Brain-driven KAIROS: when brain returns 'SILENT', tick returns False without error."""
-    import pipeline
+    import pipeline, time
     from unittest.mock import MagicMock, AsyncMock, patch
 
     orig_speech_at    = pipeline._last_user_speech_at
     orig_kairos_at    = pipeline._last_kairos_at
-    orig_sessions     = pipeline._active_sessions
     orig_orchestrator = pipeline._brain_orchestrator
 
+    await pipeline._session_store.open_session("p1", "Alice", "known", "face", now=time.time())
     pipeline._last_user_speech_at = 0.0
     pipeline._last_kairos_at      = 0.0
-    pipeline._active_sessions     = {"p1": {}}
     mock_orch = MagicMock()
     mock_orch.get_pending_question.return_value = None
     pipeline._brain_orchestrator = mock_orch
@@ -6234,7 +5936,6 @@ async def test_kairos_tick_memory_search_fn_none_by_default():
     finally:
         pipeline._last_user_speech_at = orig_speech_at
         pipeline._last_kairos_at      = orig_kairos_at
-        pipeline._active_sessions     = orig_sessions
         pipeline._brain_orchestrator  = orig_orchestrator
 
     assert result is False, "brain returning SILENT must cause tick to return False"
@@ -6500,7 +6201,6 @@ def test_ambient_wake_pending_flag_set_on_first_wake():
     import pipeline
     pipeline._ambient_wake_pending = set()
     pipeline._last_greeted         = {}
-    pipeline._active_sessions      = {}
 
     stop_calls = []
 
@@ -6934,23 +6634,13 @@ async def test_voice_accumulation_refused_with_no_witness():
     import numpy as np
     from unittest.mock import MagicMock
     import pipeline as _pl
-    # Session with empty evidence — no paths open
-    _pl._active_sessions["p1"] = {
-        "person_id": "p1", "person_name": "test",
-        "identity_evidence": {
-            "face_match_conf": 0.0, "face_last_seen_ts": 0.0,
-            "anti_spoof_live": False, "anti_spoof_score": 0.0, "anti_spoof_last_ts": 0.0,
-            "voice_match_conf": 0.0, "voice_sample_count": 0, "voice_last_heard_ts": 0.0,
-            "bootstrap_credits": 0,
-        },
-    }
-    try:
-        mock_db = MagicMock()
-        audio = np.zeros(16000, dtype=np.float32)
-        await _pl._accumulate_voice("p1", audio, mock_db)
-        mock_db.add_voice_embedding.assert_not_called()
-    finally:
-        _pl._active_sessions.pop("p1", None)
+    import time as _t
+    # Session with empty evidence — all defaults: bootstrap=0, voice_n=0, conf=0.0
+    await _pl._session_store.open_session("p1", "test", "stranger", "voice", now=_t.time())
+    mock_db = MagicMock()
+    audio = np.zeros(16000, dtype=np.float32)
+    await _pl._accumulate_voice("p1", audio, mock_db)
+    mock_db.add_voice_embedding.assert_not_called()
 
 
 # ── Within-utterance diarization (Issue 2) ───────────────────────────────────
@@ -7427,15 +7117,10 @@ def test_emotion_agent_created_per_person(tmp_path):
     db.add_person("p_alice", "Alice")
     db.add_person("p_bob",   "Bob")
 
-    orig_sessions     = pipeline._active_sessions
     orig_conversation = pipeline._conversation
     orig_agents       = pipeline._emotion_agents
     orig_cloud        = pipeline._cloud_state
     try:
-        pipeline._active_sessions = {
-            "p_alice": {"person_name": "Alice", "person_type": "known"},
-            "p_bob":   {"person_name": "Bob",   "person_type": "known"},
-        }
         pipeline._conversation = {"p_alice": [], "p_bob": []}
         pipeline._emotion_agents = {}
         pipeline._cloud_state = pipeline.CloudState.SICK   # use simple ask() path
@@ -7471,7 +7156,6 @@ def test_emotion_agent_created_per_person(tmp_path):
         assert pipeline._emotion_agents["p_alice"] is not pipeline._emotion_agents["p_bob"], \
             "Alice and Bob must have separate EmotionAgent instances"
     finally:
-        pipeline._active_sessions = orig_sessions
         pipeline._conversation    = orig_conversation
         pipeline._emotion_agents  = orig_agents
         pipeline._cloud_state     = orig_cloud
@@ -7573,7 +7257,8 @@ async def test_stream_truncation_retry_replaces_fragment():
     from pipeline import conversation_turn, CloudState
     import time as _t
 
-    orig_sessions = pipeline._active_sessions
+    await pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=_t.time())
+
     orig_conv     = pipeline._conversation
     orig_cloud    = pipeline._cloud_state
     orig_emo      = pipeline._emotion_agents
@@ -7584,7 +7269,6 @@ async def test_stream_truncation_retry_replaces_fragment():
     orig_hints    = pipeline._identity_hints
     orig_shutdown = pipeline._shutdown_event
 
-    pipeline._active_sessions       = {"p1": {"person_name": "Jagan", "person_type": "known"}}
     pipeline._conversation          = {"p1": []}
     pipeline._cloud_state           = CloudState.ONLINE
     pipeline._emotion_agents        = {}
@@ -7626,7 +7310,6 @@ async def test_stream_truncation_retry_replaces_fragment():
         assert asst_msgs[0]["content"] == _ollama_response, \
             f"Expected full retry response in history, got: {asst_msgs[0]['content']!r}"
     finally:
-        pipeline._active_sessions       = orig_sessions
         pipeline._conversation          = orig_conv
         pipeline._cloud_state           = orig_cloud
         pipeline._emotion_agents        = orig_emo
@@ -7641,10 +7324,11 @@ async def test_stream_truncation_retry_replaces_fragment():
 @pytest.mark.asyncio
 async def test_stream_truncation_skips_when_multi_word():
     """Multi-word streaming response must NOT trigger the truncation retry path."""
-    import pipeline
+    import pipeline, time
     from pipeline import conversation_turn, CloudState
 
-    orig_sessions = pipeline._active_sessions
+    await pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=time.time())
+
     orig_conv     = pipeline._conversation
     orig_cloud    = pipeline._cloud_state
     orig_emo      = pipeline._emotion_agents
@@ -7655,7 +7339,6 @@ async def test_stream_truncation_skips_when_multi_word():
     orig_hints    = pipeline._identity_hints
     orig_shutdown = pipeline._shutdown_event
 
-    pipeline._active_sessions       = {"p1": {"person_name": "Jagan", "person_type": "known"}}
     pipeline._conversation          = {"p1": []}
     pipeline._cloud_state           = CloudState.ONLINE
     pipeline._emotion_agents        = {}
@@ -7696,7 +7379,6 @@ async def test_stream_truncation_skips_when_multi_word():
         asst = [m for m in hist if m["role"] == "assistant"]
         assert asst[0]["content"] == _normal_response
     finally:
-        pipeline._active_sessions       = orig_sessions
         pipeline._conversation          = orig_conv
         pipeline._cloud_state           = orig_cloud
         pipeline._emotion_agents        = orig_emo
@@ -7717,7 +7399,6 @@ async def test_in_session_history_trimmed_at_limit():
     from pipeline import conversation_turn, CloudState
     from core.config import CONVERSATION_HISTORY_LIMIT
 
-    orig_sessions = pipeline._active_sessions
     orig_conv     = pipeline._conversation
     orig_cloud    = pipeline._cloud_state
     orig_emo      = pipeline._emotion_agents
@@ -7735,7 +7416,6 @@ async def test_in_session_history_trimmed_at_limit():
         pre_history.append({"role": "assistant",  "content": f"assistant turn {i}"})
 
     await pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=__import__("time").time())
-    pipeline._active_sessions       = {"p1": {"person_name": "Jagan", "person_type": "known"}}
     pipeline._conversation          = {"p1": list(pre_history)}
     pipeline._cloud_state           = CloudState.ONLINE
     pipeline._emotion_agents        = {}
@@ -7767,7 +7447,6 @@ async def test_in_session_history_trimmed_at_limit():
         assert n_turns <= CONVERSATION_HISTORY_LIMIT, \
             f"In-session history grew to {n_turns} turns, exceeding limit of {CONVERSATION_HISTORY_LIMIT}"
     finally:
-        pipeline._active_sessions       = orig_sessions
         pipeline._conversation          = orig_conv
         pipeline._cloud_state           = orig_cloud
         pipeline._emotion_agents        = orig_emo
@@ -7859,24 +7538,24 @@ def test_prune_old_strangers_catches_null_last_seen(tmp_path):
 @pytest.mark.asyncio
 async def test_execute_tool_shutdown_blocked_for_stranger():
     """Stranger must not be able to trigger shutdown."""
-    import pipeline
-    pipeline._active_sessions = {"stranger_abc": {"person_name": "visitor", "person_type": "stranger"}}
+    import pipeline, time as _t
+    await pipeline._session_store.open_session("stranger_abc", "visitor", "stranger", "face", now=_t.time())
     result = await pipeline._execute_tool("shutdown", {}, "stranger_abc", "visitor", db=None, user_text="shut down")
     assert result is None
 
 @pytest.mark.asyncio
 async def test_execute_tool_update_system_name_blocked_for_stranger():
     """Stranger must not be able to rename the system."""
-    import pipeline
-    pipeline._active_sessions = {"stranger_abc": {"person_name": "visitor", "person_type": "stranger"}}
+    import pipeline, time as _t
+    await pipeline._session_store.open_session("stranger_abc", "visitor", "stranger", "face", now=_t.time())
     result = await pipeline._execute_tool("update_system_name", {"name": "Hacker"}, "stranger_abc", "visitor", db=None)
     assert result is None
 
 @pytest.mark.asyncio
 async def test_execute_tool_update_system_name_blocked_for_known():
     """Known (non-owner) person must not be able to rename the system."""
-    import pipeline
-    pipeline._active_sessions = {"known_p1": {"person_name": "Alice", "person_type": "known"}}
+    import pipeline, time as _t
+    await pipeline._session_store.open_session("known_p1", "Alice", "known", "face", now=_t.time())
     result = await pipeline._execute_tool("update_system_name", {"name": "NewBot"}, "known_p1", "Alice", db=None)
     assert result is None
 
@@ -7886,7 +7565,6 @@ async def test_execute_tool_update_system_name_allowed_for_best_friend():
     import pipeline
     import time as _t
     await pipeline._session_store.open_session("bf_p1", "Jagan", "best_friend", "face", now=_t.time())
-    pipeline._active_sessions = {"bf_p1": {"person_name": "Jagan", "person_type": "best_friend"}}
     pipeline._active_system_name = "Dog"
     pipeline._brain_orchestrator = None
     mock_db = MagicMock()
@@ -7953,8 +7631,8 @@ def test_gate_pass_skips_face_embedding_when_no_track(tmp_path):
 @pytest.mark.asyncio
 async def test_execute_tool_shutdown_blocked_for_known():
     """Known (non-owner) person must not be able to trigger shutdown — only best_friend."""
-    import pipeline
-    pipeline._active_sessions = {"known_p1": {"person_name": "Alice", "person_type": "known"}}
+    import pipeline, time as _t
+    await pipeline._session_store.open_session("known_p1", "Alice", "known", "face", now=_t.time())
     result = await pipeline._execute_tool("shutdown", {}, "known_p1", "Alice", db=None, user_text="shut down please")
     assert result is None
 
@@ -7965,7 +7643,6 @@ async def test_execute_tool_shutdown_allowed_for_best_friend():
     import pipeline
     import time as _t
     await pipeline._session_store.open_session("bf_p1", "Jagan", "best_friend", "face", now=_t.time())
-    pipeline._active_sessions = {"bf_p1": {"person_name": "Jagan", "person_type": "best_friend"}}
     # Use an exact phrase from _SHUTDOWN_STRICT so the phrase-guard also passes
     result = await pipeline._execute_tool("shutdown", {}, "bf_p1", "Jagan", db=None,
                                           user_text="please shut down now")
@@ -8020,22 +7697,13 @@ def test_track_identity_set_on_recognition():
 
 def test_track_continuity_restores_identity_for_known_track():
     """#4: When recognition fails but track was previously identified, identity is restored."""
-    import pipeline
-    import time as _t
+    import asyncio, pipeline, time as _t
+    asyncio.run(pipeline._session_store.open_session("jagan_001", "Jagan", "best_friend", "face", now=_t.time()))
     pipeline._track_identity = {7: "jagan_001"}
-    pipeline._active_sessions = {
-        "jagan_001": {
-            "person_name": "Jagan",
-            "person_type": "best_friend",
-            "last_face_seen": _t.time(),
-            "last_spoke_at": _t.time(),
-            "started_at": _t.time(),
-        }
-    }
     # Simulate: recognition returns None (below threshold) for track 7
     person_id = None
     tracked_pid = pipeline._track_identity.get(7)
-    if tracked_pid and tracked_pid in pipeline._active_sessions:
+    if tracked_pid and pipeline._session_store.peek_snapshot(tracked_pid) is not None:
         person_id = tracked_pid
     assert person_id == "jagan_001"
 
@@ -8044,13 +7712,10 @@ def test_track_continuity_does_not_fire_for_unknown_track():
     """#4: A new track with no prior identity must NOT inherit any person — no soft-match."""
     import pipeline
     pipeline._track_identity = {}  # empty — stranger's brand-new track
-    pipeline._active_sessions = {
-        "jagan_001": {"person_name": "Jagan", "person_type": "best_friend"}
-    }
     # Simulate: recognition returns None for a new track (tid=99)
     person_id = None
     tracked_pid = pipeline._track_identity.get(99)
-    if tracked_pid and tracked_pid in pipeline._active_sessions:
+    if tracked_pid and pipeline._session_store.peek_snapshot(tracked_pid) is not None:
         person_id = tracked_pid
     # Stranger should NOT be assigned to Jagan's identity
     assert person_id is None
@@ -8058,8 +7723,8 @@ def test_track_continuity_does_not_fire_for_unknown_track():
 
 def test_close_session_prunes_track_identity():
     """#4: _close_session() must remove _track_identity entries for the closed person."""
-    import pipeline
-    pipeline._active_sessions = {"p1": {"person_name": "Jagan", "person_type": "best_friend"}}
+    import asyncio, pipeline
+    asyncio.run(pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time()))
     pipeline._track_identity = {5: "p1", 6: "p2"}
     pipeline._stranger_track_map = {}
     pipeline._unrecognized_embeddings = {}
@@ -8521,17 +8186,9 @@ def test_pipeline_antispoof_watchdog_wire_after_orchestrator():
 def test_ambient_gate_blocks_camera_when_name_not_heard():
     """#15: If system name not spoken, camera fallback must NOT open a session."""
     import pipeline
-    # Simulate: voice_mod.identify returns no match, camera sees a known face,
-    # but transcript does NOT contain the system name.
-    # Expectation: _active_sessions stays empty (gate blocks everything).
-    orig_active = pipeline._active_sessions.copy()
-    pipeline._active_sessions.clear()
     # _name_heard_in("hello there", "Kara") → (False, ...)
     heard, _ = pipeline._name_heard_in("hello there", "Kara")
     assert heard is False, "Precondition: system name not in text"
-    # After gate check fails, no session should open
-    # (We verify the gate logic directly — the async plumbing is tested by integration)
-    pipeline._active_sessions.update(orig_active)
 
 
 def test_ambient_gate_passes_when_name_heard():
@@ -8689,21 +8346,18 @@ def test_new_stranger_multi_track_picks_most_recent():
 def test_new_stranger_uses_preallocated_pid():
     """#20: When a pre-allocated pid exists in _stranger_track_map, the session uses it."""
     import pipeline, time
-    orig_stmap    = pipeline._stranger_track_map.copy()
-    orig_sessions = pipeline._active_sessions.copy()
+    orig_stmap = pipeline._stranger_track_map.copy()
     now = time.time()
     # Simulate pre-allocation: track 42 → pre-allocated pid
     pre_pid = "stranger_prealloc12"
-    pipeline._stranger_track_map[42]    = pre_pid
-    pipeline._unrecognized_tracks[42]   = now
+    pipeline._stranger_track_map[42]  = pre_pid
+    pipeline._unrecognized_tracks[42] = now
     # Verify that _target_sid lookup finds the pre-allocated pid
     _target = pipeline._stranger_track_map.get(42)
     assert _target == pre_pid
     # Restore
     pipeline._stranger_track_map.clear()
     pipeline._stranger_track_map.update(orig_stmap)
-    pipeline._active_sessions.clear()
-    pipeline._active_sessions.update(orig_sessions)
 
 
 # ── #21: _cur_pid drift detection ─────────────────────────────────────────────
@@ -8757,16 +8411,13 @@ def test_voice_session_timeout_is_30():
 
 def test_voice_session_extends_when_face_visible():
     """#22: voice session last_spoke_at updated when holder is visible in persons_in_frame."""
-    import pipeline, time
+    import asyncio, pipeline, time
     pid = "stranger_abc123"
     now = time.time()
-    pipeline._active_sessions[pid] = {
-        "person_id": pid, "person_name": "visitor", "session_type": "voice",
-        "last_face_seen": now, "last_spoke_at": now - 20.0,
-        "voice_confidence": 0.0, "started_at": now - 25.0,
-        "person_type": "stranger", "waiting_for_name": False,
-        "recent_attributions": __import__("collections").deque(maxlen=3),
-    }
+    asyncio.run(pipeline._session_store.open_session(
+        pid, "visitor", "stranger", "voice", now=now - 25.0,
+    ))
+    asyncio.run(pipeline._session_store.set_last_spoke_at(pid, now - 20.0))
     pipeline._persons_in_frame[pid] = {"last_recognized_at": now, "name": "visitor", "conf": 0.3}
     # Simulate the extension logic
     _now_ext = time.time()
@@ -8775,9 +8426,10 @@ def test_voice_session_extends_when_face_visible():
         and _now_ext - pipeline._persons_in_frame[pid].get("last_recognized_at", 0) < 2.0
     )
     if _holder_vis:
-        pipeline._active_sessions[pid]["last_spoke_at"] = _now_ext
-    assert pipeline._active_sessions[pid]["last_spoke_at"] >= now - 0.1
-    pipeline._active_sessions.pop(pid, None)
+        asyncio.run(pipeline._session_store.set_last_spoke_at(pid, _now_ext))
+    snap = pipeline._session_store.peek_snapshot(pid)
+    assert snap is not None
+    assert snap.last_spoke_at >= now - 0.1
     pipeline._persons_in_frame.pop(pid, None)
 
 
@@ -8788,22 +8440,12 @@ async def test_accumulate_voice_refused_when_session_has_no_evidence():
     import numpy as np
     from unittest.mock import MagicMock
     import pipeline as _pl
-    _pl._active_sessions["p1"] = {
-        "person_id": "p1", "person_name": "test",
-        "identity_evidence": {
-            "face_match_conf": 0.0, "face_last_seen_ts": 0.0,
-            "anti_spoof_live": False, "anti_spoof_score": 0.0, "anti_spoof_last_ts": 0.0,
-            "voice_match_conf": 0.0, "voice_sample_count": 0, "voice_last_heard_ts": 0.0,
-            "bootstrap_credits": 0,
-        },
-    }
-    try:
-        mock_db = MagicMock()
-        audio = np.zeros(16000, dtype=np.float32)
-        await _pl._accumulate_voice("p1", audio, mock_db)
-        mock_db.add_voice_embedding.assert_not_called()
-    finally:
-        _pl._active_sessions.pop("p1", None)
+    import time as _t
+    await _pl._session_store.open_session("p1", "test", "stranger", "voice", now=_t.time())
+    mock_db = MagicMock()
+    audio = np.zeros(16000, dtype=np.float32)
+    await _pl._accumulate_voice("p1", audio, mock_db)
+    mock_db.add_voice_embedding.assert_not_called()
 
 
 async def test_accumulate_voice_replenishes_bootstrap_for_engaged_stranger():
@@ -8828,36 +8470,20 @@ async def test_accumulate_voice_replenishes_bootstrap_for_engaged_stranger():
     # isn't complete when _voice_accum_allowed reads peek_snapshot. Pre-seed
     # with 1 credit to simulate state after a prior replenishment cycle.
     await _pl._session_store.set_bootstrap_credits("p1", 1)
-    _pl._active_sessions["p1"] = {
-        "person_id": "p1", "person_name": "visitor",
-        "person_type": "stranger",
-        "waiting_for_name": False,   # gate passed earlier, engagement valid
-        "voice_only_origin": True,   # S120: replenishment now gates on this flag
-        "identity_evidence": {
-            "face_match_conf": 0.0, "face_last_seen_ts": 0.0,
-            "anti_spoof_live": False, "anti_spoof_score": 0.0, "anti_spoof_last_ts": 0.0,
-            # Empty-credit scenario but profile still below maturity.
-            "voice_match_conf": 0.0, "voice_sample_count": 2, "voice_last_heard_ts": 0.0,
-            "bootstrap_credits": 0,
-        },
-    }
-    try:
-        mock_db = MagicMock()
-        mock_db.add_voice_embedding = MagicMock(return_value=True)
-        mock_db.load_voice_profile_for = MagicMock(return_value=np.ones(192, dtype=np.float32) / (192**0.5))
-        mock_db.voice_embedding_count = MagicMock(return_value=3)
-        audio = np.zeros(16000, dtype=np.float32)
-        # Patch identify so the self-match branch doesn't attempt real ECAPA.
-        # For bootstrap path, v_pid doesn't need to match person_id.
-        with patch("pipeline.voice_mod.identify", return_value=(None, 0.0)), \
-             patch("pipeline.voice_mod.embed",
-                   return_value=np.ones(192, dtype=np.float32) / (192**0.5)):
-            await _pl._accumulate_voice("p1", audio, mock_db)
-        # The replenishment should have granted 1 credit, then Path C fired.
-        # Accumulation fired → add_voice_embedding called.
-        mock_db.add_voice_embedding.assert_called_once()
-    finally:
-        _pl._active_sessions.pop("p1", None)
+    mock_db = MagicMock()
+    mock_db.add_voice_embedding = MagicMock(return_value=True)
+    mock_db.load_voice_profile_for = MagicMock(return_value=np.ones(192, dtype=np.float32) / (192**0.5))
+    mock_db.voice_embedding_count = MagicMock(return_value=3)
+    audio = np.zeros(16000, dtype=np.float32)
+    # Patch identify so the self-match branch doesn't attempt real ECAPA.
+    # For bootstrap path, v_pid doesn't need to match person_id.
+    with patch("pipeline.voice_mod.identify", return_value=(None, 0.0)), \
+         patch("pipeline.voice_mod.embed",
+               return_value=np.ones(192, dtype=np.float32) / (192**0.5)):
+        await _pl._accumulate_voice("p1", audio, mock_db)
+    # The replenishment should have granted 1 credit, then Path C fired.
+    # Accumulation fired → add_voice_embedding called.
+    mock_db.add_voice_embedding.assert_called_once()
 
 
 async def test_accumulate_voice_no_replenish_when_gate_still_active():
@@ -8868,31 +8494,20 @@ async def test_accumulate_voice_no_replenish_when_gate_still_active():
     strangers who never actually address the system accumulate samples
     silently (exactly what the gate exists to prevent)."""
     import numpy as np
+    import time as _t
     from unittest.mock import MagicMock
     import pipeline as _pl
 
-    _pl._active_sessions["p1"] = {
-        "person_id": "p1", "person_name": "visitor",
-        "person_type": "stranger",
-        "waiting_for_name": True,   # gate NOT yet passed
-        "identity_evidence": {
-            "face_match_conf": 0.0, "face_last_seen_ts": 0.0,
-            "anti_spoof_live": False, "anti_spoof_score": 0.0, "anti_spoof_last_ts": 0.0,
-            "voice_match_conf": 0.0, "voice_sample_count": 2, "voice_last_heard_ts": 0.0,
-            "bootstrap_credits": 0,
-        },
-    }
-    try:
-        mock_db = MagicMock()
-        audio = np.zeros(16000, dtype=np.float32)
-        await _pl._accumulate_voice("p1", audio, mock_db)
-        # No replenishment → Path C still blocked → accumulation refused.
-        mock_db.add_voice_embedding.assert_not_called()
-        # Credits stayed at 0.
-        ev = _pl._active_sessions["p1"]["identity_evidence"]
-        assert ev["bootstrap_credits"] == 0
-    finally:
-        _pl._active_sessions.pop("p1", None)
+    await _pl._session_store.open_session("p1", "visitor", "stranger", "voice", now=_t.time(),
+                                          voice_sample_count=2)
+    await _pl._session_store.set_waiting_for_name("p1", True)
+    mock_db = MagicMock()
+    audio = np.zeros(16000, dtype=np.float32)
+    await _pl._accumulate_voice("p1", audio, mock_db)
+    # No replenishment → Path C still blocked → accumulation refused.
+    mock_db.add_voice_embedding.assert_not_called()
+    # Credits stayed at 0.
+    assert _pl._session_store.peek_snapshot("p1").evidence.bootstrap_credits == 0
 
 
 async def test_accumulate_voice_mature_profile_skipped_when_voice_weak():
@@ -8902,25 +8517,15 @@ async def test_accumulate_voice_mature_profile_skipped_when_voice_weak():
     import time as _t
     from unittest.mock import MagicMock, patch
     import pipeline as _pl
-    _pl._active_sessions["p1"] = {
-        "person_id": "p1", "person_name": "test",
-        "identity_evidence": {
-            "face_match_conf": 0.0, "face_last_seen_ts": 0.0,
-            "anti_spoof_live": False, "anti_spoof_score": 0.0, "anti_spoof_last_ts": 0.0,
-            # Mature profile that passes _voice_accum_allowed path B.
-            "voice_match_conf": 0.60, "voice_sample_count": 7,
-            "voice_last_heard_ts": _t.time(),
-            "bootstrap_credits": 0,
-        },
-    }
-    try:
-        mock_db = MagicMock()
-        audio = np.zeros(16000, dtype=np.float32)
-        with patch("pipeline.voice_mod.identify", return_value=(None, 0.0)):
-            await _pl._accumulate_voice("p1", audio, mock_db)
-        mock_db.add_voice_embedding.assert_not_called()
-    finally:
-        _pl._active_sessions.pop("p1", None)
+
+    await _pl._session_store.open_session("p1", "test", "stranger", "voice", now=_t.time(),
+                                          voice_sample_count=7)
+    await _pl._session_store.update_voice_heard("p1", conf=0.60, ts=_t.time())
+    mock_db = MagicMock()
+    audio = np.zeros(16000, dtype=np.float32)
+    with patch("pipeline.voice_mod.identify", return_value=(None, 0.0)):
+        await _pl._accumulate_voice("p1", audio, mock_db)
+    mock_db.add_voice_embedding.assert_not_called()
 
 
 # ── #25/#26: SCENE sensor block + room-context consolidation ──────────────────
@@ -9478,10 +9083,8 @@ def test_ambient_fallback_selects_higher_confidence_face():
     opened = {}
     def fake_open(pid, name, stype, **kw):
         opened["pid"] = pid
-        _pl._active_sessions[pid] = {"person_name": name, "session_type": stype}
 
     import numpy as np
-    _pl._active_sessions.clear()
     with patch.object(_pl, "verify_live", return_value=True), \
          patch.object(_pl, "_open_session", side_effect=fake_open):
         # Simulate the best-match logic directly
@@ -9870,8 +9473,8 @@ def test_kairos_call_site_passes_best_friend_id():
 # ── Finding B — _close_session cache eviction ─────────────────────────────────
 
 def test_close_session_evicts_query_embedding_cache():
-    import pipeline
-    pipeline._active_sessions = {"p1": {"person_name": "Alice", "person_type": "known"}}
+    import asyncio, pipeline, time as _t
+    asyncio.run(pipeline._session_store.open_session("p1", "Alice", "known", "face", now=_t.time()))
     pipeline._query_embedding_cache = {"p1": [0.1, 0.2], "p2": [0.3, 0.4]}
     pipeline._identity_hints = {}
     pipeline._stranger_track_map = {}
@@ -9884,8 +9487,8 @@ def test_close_session_evicts_query_embedding_cache():
 
 
 def test_close_session_evicts_identity_hints():
-    import pipeline
-    pipeline._active_sessions = {"p1": {"person_name": "Alice", "person_type": "known"}}
+    import asyncio, pipeline, time as _t
+    asyncio.run(pipeline._session_store.open_session("p1", "Alice", "known", "face", now=_t.time()))
     pipeline._identity_hints = {"p1": {"name": "Alice", "conf": 0.9}, "p2": {"name": "Bob", "conf": 0.7}}
     pipeline._query_embedding_cache = {}
     pipeline._stranger_track_map = {}
@@ -10370,7 +9973,6 @@ async def test_update_person_name_on_known_session_flips_to_disputed():
         pid, "Jagan", "known", "face",
         now=_t.time() - (ENROLLMENT_RENAME_GRACE_SECS + 60),
     )
-    pipeline._active_sessions = {pid: {"person_id": pid}}
     pipeline._conversation = {pid: []}
     mock_db = MagicMock()
     mock_db.voice_embedding_count.return_value = 20
@@ -10397,17 +9999,13 @@ async def test_update_person_name_on_disputed_session_blocks_db_rename():
     import pipeline
     from pipeline import _execute_tool
     import time as _t
-    pipeline._active_sessions = {
-        "jagan_001": {
-            "person_id": "jagan_001", "person_name": "Jagan",
-            "person_type": "disputed",
-            "dispute_reason": "speaker claims not Jagan",
-            "disputed_claimed_name": "Venkat",
-            "dispute_set_at": _t.time(),
-            "session_type": "face", "last_face_seen": _t.time(),
-            "last_spoke_at": _t.time(), "voice_confidence": 1.0, "started_at": _t.time(),
-        }
-    }
+    _now = _t.time()
+    await pipeline._session_store.open_session(
+        "jagan_001", "Jagan", "known", "face", now=_now,
+    )
+    await pipeline._session_store.transition_to_disputed(
+        "jagan_001", "Venkat", "speaker claims not Jagan", now=_now,
+    )
     pipeline._conversation = {
         "jagan_001": [
             {"role": "user",      "content": "I am not Jagan, I am Venkat"},
@@ -10424,10 +10022,11 @@ async def test_update_person_name_on_disputed_session_blocks_db_rename():
     mock_db.update_person_name.assert_not_called()
     mock_db.update_person_type.assert_not_called()
     # Session's person_name must NOT have been changed — still "Jagan".
-    sess = pipeline._active_sessions["jagan_001"]
-    assert sess["person_name"] == "Jagan"
+    snap = pipeline._session_store.peek_snapshot("jagan_001")
+    assert snap is not None
+    assert snap.person_name == "Jagan"
     # Dispute must remain active so the timeout / session-end can close it cleanly.
-    assert sess["person_type"] == "disputed"
+    assert snap.person_type == "disputed"
     # In-memory history must NOT have been rewritten (stranger's turns are
     # still theirs; rewriting would confuse future debugging).
     msgs = pipeline._conversation["jagan_001"]
@@ -10491,31 +10090,17 @@ def test_expire_lazily_anchors_missing_dispute_set_at():
     so the timeout eventually fires (instead of permanently deferring)."""
     import time, pipeline, asyncio as _asl
     pid = "jagan_k_test"
-    saved_sessions = pipeline._active_sessions.copy()
+    # open_session with person_type="disputed" creates session with dispute_set_at=None
+    # (transition_to_disputed was never called) — this is the future-path-bug scenario.
     _asl.run(pipeline._session_store.open_session(
         pid, "Jagan", "disputed", "face", now=time.time()
     ))
     try:
-        pipeline._active_sessions[pid] = {
-            "session_type":    "face",
-            "person_type":     "disputed",
-            "person_name":     "Jagan",
-            "last_face_seen":  time.time(),
-            "last_spoke_at":   time.time(),
-            # Intentionally omit dispute_set_at — simulates a future-path bug
-            "history":         [],
-            "waiting_for_name": False,
-            "voice_face_confirmed": False,
-            "turn_count":      0,
-            "kairos_clock_reset": False,
-        }
         pipeline._expire_stale_sessions()
         # Session still open (timeout hasn't elapsed yet) but dispute_set_at is now anchored
-        assert pid in pipeline._active_sessions
+        assert pipeline._session_store.peek_snapshot(pid) is not None
         assert pipeline._session_store.peek_snapshot(pid).dispute_set_at is not None
     finally:
-        pipeline._active_sessions.pop(pid, None)
-        pipeline._active_sessions.update(saved_sessions)
         _asl.run(pipeline._session_store.close_session(pid))
 
 
@@ -10583,7 +10168,6 @@ async def test_dispute_rename_block_increments_counter():
     try:
         await pipeline._session_store.open_session(pid, "Jagan", "known", "face", now=now)
         await pipeline._session_store.transition_to_disputed(pid, None, "speaker claims not Jagan", now=now)
-        pipeline._active_sessions = {pid: {"person_id": pid}}
         pipeline._conversation = {pid: []}
         mock_db = MagicMock()
         await _execute_tool("update_person_name", {"name": "Venkat"},
@@ -10591,7 +10175,6 @@ async def test_dispute_rename_block_increments_counter():
                             user_text="my name is Venkat")
         await asyncio.sleep(0)
         assert pipeline._session_store.peek_snapshot(pid).disputed_block_count == 1
-        _reset_tool_repeat_guard(pipeline._active_sessions, pid)
         await pipeline._session_store.update_tool_repeat(pid, None, 0)
         await _execute_tool("update_person_name", {"name": "Venkat"},
                             pid, "Jagan", db=mock_db,
@@ -10613,7 +10196,6 @@ async def test_dispute_rename_burst_fires_watchdog_at_threshold():
     now = _t.time()
     await pipeline._session_store.open_session(pid, "Jagan", "known", "face", now=now)
     await pipeline._session_store.transition_to_disputed(pid, None, "speaker claims not Jagan", now=now)
-    pipeline._active_sessions = {pid: {"person_id": pid, "person_name": "Jagan"}}
     pipeline._conversation = {pid: []}
     orig_orch = pipeline._brain_orchestrator
     mock_orch = MagicMock()
@@ -10629,7 +10211,6 @@ async def test_dispute_rename_burst_fires_watchdog_at_threshold():
                                 pid, "Jagan", db=mock_db,
                                 user_text="my name is Venkat")
             await _asyncio.sleep(0)
-            _reset_tool_repeat_guard(pipeline._active_sessions, pid)
             await pipeline._session_store.update_tool_repeat(pid, None, 0)
         mock_orch.report_dispute_rename_burst.assert_not_called()
         # 3rd block — hits threshold, alert fires
@@ -10637,7 +10218,6 @@ async def test_dispute_rename_burst_fires_watchdog_at_threshold():
                             pid, "Jagan", db=mock_db,
                             user_text="my name is Venkat")
         await _asyncio.sleep(0)
-        _reset_tool_repeat_guard(pipeline._active_sessions, pid)
         await pipeline._session_store.update_tool_repeat(pid, None, 0)
         assert mock_orch.report_dispute_rename_burst.call_count == 1
         call_kwargs = mock_orch.report_dispute_rename_burst.call_args.kwargs
@@ -10680,7 +10260,6 @@ async def test_dispute_rename_burst_severity_critical_for_best_friend(tmp_path):
     now_bf = _t.time()
     await pipeline._session_store.open_session(pid_bf, "Jagan", "best_friend", "face", now=now_bf)
     await pipeline._session_store.transition_to_disputed(pid_bf, None, "speaker claims not Jagan", now=now_bf)
-    pipeline._active_sessions = {pid_bf: {"person_id": pid_bf, "person_name": "Jagan"}}
     pipeline._conversation = {pid_bf: []}
     orig_orch = pipeline._brain_orchestrator
     pipeline._brain_orchestrator = orch
@@ -10691,7 +10270,6 @@ async def test_dispute_rename_burst_severity_critical_for_best_friend(tmp_path):
                                 pid_bf, "Jagan", db=mock_db,
                                 user_text="my name is Attacker")
             await _asyncio.sleep(0)
-            _reset_tool_repeat_guard(pipeline._active_sessions, pid_bf)
             await pipeline._session_store.update_tool_repeat(pid_bf, None, 0)
         # Inspect stored alerts
         row = brain_db._conn.execute(
@@ -10839,15 +10417,6 @@ async def test_bug_f3_mishear_rename_refreshes_persons_in_frame_cache():
     await pipeline._session_store.open_session(
         "jawan_abc", "Jawan", "best_friend", "face", now=_t.time() - 30
     )
-    pipeline._active_sessions = {
-        "jawan_abc": {
-            "person_id": "jawan_abc", "person_name": "Jawan",
-            "person_type": "best_friend",
-            "session_type": "face", "last_face_seen": _t.time(),
-            "last_spoke_at": _t.time(), "voice_confidence": 1.0,
-            "started_at": _t.time() - 30,
-        }
-    }
     pipeline._conversation = {"jawan_abc": []}
     # Seed the cache with the stale name — simulates state right after
     # the first recognition on enrollment.
@@ -10884,7 +10453,6 @@ async def test_bug_f3_mishear_rename_refreshes_persons_in_frame_cache():
         "name until the next background scan (~1s latency + possible UI "
         "flicker)"
     )
-    pipeline._active_sessions = {}
     pipeline._persons_in_frame = {}
 
 
@@ -10900,15 +10468,6 @@ async def test_bug_f3_stranger_promotion_refreshes_persons_in_frame_cache():
     await pipeline._session_store.open_session(
         "stranger_abc", "visitor", "stranger", "voice", now=_t.time()
     )
-    pipeline._active_sessions = {
-        "stranger_abc": {
-            "person_id": "stranger_abc", "person_name": "visitor",
-            "person_type": "stranger",
-            "session_type": "voice", "last_face_seen": _t.time(),
-            "last_spoke_at": _t.time(), "voice_confidence": 0.8,
-            "started_at": _t.time(),
-        }
-    }
     pipeline._conversation = {"stranger_abc": []}
     pipeline._persons_in_frame = {
         "stranger_abc": {
@@ -10931,7 +10490,6 @@ async def test_bug_f3_stranger_promotion_refreshes_persons_in_frame_cache():
         pipeline._brain_orchestrator = orig_orch
 
     assert pipeline._persons_in_frame["stranger_abc"]["name"] == "Lexi"
-    pipeline._active_sessions = {}
     pipeline._persons_in_frame = {}
 
 
@@ -10972,15 +10530,6 @@ async def test_enrollment_mishear_widened_accepts_deny_identity_intent():
     from pipeline import _execute_tool
     import time as _t
     await pipeline._session_store.open_session("jawan_abc", "Jawan", "best_friend", "face", now=_t.time() - 30)
-    pipeline._active_sessions = {
-        "jawan_abc": {
-            "person_id": "jawan_abc", "person_name": "Jawan",
-            "person_type": "best_friend",
-            "session_type": "face", "last_face_seen": _t.time(),
-            "last_spoke_at": _t.time(), "voice_confidence": 1.0,
-            "started_at": _t.time() - 30,
-        }
-    }
     pipeline._conversation = {"jawan_abc": []}
     mock_db = MagicMock()
     mock_db.voice_embedding_count.return_value = 0  # fresh enrollment
@@ -11014,7 +10563,6 @@ async def test_enrollment_mishear_widened_accepts_deny_identity_intent():
     mock_orch.on_identity_confirmed.assert_called_once_with(
         "jawan_abc", "Jawan", "Jagan",
     )
-    pipeline._active_sessions = {}
 
 
 async def test_enrollment_mishear_widened_accepts_confirm_identity():
@@ -11027,15 +10575,6 @@ async def test_enrollment_mishear_widened_accepts_confirm_identity():
     from pipeline import _execute_tool
     import time as _t
     await pipeline._session_store.open_session("jawan_abc", "Jawan", "best_friend", "face", now=_t.time() - 30)
-    pipeline._active_sessions = {
-        "jawan_abc": {
-            "person_id": "jawan_abc", "person_name": "Jawan",
-            "person_type": "best_friend",
-            "session_type": "face", "last_face_seen": _t.time(),
-            "last_spoke_at": _t.time(), "voice_confidence": 1.0,
-            "started_at": _t.time() - 30,
-        }
-    }
     pipeline._conversation = {"jawan_abc": []}
     mock_db = MagicMock()
     mock_db.voice_embedding_count.return_value = 0
@@ -11059,7 +10598,6 @@ async def test_enrollment_mishear_widened_accepts_confirm_identity():
 
     assert result == "handled"
     mock_db.update_person_name.assert_called_once_with("jawan_abc", "Jagan")
-    pipeline._active_sessions = {}
 
 
 async def test_enrollment_mishear_widened_rejects_ungrounded_extracted_value():
@@ -11071,15 +10609,7 @@ async def test_enrollment_mishear_widened_rejects_ungrounded_extracted_value():
     import pipeline
     from pipeline import _execute_tool
     import time as _t
-    pipeline._active_sessions = {
-        "jawan_abc": {
-            "person_id": "jawan_abc", "person_name": "Jawan",
-            "person_type": "best_friend",
-            "session_type": "face", "last_face_seen": _t.time(),
-            "last_spoke_at": _t.time(), "voice_confidence": 1.0,
-            "started_at": _t.time() - 30,
-        }
-    }
+    await pipeline._session_store.open_session("jawan_abc", "Jawan", "best_friend", "face", now=_t.time() - 30)
     pipeline._conversation = {"jawan_abc": []}
     mock_db = MagicMock()
     mock_db.voice_embedding_count.return_value = 0
@@ -11103,7 +10633,6 @@ async def test_enrollment_mishear_widened_rejects_ungrounded_extracted_value():
 
     # Widened path did NOT fire; falls through to normal gate.
     mock_db.update_person_name.assert_not_called()
-    pipeline._active_sessions = {}
 
 
 async def test_enrollment_mishear_escape_hatch_renames_fresh_best_friend():
@@ -11118,15 +10647,6 @@ async def test_enrollment_mishear_escape_hatch_renames_fresh_best_friend():
     from pipeline import _execute_tool
     import time as _t
     await pipeline._session_store.open_session("jagan_bf", "Gevan", "best_friend", "face", now=_t.time() - 30)
-    pipeline._active_sessions = {
-        "jagan_bf": {
-            "person_id": "jagan_bf", "person_name": "Gevan",
-            "person_type": "best_friend",
-            "session_type": "face", "last_face_seen": _t.time(),
-            "last_spoke_at": _t.time(), "voice_confidence": 1.0,
-            "started_at": _t.time() - 30,  # fresh — 30s old
-        }
-    }
     pipeline._conversation = {"jagan_bf": []}
     mock_db = MagicMock()
     mock_db.voice_embedding_count.return_value = 0  # no voice samples yet
@@ -11159,7 +10679,6 @@ async def test_enrollment_mishear_escape_hatch_renames_fresh_best_friend():
     mock_orch.on_identity_confirmed.assert_called_once_with(
         "jagan_bf", "Gevan", "Jagan"
     )
-    pipeline._active_sessions = {}
 
 
 async def test_enrollment_mishear_escape_hatch_skips_when_voice_mature():
@@ -11172,15 +10691,6 @@ async def test_enrollment_mishear_escape_hatch_skips_when_voice_mature():
     from pipeline import _execute_tool
     import time as _t
     await pipeline._session_store.open_session("jagan_bf", "Jagan", "best_friend", "face", now=_t.time() - 30)
-    pipeline._active_sessions = {
-        "jagan_bf": {
-            "person_id": "jagan_bf", "person_name": "Jagan",
-            "person_type": "best_friend",
-            "session_type": "face", "last_face_seen": _t.time(),
-            "last_spoke_at": _t.time(), "voice_confidence": 1.0,
-            "started_at": _t.time() - 30,  # fresh session
-        }
-    }
     pipeline._conversation = {"jagan_bf": []}
     mock_db = MagicMock()
     mock_db.voice_embedding_count.return_value = 20  # MATURE voice — not enrollment
@@ -11200,7 +10710,6 @@ async def test_enrollment_mishear_escape_hatch_skips_when_voice_mature():
     mock_db.update_person_name.assert_not_called()
     await __import__("asyncio").sleep(0)  # flush transition_to_disputed create_task
     assert pipeline._session_store.peek_snapshot("jagan_bf").person_type == "disputed"
-    pipeline._active_sessions = {}
 
 
 async def test_enrollment_mishear_escape_hatch_skips_when_session_stale():
@@ -11214,15 +10723,6 @@ async def test_enrollment_mishear_escape_hatch_skips_when_session_stale():
     import time as _t
     from core.config import ENROLLMENT_RENAME_GRACE_SECS
     await pipeline._session_store.open_session("jagan_bf", "Jagan", "best_friend", "face", now=_t.time() - (ENROLLMENT_RENAME_GRACE_SECS + 60))
-    pipeline._active_sessions = {
-        "jagan_bf": {
-            "person_id": "jagan_bf", "person_name": "Jagan",
-            "person_type": "best_friend",
-            "session_type": "face", "last_face_seen": _t.time(),
-            "last_spoke_at": _t.time(), "voice_confidence": 1.0,
-            "started_at": _t.time() - (ENROLLMENT_RENAME_GRACE_SECS + 60),
-        }
-    }
     pipeline._conversation = {"jagan_bf": []}
     mock_db = MagicMock()
     mock_db.voice_embedding_count.return_value = 0
@@ -11242,7 +10742,6 @@ async def test_enrollment_mishear_escape_hatch_skips_when_session_stale():
     mock_db.update_person_name.assert_not_called()
     await __import__("asyncio").sleep(0)  # flush transition_to_disputed create_task
     assert pipeline._session_store.peek_snapshot("jagan_bf").person_type == "disputed"
-    pipeline._active_sessions = {}
 
 
 async def test_update_person_name_on_best_friend_session_flips_to_disputed():
@@ -11261,18 +10760,7 @@ async def test_update_person_name_on_best_friend_session_flips_to_disputed():
     import time as _t
     from core.config import ENROLLMENT_RENAME_GRACE_SECS
     _started_at = _t.time() - (ENROLLMENT_RENAME_GRACE_SECS + 60)
-    pipeline._active_sessions = {
-        "jagan_bf": {
-            "person_id": "jagan_bf", "person_name": "Jagan",
-            "person_type": "best_friend",
-            "session_type": "face", "last_face_seen": _t.time(),
-            "last_spoke_at": _t.time(), "voice_confidence": 1.0,
-            # Past grace window so the Bug F escape hatch does NOT fire.
-            "started_at": _started_at,
-        }
-    }
-    # _execute_tool reads _sess_type from _session_store.peek_snapshot(), so open
-    # the session in the store with best_friend type.
+    # Past grace window so the Bug F escape hatch does NOT fire.
     await pipeline._session_store.open_session(
         "jagan_bf", "Jagan", "best_friend", "face", now=_started_at
     )
@@ -11306,7 +10794,7 @@ async def test_update_person_name_on_best_friend_session_flips_to_disputed():
     assert snap.prior_person_type == "best_friend"
     assert snap.disputed_claimed_name == "Benkat"
     assert snap.dispute_set_at is not None
-    assert pipeline._active_sessions["jagan_bf"]["person_name"] == "Jagan"  # in-memory name unchanged
+    assert snap.person_name == "Jagan", "person_name must not change on dispute-flip"
     # Orchestrator flagged the pid as disputed so extraction pauses
     mock_orch.mark_disputed.assert_called_once_with("jagan_bf")
 
@@ -11322,14 +10810,6 @@ async def test_stranger_rename_still_works_after_g_fix():
     await pipeline._session_store.open_session(
         "stranger_xyz", "visitor", "stranger", "face", now=_t.time()
     )
-    pipeline._active_sessions = {
-        "stranger_xyz": {
-            "person_id": "stranger_xyz", "person_name": "visitor",
-            "person_type": "stranger",
-            "session_type": "face", "last_face_seen": _t.time(),
-            "last_spoke_at": _t.time(), "voice_confidence": 1.0, "started_at": _t.time(),
-        }
-    }
     pipeline._conversation = {"stranger_xyz": []}
     mock_db = MagicMock()
     await _execute_tool(
@@ -11682,13 +11162,9 @@ def test_dispute_within_timeout_not_force_closed():
     now = time.time()
     asyncio.run(pipeline._session_store.open_session(pid, "Jagan", "known", "face", now=now))
     asyncio.run(pipeline._session_store.transition_to_disputed(pid, None, "test", now=now))
-    pipeline._active_sessions[pid] = {"person_type": "disputed", "person_name": "Jagan"}
-    try:
-        pipeline._expire_stale_sessions()
-        assert pid in pipeline._active_sessions, \
-            "Fresh disputed session should not be force-closed"
-    finally:
-        pipeline._active_sessions.pop(pid, None)
+    pipeline._expire_stale_sessions()
+    assert pipeline._session_store.peek_snapshot(pid) is not None, \
+        "Fresh disputed session should not be force-closed"
 
 
 async def test_mark_disputed_records_timestamp():
@@ -11698,7 +11174,6 @@ async def test_mark_disputed_records_timestamp():
     import time as _t
     pid = "jagan_001"
     await pipeline._session_store.open_session(pid, "Jagan", "known", "face", now=_t.time())
-    pipeline._active_sessions = {pid: {"person_id": pid}}
     pipeline._conversation = {pid: []}
     await _execute_tool(
         "update_person_name", {"name": "Venkat"},
@@ -12976,25 +12451,16 @@ def test_set_language_removed_from_brain_tools():
 def test_open_session_requires_person_type():
     """_open_session(person_type=...) is now required — calling without it is an error."""
     import pipeline
-    try:
-        pipeline._active_sessions = {}
-        # Missing person_type should raise TypeError (required param)
-        import pytest as _pytest
-        with _pytest.raises(TypeError):
-            pipeline._open_session("p1", "Jagan", "face")
-    finally:
-        pipeline._active_sessions = {}
+    import pytest as _pytest
+    with _pytest.raises(TypeError):
+        pipeline._open_session("p1", "Jagan", "face")
 
 
 def test_open_session_rejects_invalid_person_type():
     """Invalid person_type → AssertionError — catches literal-string bugs at write time."""
     import pipeline, pytest as _pytest
-    try:
-        pipeline._active_sessions = {}
-        with _pytest.raises(AssertionError):
-            pipeline._open_session("p1", "Jagan", "face", person_type="bogus")
-    finally:
-        pipeline._active_sessions = {}
+    with _pytest.raises(AssertionError):
+        pipeline._open_session("p1", "Jagan", "face", person_type="bogus")
 
 
 def test_build_system_prompt_contains_tool_access_block_for_best_friend():
@@ -13110,7 +12576,6 @@ def test_s112_room_session_ends_when_last_person_leaves():
     and fires the `_on_room_end` hook. A new _open_session after that
     mints a FRESH id (the next room, not a continuation)."""
     import pipeline
-    pipeline._active_sessions = {}
     pipeline._active_room_session = None
     pipeline._emotion_agents = {}
     pipeline._persons_in_frame = {}
@@ -13138,7 +12603,6 @@ def test_s112_room_session_ends_when_last_person_leaves():
             "room, not a resurrection of the last one"
         )
     finally:
-        pipeline._active_sessions = {}
         pipeline._active_room_session = None
         pipeline._persons_in_frame = {}
 
@@ -13179,7 +12643,6 @@ def test_s112_persons_in_frame_pops_on_close_session():
     SCENE_STALE_SECS to age the entry out. The 30s lag window let
     scene blocks render people whose sessions had already closed."""
     import pipeline, time as _t
-    pipeline._active_sessions = {}
     pipeline._active_room_session = None
     pipeline._persons_in_frame = {
         "lexi_xyz": {
@@ -13198,7 +12661,6 @@ def test_s112_persons_in_frame_pops_on_close_session():
             "not wait for SCENE_STALE_SECS age-out"
         )
     finally:
-        pipeline._active_sessions = {}
         pipeline._active_room_session = None
         pipeline._persons_in_frame = {}
 
@@ -13215,27 +12677,12 @@ def test_s112_kairos_prefers_best_friend_in_multi_person_room():
     pipeline._session_store._sessions.clear()
     _aio.run(pipeline._session_store.open_session("jagan_001", "Jagan", "best_friend", "face", now=now))
     _aio.run(pipeline._session_store.open_session("lexi_xyz", "Lexi", "known", "voice", now=now))
-    pipeline._active_sessions = {
-        "jagan_001": {
-            "person_id": "jagan_001", "person_name": "Jagan",
-            "person_type": "best_friend", "session_type": "face",
-            "last_face_seen": now, "last_spoke_at": now - 60,  # older speaker
-            "voice_confidence": 1.0, "started_at": now - 300,
-        },
-        "lexi_xyz": {
-            "person_id": "lexi_xyz", "person_name": "Lexi",
-            "person_type": "known", "session_type": "voice",
-            "last_face_seen": now, "last_spoke_at": now,  # most-recent
-            "voice_confidence": 0.8, "started_at": now - 120,
-        },
-    }
     try:
         pid = pipeline._kairos_preferred_speaker("jagan_001")
         assert pid == "jagan_001", (
             "best_friend must win over most-recent speaker in room"
         )
     finally:
-        pipeline._active_sessions = {}
         pipeline._session_store._sessions.clear()
 
 
@@ -13251,35 +12698,14 @@ def test_s112_kairos_falls_back_to_longest_silence_without_best_friend():
     _aio.run(pipeline._session_store.open_session("lexi_xyz", "Lexi", "known", "voice", now=now))
     _aio.run(pipeline._session_store.open_session("kara_def", "Kara", "known", "face", now=now - 180))
     _aio.run(pipeline._session_store.open_session("ravi_ghi", "Ravi", "known", "face", now=now - 90))
-    pipeline._active_sessions = {
-        "lexi_xyz": {
-            "person_id": "lexi_xyz", "person_name": "Lexi",
-            "person_type": "known", "session_type": "voice",
-            "last_face_seen": now, "last_spoke_at": now,  # just spoke
-            "voice_confidence": 0.8, "started_at": now - 120,
-        },
-        "kara_def": {
-            "person_id": "kara_def", "person_name": "Kara",
-            "person_type": "known", "session_type": "face",
-            "last_face_seen": now, "last_spoke_at": now - 180,  # quiet longest
-            "voice_confidence": 0.8, "started_at": now - 240,
-        },
-        "ravi_ghi": {
-            "person_id": "ravi_ghi", "person_name": "Ravi",
-            "person_type": "known", "session_type": "face",
-            "last_face_seen": now, "last_spoke_at": now - 90,
-            "voice_confidence": 0.8, "started_at": now - 200,
-        },
-    }
     try:
-        # best_friend is 'jagan_001' but NOT in active_sessions — fallback path.
+        # best_friend is 'jagan_001' but NOT in store — fallback path.
         pid = pipeline._kairos_preferred_speaker("jagan_001")
         assert pid == "kara_def", (
             "longest-silence (180s) must win over most-recent (0s) "
             "and medium (90s) in the absent-best_friend fallback"
         )
     finally:
-        pipeline._active_sessions = {}
         pipeline._session_store._sessions.clear()
 
 
@@ -13292,19 +12718,10 @@ def test_s112_kairos_preferred_speaker_single_session_returns_only_pid():
     now = _t.time()
     pipeline._session_store._sessions.clear()  # clear any leftover sessions from prior test
     _aio.run(pipeline._session_store.open_session("lexi_xyz", "Lexi", "known", "voice", now=now))
-    pipeline._active_sessions = {
-        "lexi_xyz": {
-            "person_id": "lexi_xyz", "person_name": "Lexi",
-            "person_type": "known", "session_type": "voice",
-            "last_face_seen": now, "last_spoke_at": now,
-            "voice_confidence": 0.8, "started_at": now - 60,
-        },
-    }
     try:
         assert pipeline._kairos_preferred_speaker("jagan_001") == "lexi_xyz"
         assert pipeline._kairos_preferred_speaker(None) == "lexi_xyz"
     finally:
-        pipeline._active_sessions = {}
         pipeline._session_store._sessions.clear()
 
 
@@ -13618,33 +13035,13 @@ def test_s113_on_room_end_fires_exactly_once_when_last_person_leaves():
 
     pipeline._on_room_end = _spy
     try:
-        pipeline._active_sessions = {
-            "a_1": {
-                "person_name": "Alice", "person_type": "known",
-                "started_at": now, "last_activity": now,
-                "room_session_id": "r_abc",
-                "waiting_for_name": False,
-                "voice_match_conf": 0.8, "voice_sample_count": 10,
-                "last_face_seen": now, "user_turns": 1,
-                "disputed_block_count": 0,
-            },
-            "b_1": {
-                "person_name": "Bob", "person_type": "known",
-                "started_at": now, "last_activity": now,
-                "room_session_id": "r_abc",
-                "waiting_for_name": False,
-                "voice_match_conf": 0.7, "voice_sample_count": 8,
-                "last_face_seen": now, "user_turns": 1,
-                "disputed_block_count": 0,
-            },
-        }
         pipeline._active_room_session = "r_abc"
         pipeline._face_db_ref = None
 
         import asyncio as _aio
         async def _drive():
-            pipeline._close_session("a_1")         # room still alive (Bob here)
-            pipeline._close_session("b_1")         # last person leaves → hook fires
+            pipeline._close_session("a_1")         # store empty → fires room end
+            pipeline._close_session("b_1")         # _active_room_session already None → no second fire
             # Let fire-and-forget task actually run.
             await _aio.sleep(0)
             await _aio.sleep(0)
@@ -13659,7 +13056,6 @@ def test_s113_on_room_end_fires_exactly_once_when_last_person_leaves():
         )
     finally:
         pipeline._on_room_end = original
-        pipeline._active_sessions = {}
         pipeline._active_room_session = None
 
 
@@ -13682,30 +13078,10 @@ def test_s113_on_room_end_does_not_fire_while_other_sessions_live():
         pipeline._session_store._sessions.clear()
         _aio.run(pipeline._session_store.open_session("a_1", "Alice", "known", "face", now=now))
         _aio.run(pipeline._session_store.open_session("b_1", "Bob", "known", "face", now=now))
-        pipeline._active_sessions = {
-            "a_1": {
-                "person_name": "Alice", "person_type": "known",
-                "started_at": now, "last_activity": now,
-                "room_session_id": "r_xyz",
-                "waiting_for_name": False,
-                "voice_match_conf": 0.8, "voice_sample_count": 10,
-                "last_face_seen": now, "user_turns": 1,
-                "disputed_block_count": 0,
-            },
-            "b_1": {
-                "person_name": "Bob", "person_type": "known",
-                "started_at": now, "last_activity": now,
-                "room_session_id": "r_xyz",
-                "waiting_for_name": False,
-                "voice_match_conf": 0.7, "voice_sample_count": 8,
-                "last_face_seen": now, "user_turns": 1,
-                "disputed_block_count": 0,
-            },
-        }
         pipeline._active_room_session = "r_xyz"
         pipeline._face_db_ref = None
         async def _drive():
-            pipeline._close_session("a_1")   # Bob still present → no hook
+            pipeline._close_session("a_1")   # Bob still in store → no hook
             await _aio.sleep(0)
 
         _aio.run(_drive())
@@ -13718,7 +13094,6 @@ def test_s113_on_room_end_does_not_fire_while_other_sessions_live():
         )
     finally:
         pipeline._on_room_end = original
-        pipeline._active_sessions = {}
         pipeline._active_room_session = None
         pipeline._session_store._sessions.clear()
 
@@ -14037,7 +13412,6 @@ def test_s3b1_room_started_at_lifecycle(tmp_path):
     durations or no duration at all."""
     import pipeline
     # Fresh state.
-    pipeline._active_sessions = {}
     pipeline._active_room_session = None
     pipeline._active_room_started_at = None
     pipeline._face_db_ref = None
@@ -14220,24 +13594,6 @@ async def test_s3b2_behavioral_silent_skip_fires_on_user_to_user(monkeypatch, tm
     pipeline._session_store._sessions.clear()
     await pipeline._session_store.open_session("jagan_001", "Jagan", "best_friend", "face", now=now)
     await pipeline._session_store.open_session("lexi_002", "Lexi", "known", "face", now=now)
-    pipeline._active_sessions = {
-        "jagan_001": {
-            "person_id": "jagan_001", "person_name": "Jagan",
-            "person_type": "best_friend", "started_at": now, "last_activity": now,
-            "room_session_id": "r_u2u", "waiting_for_name": False,
-            "voice_match_conf": 0.9, "voice_sample_count": 20,
-            "last_face_seen": now, "user_turns": 1,
-            "disputed_block_count": 0, "last_spoke_at": now,
-        },
-        "lexi_002": {
-            "person_id": "lexi_002", "person_name": "Lexi",
-            "person_type": "known", "started_at": now, "last_activity": now,
-            "room_session_id": "r_u2u", "waiting_for_name": False,
-            "voice_match_conf": 0.8, "voice_sample_count": 15,
-            "last_face_seen": now, "user_turns": 3,
-            "disputed_block_count": 0, "last_spoke_at": now - 5,
-        },
-    }
     pipeline._conversation = {"lexi_002": []}
     pipeline._cloud_state = pipeline.CloudState.ONLINE
     pipeline._active_system_name = "Kara"
@@ -14257,7 +13613,6 @@ async def test_s3b2_behavioral_silent_skip_fires_on_user_to_user(monkeypatch, tm
     assert any(log[1] == "user" for log in db_stub.logged)
     assert orch_stub.notified >= 1, "notify() must fire so extraction runs"
     # Cleanup.
-    pipeline._active_sessions = {}
     pipeline._conversation = {}
     pipeline._brain_orchestrator = None
     pipeline._session_store._sessions.clear()
@@ -14292,24 +13647,9 @@ async def test_s3b2_behavioral_system_name_collision_falls_through(monkeypatch):
     monkeypatch.setattr(pipeline, "play_filler", lambda _t: None)
 
     now = time.time()
-    pipeline._active_sessions = {
-        "a_1": {
-            "person_id": "a_1", "person_name": "Alice",
-            "person_type": "known", "started_at": now, "last_activity": now,
-            "room_session_id": "r_col", "waiting_for_name": False,
-            "voice_match_conf": 0.8, "voice_sample_count": 10,
-            "last_face_seen": now, "user_turns": 1,
-            "disputed_block_count": 0, "last_spoke_at": now,
-        },
-        "k_1": {
-            "person_id": "k_1", "person_name": "Kara",  # human Kara
-            "person_type": "known", "started_at": now, "last_activity": now,
-            "room_session_id": "r_col", "waiting_for_name": False,
-            "voice_match_conf": 0.8, "voice_sample_count": 10,
-            "last_face_seen": now, "user_turns": 1,
-            "disputed_block_count": 0, "last_spoke_at": now,
-        },
-    }
+    pipeline._session_store._sessions.clear()
+    await pipeline._session_store.open_session("a_1", "Alice", "known", "face", now=now)
+    await pipeline._session_store.open_session("k_1", "Kara", "known", "face", now=now)
     pipeline._conversation = {"a_1": []}
     pipeline._cloud_state = pipeline.CloudState.ONLINE
     pipeline._active_system_name = "Kara"  # AI is also Kara
@@ -14330,7 +13670,7 @@ async def test_s3b2_behavioral_system_name_collision_falls_through(monkeypatch):
         )
 
     # Cleanup.
-    pipeline._active_sessions = {}
+    pipeline._session_store._sessions.clear()
     pipeline._conversation = {}
 
 
@@ -15820,7 +15160,6 @@ def test_s116_room_lifecycle_logs_participant_join_and_synthesis(monkeypatch):
     joins (separate from session opens) AND synthesis dispatch with
     explicit speaker list so the decoupling architecture is auditable."""
     import asyncio as _aio, pipeline, io, contextlib
-    pipeline._active_sessions = {}
     pipeline._active_room_session = None
     pipeline._active_room_started_at = None
     pipeline._active_room_participants = set()
@@ -15862,7 +15201,6 @@ def test_s116_room_lifecycle_logs_participant_join_and_synthesis(monkeypatch):
         )
         assert captured_synth["called"], "synthesize_room must actually fire"
     finally:
-        pipeline._active_sessions = {}
         pipeline._active_room_session = None
         pipeline._active_room_started_at = None
         pipeline._active_room_participants = set()
@@ -16531,7 +15869,6 @@ def test_s111_emotion_agent_pops_on_fresh_session_open():
     # Seed agent as if a prior session populated it.
     pipeline._emotion_agents = {"jagan_001": EmotionAgent()}
     old_agent = pipeline._emotion_agents["jagan_001"]
-    pipeline._active_sessions = {}  # no active session → fresh open path
     try:
         pipeline._open_session(
             "jagan_001", "Jagan", "face", "best_friend",
@@ -16544,7 +15881,6 @@ def test_s111_emotion_agent_pops_on_fresh_session_open():
         )
     finally:
         pipeline._emotion_agents = {}
-        pipeline._active_sessions = {}
 
 
 async def test_s111_emotion_agent_survives_session_reopen():
