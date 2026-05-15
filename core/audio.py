@@ -729,5 +729,5 @@ def stop_audio():
     try:
         sd.stop()
     except Exception:
-        pass
+        pass  # CLEANUP: sd.stop() raises if no active stream or device gone — interrupt flag still set
     _interrupt_flag.set()

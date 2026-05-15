@@ -14,8 +14,46 @@ import os
 import sys
 import threading
 import time
+import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
+
+
+# ── Real core.audio setup ─────────────────────────────────────────────────────
+# core/audio.py has `import sounddevice as sd` at module level; sounddevice is
+# not installed in the test venv. If test_pipeline.py ran first it will have
+# installed a minimal core.audio stub (missing record_until_silence etc.).
+# This module-scoped fixture pops any stub, injects a minimal sounddevice stub,
+# and imports the real module so all tests here get the actual implementation.
+
+@pytest.fixture(autouse=True, scope="module")
+def _real_audio_module():
+    import types as _types
+    from unittest.mock import MagicMock
+
+    _sd_fake = _types.ModuleType("sounddevice")
+    _sd_fake.play = MagicMock()
+    _sd_fake.wait = MagicMock()
+    _sd_fake.stop = MagicMock()
+    _sd_fake.InputStream = MagicMock()
+    _sd_fake.OutputStream = MagicMock()
+
+    _stub = sys.modules.pop("core.audio", None)
+    _sd_prior = sys.modules.get("sounddevice")
+    sys.modules["sounddevice"] = _sd_fake
+
+    try:
+        import core.audio  # loads real module from disk using _sd_fake
+        yield
+    finally:
+        if _stub is not None:
+            sys.modules["core.audio"] = _stub
+        elif "core.audio" in sys.modules:
+            del sys.modules["core.audio"]
+        if _sd_prior is not None:
+            sys.modules["sounddevice"] = _sd_prior
+        elif "sounddevice" in sys.modules:
+            del sys.modules["sounddevice"]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

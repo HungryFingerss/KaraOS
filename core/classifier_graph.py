@@ -784,6 +784,15 @@ def get_session_summary() -> str:
 
 # ── Lifecycle ────────────────────────────────────────────────────────────
 
+def checkpoint_wal_singleton() -> None:
+    """Flush the ClassifierDB singleton's WAL if it is open.
+
+    Called from the pipeline's dream loop. No-op when the DB has never been
+    opened (graph not bootstrapped) or has already been closed."""
+    if _classifier_db is not None:
+        _classifier_db.checkpoint_wal()
+
+
 async def aclose() -> None:
     """Close module-level singletons. Call from the pipeline's shutdown
     handler so the httpx client doesn't leave a warning at exit."""
@@ -792,7 +801,7 @@ async def aclose() -> None:
         try:
             await _http_client.aclose()
         except Exception:
-            pass
+            pass  # CLEANUP: httpx client may already be closed or never opened
         _http_client = None
     _embedding_agent = None
     if _classifier_db is not None:

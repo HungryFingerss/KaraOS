@@ -29,3 +29,19 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "network" in item.keywords:
             item.add_marker(skip_marker)
+
+
+@pytest.fixture(autouse=True)
+def _reset_session_state_between_tests():
+    """Reset SessionStore between every test — prevents pid-collision failures in test_pipeline.py.
+
+    Mirrors tests/conftest.py's version. No _active_sessions.clear() — that global is gone (P0.7).
+    """
+    try:
+        from core.session_state import SessionStore
+        import pipeline as _pipeline
+        if hasattr(_pipeline, "_session_store"):
+            _pipeline._session_store = SessionStore()
+    except Exception as _e:
+        print(f"[conftest] session-store reset failed: {_e!r}")
+    yield

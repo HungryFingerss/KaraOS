@@ -470,9 +470,9 @@ def main() -> None:
     )
     mismatches = collect_mismatches(rows, predictions)
     save_path  = save_run(metrics, metadata, mismatches)
+    summary = format_summary(metrics, metadata, mismatches)
     print("")
-    print(format_summary(metrics, metadata, mismatches))
-    print(f"\nFull run JSON saved: {save_path}")
+    sys.stdout.buffer.write((summary + f"\nFull run JSON saved: {save_path}\n").encode("utf-8", errors="replace"))
 
 
 if __name__ == "__main__":

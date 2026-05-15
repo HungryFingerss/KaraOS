@@ -670,7 +670,7 @@ def _load_session_state() -> dict | None:
             # Accept both v1 (no "v" key) and v2 state files
             return data
         except Exception:
-            pass
+            pass  # OPTIONAL: malformed state file — fall through to None
     return None
 
 

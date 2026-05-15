@@ -72,6 +72,7 @@ from core.config import (
     VOICE_ACCUM_FACE_WITNESS_MAX_AGE_SEC,
     VOICE_ACCUM_VOICE_SELF_MATCH_MIN,
     VOICE_ACCUM_MATURE_SAMPLE_COUNT,
+    CORE_MEMORY_ENABLED,
 )
 from core.log_utils import _now_log_ts
 
@@ -1136,7 +1137,7 @@ async def _classify_intent_smart(
                     import core.classifier_graph as _cg_mod
                     _cg_mod._session_shadow_divergences += 1
                 except Exception:
-                    pass
+                    pass  # OPTIONAL: shadow-divergence counter — non-blocking metrics
         if isinstance(llm_result, dict):
             llm_result.setdefault("__usage", {})["mode"] = "shadow"
         return llm_result
@@ -1356,6 +1357,7 @@ async def ask_stream(
     memory_search_fn: "Callable[[str, str], Awaitable[str]] | None" = None,
     scene_block: str | None = None,
     room_search_fn: "Callable[[str], Awaitable[str]] | None" = None,
+    cached_prefix: str | None = None,
 ) -> AsyncIterator[tuple[str, ...]]:
     """
     Streaming version of ask(). Yields:
@@ -1381,6 +1383,7 @@ async def ask_stream(
         prompt_addendum=prompt_addendum,
         system_name=system_name,
         scene_block=scene_block,
+        cached_prefix=cached_prefix,
     )
     full_messages = [{"role": "system", "content": sys_prompt}] + context
     est_tokens = _estimate_tokens(full_messages)
@@ -1987,17 +1990,96 @@ def _format_datetime_line() -> str:
     )
 
 
-def _build_system_prompt(
+def _format_time_anchor() -> str:
+    """Render a time-of-day anchor block placed at the END of the system prompt.
+
+    Recency-effect placement: brain attention peaks on content near the end
+    of the prompt, so this block is read just before the conversation history.
+    The existing _format_datetime_line() at the top of TURN-DYNAMIC section
+    stays for factual time/date queries; this block grounds conversational
+    tone (greetings, farewells, activity suggestions).
+    """
+    now = datetime.now()
+    rounded_minute = (now.minute // 5) * 5
+    rounded = now.replace(minute=rounded_minute, second=0, microsecond=0)
+    time_str = rounded.strftime("%I:%M %p").lstrip("0")
+    day_str  = rounded.strftime("%A, %B %d, %Y")
+    hour = rounded.hour
+    if 5 <= hour < 12:
+        time_of_day = "morning"
+    elif 12 <= hour < 17:
+        time_of_day = "afternoon"
+    elif 17 <= hour < 21:
+        time_of_day = "evening"
+    else:
+        time_of_day = "night"
+    return (
+        "<<<TIME ANCHOR (real-world clock — ground every response in this)>>>\n"
+        f"It is currently {time_str} on {day_str}. It is {time_of_day}.\n"
+        "RULES:\n"
+        "- Do not contradict this clock. If asked the time, give this exact value.\n"
+        "- Do not say 'it\u2019s late' / 'get some rest' / 'goodnight' unless it is night.\n"
+        "- Do not say 'good morning' unless it is morning.\n"
+        "- Do not invent times from conversation history \u2014 this clock is the authority.\n"
+        "<<<END TIME ANCHOR>>>"
+    )
+
+
+def _format_core_memory_block(facts: list[dict]) -> str | None:
+    """Format core-memory facts for Section 2 injection.
+
+    Returns None when the list is empty — callers must skip concatenation.
+    Safety-critical attributes (expressed_suicidal_thoughts etc.) get a
+    (SAFETY — always address proactively) annotation so the brain treats
+    them with urgency even if the user hasn't brought them up yet.
+    """
+    if not facts:
+        return None
+    _SAFETY_ATTRS = {
+        "expressed_suicidal_thoughts",
+        "mentioned_self_harm",
+        "mentioned_abuse",
+        "reported_substance_abuse",
+        "has_experienced_crisis",
+    }
+    lines = []
+    for f in facts:
+        attr  = f["attribute"].replace("_", " ")
+        value = f["value"]
+        conf  = f.get("confidence", 1.0)
+        tag   = ""
+        if f.get("attribute") in _SAFETY_ATTRS:
+            tag = " (SAFETY — always address proactively)"
+        elif conf < 0.70:
+            tag = " (uncertain)"
+        lines.append(f"- {attr}: {value}{tag}")
+    block = "\n".join(lines)
+    return f"<<<CORE MEMORY>>>\n{block}\n<<<END CORE MEMORY>>>"
+
+
+def render_session_stable_prefix(
+    system_name: str | None,
+    session_person_type: str | None,
+    session_user_turns: int,
+    identity_disputed: bool,
     person_name: str | None,
-    vision_state: dict | None = None,
-    voice_state: dict | None = None,
-    memory_context: str | None = None,
-    object_context: str | None = None,
-    emotion_context: str | None = None,
-    prompt_addendum: str | None = None,
-    system_name: str | None = None,
-    scene_block: str | None = None,
+    disputed_claimed_name: str | None,
+    core_memory: "list[dict] | None" = None,
 ) -> str:
+    """Render Sections 1+2 of the system prompt (pure-static + session-stable).
+
+    Cache the result in session_dict["cached_prefix"] and pass it as
+    cached_prefix= to ask_stream / _build_system_prompt to skip rebuilding
+    on every turn.  Together.ai reuses its KV cache when the prompt prefix
+    is byte-identical across consecutive calls — ~25-30% per-turn cost saving.
+
+    Invalidate the cache (pop "cached_prefix") whenever:
+      - system_name changes (update_system_name tool)
+      - session_person_type changes (dispute flip, stranger→known promotion,
+        dispute auto-clear, auto-confirm, update_person_name)
+      - session_user_turns crosses STRANGER_IDENTITY_BLOCK_MIN_TURNS
+      - identity_disputed changes (report_identity_mismatch, dispute auto-clear)
+    """
     # ============================================================
     # SECTION 1: PURE-STATIC (cacheable across all sessions/turns)
     # ============================================================
@@ -2051,14 +2133,6 @@ def _build_system_prompt(
                 "do NOT call it when they are just asking what your name is."
             )
 
-    # Session 117 — <<<SYSTEM IDENTITY>>> block hardens the existing
-    # name guidance with explicit DO/DO-NOT examples. Canary 2026-04-25
-    # showed the brain emit "What name would you like to give me?"
-    # mid-conversation despite system_name being 'Kara' for 4 prior
-    # turns — pattern saturation + ambiguous user input + no anchor in
-    # the prompt against re-asking. Block runs ONLY when system_name is
-    # set (post-naming); first-boot enrollment flow unaffected. Gated on
-    # SYSTEM_IDENTITY_BLOCK_ENABLED for one-line rollback.
     from core.config import SYSTEM_IDENTITY_BLOCK_ENABLED as _SYS_ID_ENABLED
     if (
         _SYS_ID_ENABLED
@@ -2067,15 +2141,6 @@ def _build_system_prompt(
     ):
         prompt += format_system_identity_block(system_name)
 
-    # Bug N (2026-04-20 live run) — confabulation prevention.
-    # When asked about a thinly-recorded person or event, the LLM tends to
-    # pattern-complete from adjacent memories (household context, recent
-    # topics) and produce plausible-sounding false memories. Example from the
-    # live run: "who was the visitor?" with an empty visitor node resulted in
-    # the LLM narrating a fake conversation stitched together from Jagan's
-    # own knowledge graph. Explicit instruction + anchor on search_memory
-    # sparsity is the downstream defense (upstream fix is BriefingAgent's
-    # turn_count ≥ 2 filter).
     from core.config import HONESTY_POLICY_BLOCK_ENABLED
     if HONESTY_POLICY_BLOCK_ENABLED:
         prompt += (
@@ -2141,36 +2206,9 @@ def _build_system_prompt(
             "<<<END HONESTY POLICY>>>"
         )
 
-    # VISION_ROADMAP Phase 3 (P3.21, Session 91) — cross-person privacy.
-    # Live-run finding from the 2026-04-22 multi-convo session: when Jagan
-    # asked "who are you talking to when I was away?" (referring to John's
-    # session during Jagan's absence), the brain answered "No one, Jagan"
-    # — technically privacy-correct (John's session was out-of-scope for
-    # Jagan's retrieval context) but phrased as a denial. That's a lie,
-    # not a privacy-aware answer. This block teaches the brain to
-    # acknowledge presence while declining to disclose specifics.
-    #
-    # Complement — not replacement — for HONESTY POLICY above. Honesty =
-    # don't FABRICATE content you don't have. Privacy = don't DISCLOSE
-    # content you do have but another person owns. P3.26 will later
-    # generalize both into a unified contract once this block proves out
-    # in live use.
     from core.config import CROSS_PERSON_PRIVACY_BLOCK_ENABLED
     if CROSS_PERSON_PRIVACY_BLOCK_ENABLED:
-        # Session 98 Bug C (2026-04-23 canary): the unconditional privacy
-        # phrasing contradicts the 3A.4.6 owner-access model (best_friend
-        # sees everything except system_only). Canary showed Jagan asking
-        # "what did you discuss with Lexi?" → brain replied "I can't
-        # share their specifics without their consent" — technically
-        # following the block, but wrong for the household owner who
-        # already has full visibility at the retrieval layer
-        # (`_visibility_clause` returns everything non-system for him).
-        # The fix: branch on speaker identity — best_friend gets a
-        # permissive variant ("share naturally"), everyone else keeps
-        # the original privacy phrasing.
-        _is_bf_speaker = (
-            (vision_state or {}).get("session_person_type") == "best_friend"
-        )
+        _is_bf_speaker = (session_person_type == "best_friend")
         if _is_bf_speaker:
             prompt += (
                 "\n\n<<<CROSS-PERSON PRIVACY (OWNER MODE)>>>\n"
@@ -2229,10 +2267,8 @@ def _build_system_prompt(
                 "<<<END CROSS-PERSON PRIVACY>>>"
             )
 
-    # Tool access block — surfaces which tools the current speaker is allowed
-    # to invoke, based on TOOL_PRIVILEGES and their session's person_type.
     from core.config import TOOL_PRIVILEGES as _TP
-    _caller_pt = (vision_state or {}).get("session_person_type") or "stranger"
+    _caller_pt = session_person_type or "stranger"
     _tool_lines = []
     for _tname in sorted(_TP):
         _status = "available" if _caller_pt in _TP[_tname] else "NOT AVAILABLE to this speaker"
@@ -2243,29 +2279,14 @@ def _build_system_prompt(
         + "\n<<<END TOOL ACCESS>>>"
     )
 
-    # Session 97 Fix 1 (canary 2026-04-22): Lexi said "my name is Lexi by
-    # the way" at turn ~41 and the brain replied conversationally ("Nice
-    # to meet you, Lexi") without calling update_person_name — so the
-    # stranger session stayed anonymous, her extracted facts orphaned,
-    # and HouseholdAgent created a dangling shadow node. Tool description
-    # tightening (above) names the promotion trigger explicitly; this
-    # block is the reminder track that fires when a stranger has been
-    # unpromoted for multiple turns, so if a name reveal happens the
-    # brain treats it as the promotion signal it is.
-    #
-    # Gate: stranger session + user_turns >= STRANGER_IDENTITY_BLOCK_MIN_TURNS.
-    # Post-promotion person_type flips stranger → known, so the block
-    # naturally stops firing (no separate promoted flag needed).
     from core.config import (
         STRANGER_IDENTITY_BLOCK_ENABLED,
         STRANGER_IDENTITY_BLOCK_MIN_TURNS,
     )
-    _sess_pt      = (vision_state or {}).get("session_person_type")
-    _sess_turns   = (vision_state or {}).get("session_user_turns", 0)
     if (
         STRANGER_IDENTITY_BLOCK_ENABLED
-        and _sess_pt == "stranger"
-        and _sess_turns >= STRANGER_IDENTITY_BLOCK_MIN_TURNS
+        and session_person_type == "stranger"
+        and session_user_turns >= STRANGER_IDENTITY_BLOCK_MIN_TURNS
     ):
         prompt += (
             "\n\n<<<STRANGER IDENTITY>>>\n"
@@ -2290,10 +2311,9 @@ def _build_system_prompt(
             "<<<END STRANGER IDENTITY>>>"
         )
 
-    # Identity dispute block — surfaces when the speaker has contradicted the sensor.
-    if vision_state is not None and vision_state.get("identity_disputed"):
-        claimed = vision_state.get("disputed_claimed_name")
-        sensor_name = vision_state.get("person_name") or "unknown"
+    if identity_disputed:
+        claimed = disputed_claimed_name
+        sensor_name = person_name or "unknown"
         claimed_bit = f" (they claim to be '{claimed}')" if claimed else ""
         prompt += (
             f"\n\n<<<IDENTITY DISPUTED>>>\n"
@@ -2302,6 +2322,43 @@ def _build_system_prompt(
             f"Do NOT reference '{sensor_name}'s' stored facts or history. "
             f"Acknowledge the mismatch and, if they give a clear name, call update_person_name.\n"
             f"<<<END IDENTITY DISPUTED>>>"
+        )
+
+    # Wave 4 Item 18 — inject core memory block (Section 2 addendum).
+    # Only injected when CORE_MEMORY_ENABLED and caller supplied facts.
+    # Strangers with no stored facts produce an empty list → block omitted,
+    # saving tokens on every stranger turn.
+    if CORE_MEMORY_ENABLED and core_memory:
+        _cm_block = _format_core_memory_block(core_memory)
+        if _cm_block:
+            prompt += f"\n\n{_cm_block}"
+
+    return prompt
+
+
+def _build_system_prompt(
+    person_name: str | None,
+    vision_state: dict | None = None,
+    voice_state: dict | None = None,
+    memory_context: str | None = None,
+    object_context: str | None = None,
+    emotion_context: str | None = None,
+    prompt_addendum: str | None = None,
+    system_name: str | None = None,
+    scene_block: str | None = None,
+    cached_prefix: str | None = None,
+) -> str:
+    # Sections 1+2: use provided cache or build fresh
+    if cached_prefix is not None:
+        prompt = cached_prefix
+    else:
+        prompt = render_session_stable_prefix(
+            system_name=system_name,
+            session_person_type=(vision_state or {}).get("session_person_type"),
+            session_user_turns=(vision_state or {}).get("session_user_turns", 0),
+            identity_disputed=bool((vision_state or {}).get("identity_disputed", False)),
+            person_name=person_name,
+            disputed_claimed_name=(vision_state or {}).get("disputed_claimed_name"),
         )
 
     # ============================================================
@@ -2631,6 +2688,13 @@ def _build_system_prompt(
 
     if person_name:
         prompt += f"\n\nThe person currently talking to you is {person_name}. Address them naturally by name when appropriate."
+
+    # Wave 4 follow-up F1 — time anchor at end of TURN-DYNAMIC section.
+    # Recency-effect placement: brain attention peaks on content near end of
+    # prompt. The existing _format_datetime_line() at top of TURN-DYNAMIC
+    # stays for factual time/date queries; this block grounds conversational
+    # tone so "goodnight" / "good morning" / "it's late" are never wrong.
+    prompt += f"\n\n{_format_time_anchor()}"
 
     return prompt
 

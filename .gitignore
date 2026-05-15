@@ -51,6 +51,7 @@ pretrained_models/
 data/classifier_scenarios.db-shm
 data/classifier_scenarios.db-wal
 data/classifier_snapshots/
+faces/snapshots/
 
 # =============================================================================
 # Faces data — committed for backup so "Jagan stays Jagan" after restore.

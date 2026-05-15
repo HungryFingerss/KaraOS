@@ -229,6 +229,7 @@ def test_confidence_score_wilson_lower_bound():
 def test_abstract_text_strips_persons_and_places():
     """Coverage: registry replacement of known persons + system_name +
     NER fallback for unknown places."""
+    pytest.importorskip("spacy")
     from core.abstraction import abstract_text
 
     out, mapping = abstract_text(

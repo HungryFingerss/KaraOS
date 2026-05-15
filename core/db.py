@@ -2,6 +2,8 @@
 vision/db.py — SQLite + FAISS face database
 Stores person metadata in SQLite, embeddings in FAISS index.
 """
+import asyncio
+import contextlib
 import datetime
 import re
 import shutil
@@ -24,6 +26,8 @@ from core.config import (
     FACES_DIR, DEFAULT_SYSTEM_NAME,
     SILENT_OBS_SIMILARITY, SILENT_OBS_RETENTION_DAYS, SILENT_OBS_SCAN_DAYS,
     CONVERSATION_HISTORY_LIMIT,
+    CONVERSATION_ARCHIVE_ENABLED, CONVERSATION_ARCHIVE_AFTER_DAYS,
+    STRANGER_TTL_DAYS,
 )
 
 
@@ -38,11 +42,17 @@ VALID_EMBEDDING_SOURCES: frozenset[str] = frozenset({
 class FaceDB:
     def __init__(self, db_path: str = None, faiss_path: "Path | str | None" = None):
         path = db_path if db_path is not None else str(DB_PATH)
+        self._db_path = path
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._index_lock = threading.RLock()
+        # Wave 3 Item 15 — async rebuild state
+        self._rebuild_in_progress: bool = False
+        self._pending_adds_during_rebuild: list = []  # list of (vec: np.ndarray 1-D, person_id: str)
+        self._rebuild_lock = threading.Lock()  # serialize rebuilds; separate from _index_lock
         # Allow callers (tests, dashboard) to supply a separate FAISS path so they
         # never accidentally overwrite the production faces/faiss.index file.
         self._faiss_path: Path = Path(faiss_path) if faiss_path is not None else FAISS_INDEX_PATH
+        self._faiss_degraded: bool = False
         self._init_tables()
         self._load_faiss()
 
@@ -203,7 +213,117 @@ class FaceDB:
                 f"{_null_room} legacy row(s)"
             )
         self._conn.commit()
+        if CONVERSATION_ARCHIVE_ENABLED:
+            self._init_conversation_archive()
         self._warn_missing_vectors()
+
+    @contextlib.contextmanager
+    def transaction(self):
+        """BEGIN IMMEDIATE / COMMIT with S65 ROLLBACK race handled.
+
+        Uses BEGIN IMMEDIATE to acquire the write lock upfront. The inner
+        try/except around ROLLBACK prevents masking the original exception
+        when COMMIT auto-rolls back (constraint violation, lock contention).
+
+        P0.5: used by paired-write methods to make SQL writes durable before
+        attempting FAISS updates. Callers must NOT commit inside the with-block.
+        """
+        prev_isolation = self._conn.isolation_level
+        self._conn.isolation_level = None  # autocommit — prevents Python auto-BEGIN clash
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield
+                self._conn.execute("COMMIT")
+            except Exception:
+                try:
+                    self._conn.execute("ROLLBACK")
+                except Exception:
+                    pass  # RACE: S65 — ROLLBACK fails if commit auto-rolled
+                raise
+        finally:
+            self._conn.isolation_level = prev_isolation
+
+    def _archive_db_path(self) -> "Path":
+        """Return the path to the companion conversation archive database."""
+        p = Path(self._db_path)
+        return p.with_name(p.stem + "_conversation_archive.db")
+
+    def _init_conversation_archive(self) -> None:
+        """Create (or migrate) the conversation archive database (Wave 6 Item 21)."""
+        archive_path = self._archive_db_path()
+        _ac = sqlite3.connect(str(archive_path), check_same_thread=False)
+        try:
+            _ac.execute("PRAGMA journal_mode=WAL")
+            _ac.execute("""
+                CREATE TABLE IF NOT EXISTS conversation_log (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    person_id       TEXT NOT NULL,
+                    role            TEXT NOT NULL,
+                    content         TEXT NOT NULL,
+                    ts              REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
+                    room_session_id TEXT,
+                    audience_ids    TEXT
+                )
+            """)
+            _ac.execute(
+                "CREATE INDEX IF NOT EXISTS idx_archive_log_person "
+                "ON conversation_log(person_id, ts)"
+            )
+            _ac.commit()
+        finally:
+            _ac.close()
+
+    def archive_old_conversation_log(
+        self, cutoff_days: "int | None" = None, now: "float | None" = None
+    ) -> int:
+        """Move conversation_log turns older than cutoff_days to the archive DB.
+
+        Uses ATTACH DATABASE so the INSERT and DELETE happen in a single
+        transaction — if anything fails, no rows are lost from main and
+        none are duplicated in the archive.  Returns the number of rows moved.
+        """
+        if cutoff_days is None:
+            cutoff_days = CONVERSATION_ARCHIVE_AFTER_DAYS
+        if now is None:
+            now = time.time()
+        cutoff_ts = now - cutoff_days * 86400
+
+        n = self._conn.execute(
+            "SELECT COUNT(*) FROM conversation_log WHERE ts < ?",
+            (cutoff_ts,),
+        ).fetchone()[0]
+        if n == 0:
+            return 0
+
+        archive_path = self._archive_db_path()
+        self._conn.execute("ATTACH DATABASE ? AS archive", (str(archive_path),))
+        try:
+            self._conn.execute("BEGIN EXCLUSIVE")
+            self._conn.execute(
+                "INSERT INTO archive.conversation_log "
+                "(person_id, role, content, ts, room_session_id, audience_ids) "
+                "SELECT person_id, role, content, ts, room_session_id, audience_ids "
+                "FROM main.conversation_log WHERE ts < ?",
+                (cutoff_ts,),
+            )
+            self._conn.execute(
+                "DELETE FROM main.conversation_log WHERE ts < ?",
+                (cutoff_ts,),
+            )
+            self._conn.execute("COMMIT")
+        except Exception:
+            try:
+                self._conn.execute("ROLLBACK")
+            except Exception:
+                pass  # RACE: S65 _safe_commit no-active-transaction race — ROLLBACK raises if BEGIN EXCLUSIVE failed
+            raise
+        finally:
+            try:
+                self._conn.execute("DETACH DATABASE archive")
+            except Exception:
+                pass  # CLEANUP: DETACH raises if ATTACH failed earlier — no archive DB to release
+        return n
 
     def _warn_missing_vectors(self):
         """One-time migration helper: warn if any enrolled persons lack vector BLOBs."""
@@ -213,6 +333,24 @@ class FaceDB:
         missing = row[0] if row else 0
         if missing > 0:
             print(f"[DB] WARNING: {missing} person(s) have no vector data and need re-enrollment")
+
+    def _sentinel_path(self) -> Path:
+        """P0.5 dirty sentinel — name + '.dirty' (appended, not suffix-replaced)."""
+        return self._faiss_path.with_name(self._faiss_path.name + ".dirty")
+
+    def _mark_faiss_dirty(self) -> None:
+        """Write the dirty sentinel; best-effort (row-count check still catches mismatches)."""
+        try:
+            self._sentinel_path().touch()
+        except Exception as e:
+            print(f"[FaceDB] failed to write FAISS dirty sentinel: {e!r}")  # CLEANUP: best-effort
+
+    def _clear_faiss_dirty(self) -> None:
+        """Remove the dirty sentinel after a successful FAISS rebuild."""
+        try:
+            self._sentinel_path().unlink(missing_ok=True)
+        except Exception as e:
+            print(f"[FaceDB] failed to clear FAISS dirty sentinel: {e!r}")  # CLEANUP: best-effort
 
     def _load_faiss(self):
         if self._faiss_path.exists():
@@ -232,12 +370,23 @@ class FaceDB:
         valid_count = self._conn.execute(
             "SELECT COUNT(*) FROM embeddings WHERE vector IS NOT NULL"
         ).fetchone()[0]
-        if self.index.ntotal != valid_count:
-            print(
-                f"[DB] FAISS out of sync: index={self.index.ntotal}, "
-                f"valid_rows={valid_count}, null_rows={null_count} — rebuilding."
-            )
-            self._rebuild_faiss()
+
+        sentinel = self._sentinel_path()
+        needs_rebuild = sentinel.exists() or self.index.ntotal != valid_count
+        if needs_rebuild:
+            if self.index.ntotal != valid_count:
+                print(
+                    f"[DB] FAISS out of sync: index={self.index.ntotal}, "
+                    f"valid_rows={valid_count}, null_rows={null_count} — rebuilding."
+                )
+            else:
+                print("[DB] FAISS dirty sentinel found — rebuilding to reconcile.")
+            try:
+                self._rebuild_faiss()
+                self._clear_faiss_dirty()
+            except Exception as e:
+                print(f"[FaceDB] Boot reconciliation failed; starting in degraded mode: {e!r}")
+                self._faiss_degraded = True
             return
 
         # Build idx → person_id map from DB
@@ -313,13 +462,16 @@ class FaceDB:
         self, embedding: np.ndarray,
         photo_path: str | None = None,
         zone: str | None = None,
-    ) -> None:
+    ) -> str | None:
         """Accumulate a silent-face sighting via online embedding mean.
 
-        Compares the new embedding against all existing silent_observations using
-        cosine similarity. If a match is found (sim > SILENT_OBS_SIMILARITY), updates
-        that row's mean embedding, duration, and frame_count. Otherwise inserts a new row.
+        Compares the new embedding against unmatched recent silent_observations using
+        vectorized cosine similarity (single matmul). If a match is found
+        (sim >= SILENT_OBS_SIMILARITY), updates that row's mean embedding and
+        frame_count and returns its id. Otherwise inserts a new row and returns None.
         Never creates a Person record.
+
+        Wave 2 Item 12: vectorized — single matmul instead of per-row Python loop.
         """
         emb = embedding.astype(np.float32)
         norm = np.linalg.norm(emb)
@@ -329,29 +481,45 @@ class FaceDB:
         now = time.time()
         cutoff = time.time() - SILENT_OBS_SCAN_DAYS * 86400
         rows = self._conn.execute(
-            "SELECT id, embedding, frame_count FROM silent_observations WHERE last_seen >= ?",
+            """SELECT id, embedding, frame_count FROM silent_observations
+               WHERE matched_person_id IS NULL AND last_seen >= ?""",
             (cutoff,),
         ).fetchall()
 
-        best_id:  str | None    = None
-        best_emb: np.ndarray | None = None
-        best_count: int         = 1
-        best_sim: float         = -1.0
+        if not rows:
+            obs_id = f"obs_{uuid4().hex[:10]}"
+            self._conn.execute(
+                """INSERT INTO silent_observations
+                   (id, first_seen, last_seen, duration_secs, frame_count,
+                    embedding, photo_path, zone, created_at)
+                   VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?)""",
+                (obs_id, now, now, emb.tobytes(), photo_path, zone, now),
+            )
+            self._conn.commit()
+            return None
 
-        for row_id, vec_bytes, frame_count in rows:
-            existing = np.frombuffer(vec_bytes, dtype=np.float32).copy()
-            sim = float(np.dot(emb, existing))
-            if sim > best_sim:
-                best_sim   = sim
-                best_id    = row_id
-                best_emb   = existing
-                best_count = frame_count
+        # Decode all embeddings into an (N, D) matrix — single allocation.
+        n = len(rows)
+        dim = emb.shape[0]
+        mat = np.empty((n, dim), dtype=np.float32)
+        ids: list[str] = []
+        counts: list[int] = []
+        for i, (row_id, vec_bytes, frame_count) in enumerate(rows):
+            mat[i] = np.frombuffer(vec_bytes, dtype=np.float32)
+            ids.append(row_id)
+            counts.append(frame_count)
 
-        if best_id is not None and best_sim >= SILENT_OBS_SIMILARITY:
+        # Cosine == dot product since both query and stored embeddings are L2-normalized.
+        scores = mat @ emb  # shape (N,)
+        best_idx = int(np.argmax(scores))
+        best_sim = float(scores[best_idx])
+
+        if best_sim >= SILENT_OBS_SIMILARITY:
+            best_id = ids[best_idx]
+            n_frames = counts[best_idx]
+            best_emb = mat[best_idx]
             # Online mean: new_mean = (old_mean * n + new) / (n + 1)
-            # best_emb and best_count already fetched from the scan above — no second query.
-            n        = best_count
-            new_mean = (best_emb * n + emb) / (n + 1)
+            new_mean = (best_emb * n_frames + emb) / (n_frames + 1)
             norm2 = np.linalg.norm(new_mean)
             if norm2 > 0:
                 new_mean /= norm2
@@ -365,6 +533,8 @@ class FaceDB:
                    WHERE id = ?""",
                 (new_mean.tobytes(), now, zone, photo_path, best_id),
             )
+            self._conn.commit()
+            return best_id
         else:
             obs_id = f"obs_{uuid4().hex[:10]}"
             self._conn.execute(
@@ -374,8 +544,8 @@ class FaceDB:
                    VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?)""",
                 (obs_id, now, now, emb.tobytes(), photo_path, zone, now),
             )
-
-        self._conn.commit()
+            self._conn.commit()
+            return None
 
     def prune_silent_observations(self, days: int = SILENT_OBS_RETENTION_DAYS) -> int:
         """Delete observations older than `days` days. Returns rows deleted."""
@@ -466,18 +636,26 @@ class FaceDB:
                     )
                     return False
 
+        # P0.5: SQL durable, FAISS derived; boot reconciliation handles divergence.
         with self._index_lock:
             faiss_idx = self.index.ntotal
-            self.index.add(emb)
-            self._idx_to_person[faiss_idx] = person_id
-
-        self._conn.execute(
-            "INSERT INTO embeddings (person_id, faiss_idx, vector, captured_at, source, confidence_at_write)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (person_id, faiss_idx, emb_1d.tobytes(), time.time(), source, confidence)
-        )
-        self._conn.commit()
-        self._save_faiss()
+            with self.transaction():
+                self._conn.execute(
+                    "INSERT INTO embeddings (person_id, faiss_idx, vector, captured_at, source, confidence_at_write)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (person_id, faiss_idx, emb_1d.tobytes(), time.time(), source, confidence)
+                )
+            try:
+                self.index.add(emb)
+                self._idx_to_person[faiss_idx] = person_id
+                if self._rebuild_in_progress:
+                    # Enqueue so the async rebuild can replay this addition onto the new index.
+                    self._pending_adds_during_rebuild.append((emb[0].copy(), person_id))
+                self._save_faiss()
+            except Exception as e:
+                print(f"[FaceDB] FAISS update failed; will reconcile on next boot: {e!r}")
+                self._mark_faiss_dirty()
+                raise
         return True
 
     # ── Recognize ─────────────────────────────────────────────────────────────
@@ -485,6 +663,9 @@ class FaceDB:
         """
         Returns (person_id, name, confidence) or (None, None, 0.0)
         """
+        if self._faiss_degraded:
+            return None, None, 0.0
+
         with self._index_lock:
             if self.index.ntotal == 0:
                 return None, None, 0.0
@@ -543,16 +724,23 @@ class FaceDB:
 
     def delete_person(self, person_id: str):
         """Delete person, their embeddings, and their full conversation history."""
-        self._conn.execute("DELETE FROM embeddings WHERE person_id = ?", (person_id,))
-        self._conn.execute("DELETE FROM voice_embeddings WHERE person_id = ?", (person_id,))
-        self._conn.execute("DELETE FROM conversation_log WHERE person_id = ?", (person_id,))
-        self._conn.execute("DELETE FROM persons WHERE id = ?", (person_id,))
-        self._conn.execute(
-            "UPDATE silent_observations SET matched_person_id = NULL WHERE matched_person_id = ?",
-            (person_id,),
-        )
-        self._conn.commit()
-        self._rebuild_faiss()
+        # P0.5: SQL durable, FAISS derived; boot reconciliation handles divergence.
+        with self._index_lock:
+            with self.transaction():
+                self._conn.execute("DELETE FROM embeddings WHERE person_id = ?", (person_id,))
+                self._conn.execute("DELETE FROM voice_embeddings WHERE person_id = ?", (person_id,))
+                self._conn.execute("DELETE FROM conversation_log WHERE person_id = ?", (person_id,))
+                self._conn.execute("DELETE FROM persons WHERE id = ?", (person_id,))
+                self._conn.execute(
+                    "UPDATE silent_observations SET matched_person_id = NULL WHERE matched_person_id = ?",
+                    (person_id,),
+                )
+            try:
+                self._rebuild_faiss()
+            except Exception as e:
+                print(f"[FaceDB] FAISS rebuild failed after delete_person; will reconcile on next boot: {e!r}")
+                self._mark_faiss_dirty()
+                raise
 
     def find_stale_stranger_voice_ids(self, days: int) -> list[str]:
         """Return (without deleting) the list of stranger person_ids whose voice profile
@@ -617,13 +805,20 @@ class FaceDB:
             return []
         ids = [r[0] for r in rows]
         placeholders = ",".join("?" * len(ids))
-        for table in ("embeddings", "voice_embeddings", "conversation_log"):
-            self._conn.execute(
-                f"DELETE FROM {table} WHERE person_id IN ({placeholders})", ids
-            )
-        self._conn.execute(f"DELETE FROM persons WHERE id IN ({placeholders})", ids)
-        self._conn.commit()
-        self._rebuild_faiss()
+        # P0.5: SQL durable, FAISS derived; boot reconciliation handles divergence.
+        with self._index_lock:
+            with self.transaction():
+                for table in ("embeddings", "voice_embeddings", "conversation_log"):
+                    self._conn.execute(
+                        f"DELETE FROM {table} WHERE person_id IN ({placeholders})", ids
+                    )
+                self._conn.execute(f"DELETE FROM persons WHERE id IN ({placeholders})", ids)
+            try:
+                self._rebuild_faiss()
+            except Exception as e:
+                print(f"[FaceDB] FAISS rebuild failed after prune_old_strangers; will reconcile on next boot: {e!r}")
+                self._mark_faiss_dirty()
+                raise
         return ids
 
     def prune_zero_value_stranger(self, person_id: str) -> bool:
@@ -661,21 +856,153 @@ class FaceDB:
         ).fetchone()[0]
         if turn_n > 0:
             return False
-        for table in ("embeddings", "voice_embeddings", "conversation_log"):
-            self._conn.execute(
-                f"DELETE FROM {table} WHERE person_id = ?", (person_id,)
-            )
-        self._conn.execute("DELETE FROM persons WHERE id = ?", (person_id,))
-        self._conn.commit()
-        self._rebuild_faiss()
+        # P0.5: SQL durable, FAISS derived; boot reconciliation handles divergence.
+        with self._index_lock:
+            with self.transaction():
+                for table in ("embeddings", "voice_embeddings", "conversation_log"):
+                    self._conn.execute(
+                        f"DELETE FROM {table} WHERE person_id = ?", (person_id,)
+                    )
+                self._conn.execute("DELETE FROM persons WHERE id = ?", (person_id,))
+            try:
+                self._rebuild_faiss()
+            except Exception as e:
+                print(f"[FaceDB] FAISS rebuild failed after prune_zero_value_stranger; will reconcile on next boot: {e!r}")
+                self._mark_faiss_dirty()
+                raise
         print(f"[FaceDB] Pruned zero-value stranger {person_id}")
         return True
+
+    # ── Wave 3 Item 15 — async FAISS rebuild ──────────────────────────────────
+
+    def _fetch_all_embeddings_for_index(self) -> tuple:
+        """Snapshot all embeddings for index rebuild. Must be called under _index_lock."""
+        rows = self._conn.execute(
+            "SELECT person_id, vector FROM embeddings WHERE vector IS NOT NULL ORDER BY id"
+        ).fetchall()
+        if not rows:
+            return np.empty((0, EMBEDDING_DIM), dtype=np.float32), []
+        person_ids = [r[0] for r in rows]
+        vecs = np.vstack([
+            np.frombuffer(r[1], dtype=np.float32).copy().reshape(1, -1)
+            for r in rows
+        ]).astype(np.float32)
+        return vecs, person_ids
+
+    def _build_faiss_from_snapshot(self, snapshot: tuple) -> tuple:
+        """Build a new IndexFlatIP from snapshot data. Pure — no DB access, no lock.
+        Returns (new_index, new_idx_to_person). Safe to run in a worker thread."""
+        vecs, person_ids = snapshot
+        new_index = faiss.IndexFlatIP(EMBEDDING_DIM)
+        new_idx_to_person: dict = {}
+        for i, pid in enumerate(person_ids):
+            new_index.add(vecs[i].reshape(1, -1))
+            new_idx_to_person[i] = pid
+        return new_index, new_idx_to_person
+
+    async def rebuild_faiss_async(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Rebuild FAISS index without blocking concurrent recognize/add_embedding.
+
+        Snapshot under lock (~ms), build outside lock (~50ms-3s), swap under lock (~ms).
+        Concurrent add_embedding calls during the build phase are queued and replayed
+        onto the new index before swap, so no additions are lost.
+        """
+        if not self._rebuild_lock.acquire(blocking=False):
+            print("[FaceDB] rebuild already in progress, skipping")
+            return
+
+        try:
+            # Phase 1: snapshot under lock, mark rebuild-in-progress
+            with self._index_lock:
+                snapshot = self._fetch_all_embeddings_for_index()
+                self._pending_adds_during_rebuild = []
+                self._rebuild_in_progress = True
+
+            # Phase 2: build new index in worker thread (slow, no lock held)
+            try:
+                new_index, new_idx_to_person = await loop.run_in_executor(
+                    None,
+                    self._build_faiss_from_snapshot,
+                    snapshot,
+                )
+            except Exception:
+                with self._index_lock:
+                    self._rebuild_in_progress = False
+                    self._pending_adds_during_rebuild = []
+                raise
+
+            # Phase 3: replay pending adds onto new index, swap atomically (under lock, fast)
+            # Replay BEFORE setting self.index so that an add_embedding racing between the
+            # assignment and _rebuild_in_progress=False doesn't double-add. All three
+            # mutations happen inside one lock acquisition — correct by construction.
+            with self._index_lock:
+                for vec, person_id in self._pending_adds_during_rebuild:
+                    new_idx = new_index.ntotal
+                    new_index.add(vec.reshape(1, -1))
+                    new_idx_to_person[new_idx] = person_id
+                self.index = new_index
+                self._idx_to_person = new_idx_to_person
+                self._rebuild_in_progress = False
+                self._pending_adds_during_rebuild = []
+
+            # Phase 4: persist to disk (lock-free; no readers depend on file content)
+            try:
+                await loop.run_in_executor(None, self._save_faiss)
+            except Exception as e:
+                print(f"[FaceDB] async save_faiss failed (index in memory OK): {e!r}")
+        finally:
+            self._rebuild_lock.release()
+
+    def prune_old_strangers_sql_only(self, days: int) -> list:
+        """SQL-only part of prune_old_strangers: SELECT + DELETE rows, no FAISS rebuild.
+
+        Returns the list of deleted person_ids. Used by prune_old_strangers_async so
+        that the FAISS rebuild can happen in the background while conversation continues.
+        The sync prune_old_strangers() is kept for CLI paths that still want sync semantics.
+        """
+        cutoff = time.time() - days * 86400
+        rows = self._conn.execute(
+            "SELECT id FROM persons WHERE person_type = 'stranger' "
+            "AND (last_seen IS NULL OR last_seen < ?)",
+            (cutoff,)
+        ).fetchall()
+        if not rows:
+            return []
+        ids = [r[0] for r in rows]
+        placeholders = ",".join("?" * len(ids))
+        for table in ("embeddings", "voice_embeddings", "conversation_log"):
+            self._conn.execute(
+                f"DELETE FROM {table} WHERE person_id IN ({placeholders})", ids
+            )
+        self._conn.execute(f"DELETE FROM persons WHERE id IN ({placeholders})", ids)
+        self._conn.commit()
+        return ids
+
+    async def prune_old_strangers_async(
+        self, loop: asyncio.AbstractEventLoop, days: int = None
+    ) -> list:
+        """Async version of prune_old_strangers for the dream loop.
+
+        Deletes stale stranger rows synchronously (fast), then rebuilds FAISS in the
+        background so the conversation pipeline is never blocked for 500ms-3s.
+        Returns the list of deleted person_ids so the caller can prune brain data.
+        """
+        effective_days = days if days is not None else STRANGER_TTL_DAYS
+        ids = self.prune_old_strangers_sql_only(effective_days)
+        if ids:
+            await self.rebuild_faiss_async(loop)
+        return ids
 
     def _rebuild_faiss(self):
         """Rebuild FAISS index from SQLite vector BLOBs.
 
         Assigns new sequential faiss_idx values (0, 1, 2, …) and updates the DB
         to match, keeping _idx_to_person and the on-disk index in sync.
+
+        delete_person() uses this sync path deliberately — it is an operator-facing,
+        low-frequency action invoked via subprocess (dashboard/CLI), so the caller is
+        exiting anyway and blocking is acceptable. Do NOT migrate delete_person() to
+        the async path; the subprocess exit makes async overhead pointless here.
         """
         rows = self._conn.execute(
             "SELECT id, person_id, vector FROM embeddings WHERE vector IS NOT NULL ORDER BY id"
@@ -827,6 +1154,23 @@ class FaceDB:
             "ORDER BY ts DESC LIMIT ?",
             (person_id, CONVERSATION_HISTORY_LIMIT),
         ).fetchall()
+
+        # Wave 6 Item 21: supplement with archived turns when the archive exists.
+        archive_path = self._archive_db_path()
+        if CONVERSATION_ARCHIVE_ENABLED and archive_path.exists():
+            try:
+                _ac = sqlite3.connect(str(archive_path), check_same_thread=False)
+                arch_rows = _ac.execute(
+                    "SELECT role, content, ts FROM conversation_log WHERE person_id = ? "
+                    "ORDER BY ts DESC LIMIT ?",
+                    (person_id, CONVERSATION_HISTORY_LIMIT),
+                ).fetchall()
+                _ac.close()
+                combined = sorted(list(rows) + list(arch_rows), key=lambda r: r[2], reverse=True)
+                rows = combined[:CONVERSATION_HISTORY_LIMIT]
+            except Exception as _e:
+                print(f"[FaceDB] archive load failed: {_e!r}")
+
         rows = list(reversed(rows))  # restore chronological order
 
         _SESSION_GAP = 4 * 3600  # 4 hours = new session
@@ -944,6 +1288,7 @@ class FaceDB:
         """Search conversation_log for turns containing keyword (case-insensitive).
 
         Returns most-recent matching turns first, each excerpt truncated to 200 chars.
+        Also searches the conversation archive when CONVERSATION_ARCHIVE_ENABLED (Wave 6 Item 21).
         """
         rows = self._conn.execute(
             """SELECT role, content, ts
@@ -952,6 +1297,23 @@ class FaceDB:
                ORDER BY ts DESC LIMIT ?""",
             (person_id, f"%{keyword}%", limit),
         ).fetchall()
+
+        archive_path = self._archive_db_path()
+        if CONVERSATION_ARCHIVE_ENABLED and archive_path.exists():
+            try:
+                _ac = sqlite3.connect(str(archive_path), check_same_thread=False)
+                arch_rows = _ac.execute(
+                    "SELECT role, content, ts FROM conversation_log "
+                    "WHERE person_id = ? AND LOWER(content) LIKE LOWER(?) "
+                    "ORDER BY ts DESC LIMIT ?",
+                    (person_id, f"%{keyword}%", limit),
+                ).fetchall()
+                _ac.close()
+                combined = sorted(list(rows) + list(arch_rows), key=lambda r: r[2], reverse=True)
+                rows = combined[:limit]
+            except Exception as _e:
+                print(f"[FaceDB] archive search failed: {_e!r}")
+
         results = []
         for role, content, ts in rows:
             dt = datetime.datetime.fromtimestamp(ts)
@@ -1062,12 +1424,11 @@ class FaceDB:
         that clears ``voice_embeddings`` rows but not the pipeline's cache.
         Uses the existing ``voice_embeddings_person_id_idx`` → O(log n).
         """
-        with self._index_lock:
-            row = self._conn.execute(
-                "SELECT COUNT(*) FROM voice_embeddings WHERE person_id = ?",
-                (person_id,),
-            ).fetchone()
-            return row[0] if row else 0
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM voice_embeddings WHERE person_id = ?",
+            (person_id,),
+        ).fetchone()
+        return row[0] if row else 0
 
     # ── Gallery audit / repair ────────────────────────────────────────────────
 
@@ -1153,10 +1514,27 @@ class FaceDB:
         if not outlier_ids:
             return 0
         ph = ",".join("?" * len(outlier_ids))
-        self._conn.execute(f"DELETE FROM embeddings WHERE id IN ({ph})", outlier_ids)
-        self._conn.commit()
-        self._rebuild_faiss()
+        # P0.5: SQL durable, FAISS derived; boot reconciliation handles divergence.
+        with self._index_lock:
+            with self.transaction():
+                self._conn.execute(f"DELETE FROM embeddings WHERE id IN ({ph})", outlier_ids)
+            try:
+                self._rebuild_faiss()
+            except Exception as e:
+                print(f"[FaceDB] FAISS rebuild failed after prune_outlier_embeddings; will reconcile on next boot: {e!r}")
+                self._mark_faiss_dirty()
+                raise
         return len(outlier_ids)
+
+    def checkpoint_wal(self) -> None:
+        """Flush the WAL into the main DB file (TRUNCATE mode).
+
+        Called at the end of each dream cycle so the -wal sidecar stays
+        small and backup copies are self-contained."""
+        try:
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except Exception as _e:
+            print(f"[FaceDB] WAL checkpoint failed: {_e!r}")
 
     def wipe(self):
         """Factory reset — clear everything including system identity."""
@@ -1178,6 +1556,18 @@ class FaceDB:
         self.index      = faiss.IndexFlatIP(EMBEDDING_DIM)
         self._idx_to_person = {}
         self._save_faiss()
+
+    def close(self) -> None:
+        """Close the SQLite connection.
+
+        Idempotent wrapper — call sites (pipeline factory-reset, shutdown)
+        need no try/except. The CLEANUP swallow lives here so the boundary
+        is one place.
+        """
+        try:
+            self._conn.close()
+        except Exception:
+            pass  # CLEANUP: connection may already be closed (double-shutdown or wipe_all race)
 
 
 def wipe_all() -> None:

@@ -408,6 +408,40 @@ class TestBrainDB:
         result = brain_db.list_shadow_persons()
         assert result == []
 
+    def test_idx_knowledge_privacy_person_exists(self, brain_db):
+        """Wave 1 Item 4: idx_knowledge_privacy_person must be present so
+        _visibility_clause queries (privacy_level, person_id predicate) hit
+        the index rather than scanning the full knowledge table."""
+        indexes = {
+            r[1] for r in brain_db._conn.execute(
+                "SELECT type, name FROM sqlite_master WHERE type='index'"
+            ).fetchall()
+        }
+        assert "idx_knowledge_privacy_person" in indexes, (
+            "CREATE INDEX idx_knowledge_privacy_person ON knowledge(privacy_level, "
+            "person_id) must be present — visibility-clause queries scan the full "
+            "table without it"
+        )
+
+    def test_idx_knowledge_privacy_person_covers_correct_columns(self, brain_db):
+        """Wave 1 Item 4: the index must cover (privacy_level, person_id) in
+        that order — privacy_level is the leading column so equality scans on
+        tier (public/personal/household/system_only) benefit without a full
+        scan even when person_id is unspecified."""
+        row = brain_db._conn.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type='index' AND name='idx_knowledge_privacy_person'"
+        ).fetchone()
+        assert row is not None
+        sql = row[0].lower()
+        assert "privacy_level" in sql and "person_id" in sql, (
+            "index DDL must reference both privacy_level and person_id columns"
+        )
+        assert sql.index("privacy_level") < sql.index("person_id"), (
+            "privacy_level must be the leading column (equality scans on tier "
+            "hit the index even without a person_id predicate)"
+        )
+
 
 # ── TriageAgent tests ──────────────────────────────────────────────────────────
 
@@ -1885,6 +1919,154 @@ class TestOnIdentityConfirmedShadowPromotion:
             "SELECT COUNT(*) FROM knowledge WHERE person_id = 'stranger_abc'"
         ).fetchone()[0]
         assert count == 0, f"Expected 0 knowledge rows from zero-facts shadow, got {count}"
+
+        orch._brain_db.close()
+        orch._graph_db.close()
+
+
+# ── Item 11 — BrainDB.transaction() + on_identity_confirmed atomicity ──────────
+
+class TestBrainDBTransaction:
+    """Tests for the BrainDB.transaction() context manager (Item 11)."""
+
+    def test_braindb_transaction_commits_on_success(self, tmp_path):
+        """Rows written inside transaction() are visible after clean exit."""
+        db = BrainDB(tmp_path / "t.db")
+        _cols = "(person_id,entity,entity_type,attribute,value,confidence,source_turn_id,agent,created_at)"
+        _vals = "VALUES (?,?,'person',?,?,?,1,'test',1.0)"
+        with db.transaction():
+            db._conn.execute(
+                f"INSERT INTO knowledge {_cols} {_vals}",
+                ("p1", "Alice", "likes", "cats", 0.9),
+            )
+            db._conn.execute(
+                f"INSERT INTO knowledge {_cols} {_vals}",
+                ("p1", "Alice", "dislikes", "rain", 0.8),
+            )
+
+        # reopen — verify both rows persisted
+        db2 = BrainDB(tmp_path / "t.db")
+        rows = db2._conn.execute(
+            "SELECT attribute FROM knowledge WHERE person_id='p1' ORDER BY attribute"
+        ).fetchall()
+        db.close()
+        db2.close()
+        assert [r[0] for r in rows] == ["dislikes", "likes"]
+
+    def test_braindb_transaction_rolls_back_on_exception(self, tmp_path):
+        """Row written inside transaction() is absent after an exception."""
+        db = BrainDB(tmp_path / "t.db")
+        try:
+            _cols2 = "(person_id,entity,entity_type,attribute,value,confidence,source_turn_id,agent,created_at)"
+            _vals2 = "VALUES (?,?,'person',?,?,?,1,'test',1.0)"
+            with db.transaction():
+                db._conn.execute(
+                    f"INSERT INTO knowledge {_cols2} {_vals2}",
+                    ("p2", "Bob", "color", "blue", 0.7),
+                )
+                raise RuntimeError("simulated mid-transaction failure")
+        except RuntimeError:
+            pass
+
+        db2 = BrainDB(tmp_path / "t.db")
+        count = db2._conn.execute(
+            "SELECT COUNT(*) FROM knowledge WHERE person_id='p2'"
+        ).fetchone()[0]
+        db.close()
+        db2.close()
+        assert count == 0, f"Expected 0 rows after rollback, got {count}"
+
+
+class TestOnIdentityConfirmedAtomicity:
+    """Tests for on_identity_confirmed atomicity (Item 11)."""
+
+    def _make_orch(self, tmp_path):
+        orch = BrainOrchestrator.__new__(BrainOrchestrator)
+        orch._shutdown = asyncio.Event()
+        orch._trigger  = asyncio.Event()
+        orch._brain_db = BrainDB(tmp_path / "brain.db")
+        orch._graph_db = GraphDB(tmp_path / "brain_graph")
+        return orch
+
+    def test_on_identity_confirmed_rolls_back_on_visitor_alert_failure(self, tmp_path, monkeypatch):
+        """If update_visitor_alert_for_promoted_person raises, brain.db rolls back."""
+        orch = self._make_orch(tmp_path)
+
+        # pre-populate a knowledge row under "visitor"
+        ext = Extraction("visitor", "person", "occupation", "teacher", 0.8, False, None)
+        orch._brain_db.store_knowledge(
+            [ext], turn_id=1, person_id="stranger_x", agent="test"
+        )
+
+        # pre-populate a shadow so promote_shadow_to_confirmed has work to do
+        orch._brain_db.upsert_shadow_person("Ravi", "stranger_x", "colleague")
+
+        # make the visitor-alert step raise mid-transaction
+        monkeypatch.setattr(
+            orch._brain_db,
+            "update_visitor_alert_for_promoted_person",
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("forced alert failure")),
+        )
+
+        with pytest.raises(RuntimeError, match="forced alert failure"):
+            orch.on_identity_confirmed("stranger_x", "visitor", "Ravi")
+
+        # entity must NOT have been migrated (rollback worked)
+        rows = orch._brain_db._conn.execute(
+            "SELECT entity FROM knowledge WHERE person_id='stranger_x'"
+        ).fetchall()
+        entities = [r[0] for r in rows]
+        assert "Ravi" not in entities, (
+            f"entity was migrated despite rollback — found: {entities}"
+        )
+        # shadow must NOT have been promoted
+        row = orch._brain_db._conn.execute(
+            "SELECT enrollment_status FROM shadow_persons WHERE LOWER(known_name)='ravi'"
+        ).fetchone()
+        if row is not None:
+            assert row[0] != "confirmed", "Shadow was promoted despite rollback"
+
+        orch._brain_db.close()
+        orch._graph_db.close()
+
+    def test_on_identity_confirmed_graph_failure_preserves_brain_db_commit(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Graph rebuild failure after brain.db commit leaves brain.db intact."""
+        orch = self._make_orch(tmp_path)
+
+        ext = Extraction("visitor", "person", "city", "Mumbai", 0.9, False, None)
+        orch._brain_db.store_knowledge(
+            [ext], turn_id=1, person_id="stranger_y", agent="test"
+        )
+
+        # make graph rebuild fail AFTER brain.db commit
+        monkeypatch.setattr(
+            orch._graph_db,
+            "rebuild_entity_from_knowledge",
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("kuzu crash")),
+        )
+
+        # must raise (RAISE pattern: sentinel preserved for next-boot)
+        with pytest.raises(RuntimeError, match="kuzu crash"):
+            orch.on_identity_confirmed("stranger_y", "visitor", "Nita")
+
+        # brain.db should reflect the migration (transaction committed)
+        rows = orch._brain_db._conn.execute(
+            "SELECT entity FROM knowledge WHERE person_id='stranger_y'"
+        ).fetchall()
+        entities = [r[0] for r in rows]
+        assert "Nita" in entities, (
+            f"brain.db not committed despite graph-only failure — found: {entities}"
+        )
+
+        # graph failure must have been logged (not silently swallowed)
+        captured = capsys.readouterr()
+        assert "graph rebuild failed" in captured.out.lower() or \
+               "graph rebuild failed" in captured.err.lower() or \
+               "kuzu crash" in captured.out or "kuzu crash" in captured.err, (
+            "Graph failure was not logged"
+        )
 
         orch._brain_db.close()
         orch._graph_db.close()
@@ -5576,7 +5758,7 @@ class TestHonestyPolicyBlock:
         """Source-inspection: the block appears in _build_system_prompt."""
         import inspect
         from core import brain
-        src = inspect.getsource(brain._build_system_prompt)
+        src = inspect.getsource(brain.render_session_stable_prefix)
         assert "<<<HONESTY POLICY>>>" in src, (
             "Bug N Layer 3: the HONESTY POLICY block is missing from "
             "_build_system_prompt — the LLM has nothing anchoring it against "
@@ -5593,11 +5775,11 @@ class TestHonestyPolicyBlock:
         speech matches the uncertainty of a pending gate decision."""
         import inspect
         from core import brain
-        src = inspect.getsource(brain._build_system_prompt)
+        src = inspect.getsource(brain.render_session_stable_prefix)
         assert "<<<HEDGED NAMING CONTRACT>>>" in src
         assert "<<<END HEDGED NAMING CONTRACT>>>" in src
         # Must explicitly call out the forbidden phrasings (positive negative example).
-        assert '"Kara it is!"' in src, (
+        assert '"Kara it is!"' in src or '\\"Kara it is!\\"' in src, (
             "HEDGED NAMING CONTRACT must show the confirmation phrase it forbids — "
             "abstract rules without concrete counter-examples drift"
         )
@@ -5620,7 +5802,7 @@ class TestHonestyPolicyBlock:
         so abstract rules don't drift in a future prompt refactor."""
         import inspect
         from core import brain
-        src = inspect.getsource(brain._build_system_prompt)
+        src = inspect.getsource(brain.render_session_stable_prefix)
         assert "<<<CROSS-PERSON PRIVACY>>>" in src, (
             "P3.21: CROSS-PERSON PRIVACY block must appear in _build_system_prompt "
             "— without it the brain phrases privacy-scoped omissions as denials "
@@ -5643,7 +5825,7 @@ class TestHonestyPolicyBlock:
         promotion is overdue if a reveal happens."""
         import inspect
         from core import brain
-        src = inspect.getsource(brain._build_system_prompt)
+        src = inspect.getsource(brain.render_session_stable_prefix)
         assert "<<<STRANGER IDENTITY>>>" in src, (
             "Session 97 Fix 1 block missing — STRANGER IDENTITY block must "
             "live in _build_system_prompt so brain is nudged to call "
@@ -5669,7 +5851,7 @@ class TestHonestyPolicyBlock:
         rules — the LLM pattern-matches on phrasing, not principles."""
         import inspect
         from core import brain
-        src = inspect.getsource(brain._build_system_prompt)
+        src = inspect.getsource(brain.render_session_stable_prefix)
         idx = src.find("<<<STRANGER IDENTITY>>>")
         end = src.find("<<<END STRANGER IDENTITY>>>", idx)
         assert idx >= 0 and end > idx, "stranger identity block boundaries not found"
@@ -5951,7 +6133,7 @@ class TestHonestyPolicyBlock:
         positive (what TO say) — keep the model's behavior stable."""
         import inspect
         from core import brain
-        src = inspect.getsource(brain._build_system_prompt)
+        src = inspect.getsource(brain.render_session_stable_prefix)
         # Positive anchor: the correct honest-privacy phrasing.
         assert "can't share" in src.lower() or "can't share their specifics" in src, (
             "P3.21 block must include the positive honest phrasing "
@@ -5980,7 +6162,7 @@ class TestHonestyPolicyBlock:
         → confirmation phrase could leak through for that tool."""
         import inspect
         from core import brain
-        src = inspect.getsource(brain._build_system_prompt)
+        src = inspect.getsource(brain.render_session_stable_prefix)
         # Find the hedged block specifically.
         idx = src.find("<<<HEDGED NAMING CONTRACT>>>")
         end = src.find("<<<END HEDGED NAMING CONTRACT>>>", idx)
@@ -5992,26 +6174,6 @@ class TestHonestyPolicyBlock:
                 f"means confirmation phrase can leak through for it"
             )
 
-
-    def test_structured_output_contract_block_present(self):
-        """VISION_ROADMAP P1.2: system prompt must include the structured-output
-        contract block so the brain knows to emit JSON with turn_intent,
-        extracted_value, confidence, reasoning, and tool_calls on every turn.
-        This is the keystone of Phase 1 — without it, gate validation (P1.7+)
-        has nothing to validate against."""
-        import inspect
-        from core import brain
-        src = inspect.getsource(brain._build_system_prompt)
-        assert "<<<STRUCTURED OUTPUT CONTRACT>>>" in src, (
-            "the contract block must appear in _build_system_prompt"
-        )
-        assert "<<<END STRUCTURED OUTPUT CONTRACT>>>" in src, (
-            "the contract block must close properly"
-        )
-        # Required fields must be explicitly documented in the block.
-        for field in ("content", "turn_intent", "extracted_value", "confidence",
-                      "reasoning", "tool_calls"):
-            assert field in src, f"contract block must document field {field!r}"
 
 
 # ── VISION_ROADMAP P1.3 — shadow classifier helpers ────────────────────────
@@ -6416,35 +6578,6 @@ def test_classifier_result_logged_as_intent_line():
         )
 
 
-    def test_structured_output_contract_gated_by_config_flag(self):
-        """P1.2: a config flag controls whether the block is emitted, so
-        regression tests can pin the prompt to the pre-Phase-1 shape if
-        needed and so the block can be toggled during rollout without a
-        code change."""
-        import inspect
-        from core import brain
-        src = inspect.getsource(brain._build_system_prompt)
-        assert "INTENT_CONTRACT_BLOCK_ENABLED" in src, (
-            "contract block must be gated by the config flag so rollout "
-            "is config-driven, not code-driven"
-        )
-
-
-    def test_structured_output_contract_documents_confidence_calibration(self):
-        """P1.2: the block must spell out confidence calibration buckets so
-        the model self-reports honestly. Without this, confidence drifts
-        toward optimistic (the architect-review concern)."""
-        import inspect
-        from core import brain
-        src = inspect.getsource(brain._build_system_prompt)
-        # All four calibration tiers must appear.
-        for marker in ("0.90", "0.75", "0.60", "unclear"):
-            assert marker in src, (
-                f"calibration marker {marker!r} missing from contract block — "
-                f"without it the model won't know how to self-score honestly"
-            )
-
-
     def test_honesty_policy_includes_visible_turn_exception(self):
         """Bug D2 (2026-04-22 live run): the HONESTY POLICY previously forced
         'I don't have details' when search_memory returned empty, even when
@@ -6812,10 +6945,32 @@ class TestMemorySearchDisputeSkip:
     async def test_disputed_session_returns_empty_status(self):
         """Disputed session → status='disputed', facts empty, excerpts empty."""
         import json
+        import sys
+        import time
+        import types
+        from unittest.mock import MagicMock
+        if "core.voice" not in sys.modules:
+            _vs = types.ModuleType("core.voice")
+            _vs.load_speaker_embedder = MagicMock(return_value=None)
+            _vs.identify = MagicMock(return_value=(None, 0.0))
+            _vs.diarize = MagicMock(return_value=[])
+            _vs.get_diarize_stats = MagicMock(return_value={})
+            sys.modules["core.voice"] = _vs
+        if "core.audio" not in sys.modules:
+            _as = types.ModuleType("core.audio")
+            for _fn in ["record_until_silence", "transcribe", "speak", "speak_stream",
+                        "listen_and_transcribe", "preload_models", "stop_audio",
+                        "play_filler", "set_lip_active"]:
+                setattr(_as, _fn, MagicMock())
+            setattr(_as, "_is_meta_commentary", MagicMock(return_value=False))
+            sys.modules["core.audio"] = _as
         import pipeline
-        pipeline._active_sessions = {
-            "p1": {"person_type": "disputed"},
-        }
+        await pipeline._session_store.open_session(
+            "p1", "p1", "known", "voice", now=time.time()
+        )
+        await pipeline._session_store.transition_to_disputed(
+            "p1", None, "test dispute", now=time.time()
+        )
         try:
             fn = pipeline._make_memory_search_fn("p1", db=None)
             result = await fn("Jagan", "any query")
@@ -6826,7 +6981,7 @@ class TestMemorySearchDisputeSkip:
             assert "hint" in data
             assert "do NOT reference" in data["hint"]
         finally:
-            pipeline._active_sessions = {}
+            await pipeline._session_store.close_session("p1")
 
     async def test_non_disputed_session_behaves_normally(self, tmp_path):
         """Regression guard: the dispute check must NOT fire for a known
@@ -6855,6 +7010,91 @@ class TestMemorySearchDisputeSkip:
         assert "_is_disputed(person_id)" in src, (
             "memory search must use the single-source-of-truth helper"
         )
+
+
+class TestContradictionDedup:
+    """Wave 2 Item 10: contradiction loop must pre-fetch existing facts per
+    distinct entity, not call get_active_knowledge once per extracted fact."""
+
+    def test_contradiction_loop_dedups_get_active_knowledge_per_entity(self, tmp_path):
+        """3 facts about 'Lexi' + 2 about 'Jagan' → get_active_knowledge called
+        2 times (one per distinct entity), not 5 (one per fact)."""
+        from core.brain_agent import BrainDB
+        import unittest.mock as mock
+
+        db = BrainDB(str(tmp_path / "brain.db"))
+        call_counter = {"n": 0}
+        original = db.get_active_knowledge
+
+        def counting_get(entity):
+            call_counter["n"] += 1
+            return original(entity)
+
+        # Patch the single-entity method; the bulk method should be used instead
+        with mock.patch.object(db, "get_active_knowledge", side_effect=counting_get):
+            # bulk fetch for 2 distinct entities: Lexi + Jagan
+            result = db.get_active_knowledge_for_entities(["Lexi", "Jagan"])
+
+        # get_active_knowledge_for_entities must NOT call get_active_knowledge at all
+        assert call_counter["n"] == 0, (
+            "get_active_knowledge_for_entities must use a single SQL query, "
+            "not call get_active_knowledge per entity"
+        )
+        assert "Lexi" in result and "Jagan" in result
+
+    def test_contradiction_loop_uses_bulk_prefetch_not_per_fact_calls(self, tmp_path):
+        """Source inspection: _process_turn must use get_active_knowledge_for_entities
+        before the contradiction loop, not get_active_knowledge inside the loop."""
+        import inspect
+        from core.brain_agent import BrainOrchestrator
+        src = inspect.getsource(BrainOrchestrator._process_turn)
+        assert "get_active_knowledge_for_entities" in src, (
+            "_process_turn must call get_active_knowledge_for_entities before "
+            "the contradiction loop (Wave 2 Item 10 dedup)"
+        )
+        assert "_existing_by_entity" in src, (
+            "_process_turn must store bulk-prefetch results in _existing_by_entity dict"
+        )
+        # The old per-fact call must be replaced: inside the loop, only the dict
+        # lookup should appear, not a direct get_active_knowledge call on the same line
+        # as ext.entity (the loop variable).  We verify by checking the dict lookup.
+        assert "_existing_by_entity.get(ext.entity" in src, (
+            "loop body must use _existing_by_entity.get(ext.entity, ...) not "
+            "self._brain_db.get_active_knowledge(ext.entity)"
+        )
+
+    def test_get_active_knowledge_for_entities_returns_correct_shape(self, tmp_path):
+        """get_active_knowledge_for_entities returns dict with same row shape as
+        get_active_knowledge and correctly groups facts by entity."""
+        from core.brain_agent import BrainDB, Extraction
+        import time
+
+        db = BrainDB(str(tmp_path / "brain.db"))
+        turn_id = "t1"
+        person_id = "p1"
+
+        facts = [
+            Extraction("Lexi", "person", "mood", "happy", 0.9, False, None, privacy_level="personal"),
+            Extraction("Lexi", "person", "job", "student", 0.8, False, None, privacy_level="public"),
+            Extraction("Jagan", "person", "hobby", "cricket", 0.85, False, None, privacy_level="public"),
+        ]
+        db.store_knowledge(facts, turn_id, person_id, "test")
+
+        result = db.get_active_knowledge_for_entities(["Lexi", "Jagan", "Unknown"])
+        assert "Lexi" in result and "Jagan" in result and "Unknown" in result
+        assert len(result["Lexi"]) == 2
+        assert len(result["Jagan"]) == 1
+        assert result["Unknown"] == []
+        lexi_attrs = {r["attribute"] for r in result["Lexi"]}
+        assert lexi_attrs == {"mood", "job"}
+        assert result["Jagan"][0]["attribute"] == "hobby"
+        # Shape check: same keys as get_active_knowledge
+        required_keys = {"attribute", "value", "confidence", "is_temporal",
+                         "valid_until", "valid_at", "last_confirmed_at", "privacy_level"}
+        for row in result["Lexi"]:
+            assert required_keys.issubset(row.keys())
+
+        db._conn.close()
 
 
 class TestSearchMemorySparseSignal:

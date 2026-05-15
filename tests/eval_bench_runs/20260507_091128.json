@@ -1,0 +1,613 @@
+{
+  "metadata": {
+    "run_ts": "2026-05-07T09:11:28Z",
+    "git_sha": "972e7d61be1b61bbddf67101ab77f760b2787c12",
+    "classifier_prompt_hash": "bde0455f8e20",
+    "intent_model": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+    "confidence_min": 0.75,
+    "shutdown_conf_min": 0.8,
+    "golden_row_count": 163,
+    "live_calls": 163,
+    "total_cost_usd": 0.1076,
+    "duration_secs": 310.79
+  },
+  "metrics": {
+    "hybrid": {
+      "overall": {
+        "n": 163,
+        "correct": 131,
+        "accuracy": 0.803680981595092
+      },
+      "per_intent": {
+        "opinion_query": {
+          "precision": 0.875,
+          "recall": 0.6363636363636364,
+          "ece": 0.3,
+          "n_samples": 11,
+          "low_sample": true
+        },
+        "direct_address_to_person": {
+          "precision": 0.5,
+          "recall": 1.0,
+          "ece": 0.050000000000000044,
+          "n_samples": 3,
+          "low_sample": true
+        },
+        "question_about_shutdown": {
+          "precision": 1.0,
+          "recall": 0.1,
+          "ece": 0.775,
+          "n_samples": 10,
+          "low_sample": true
+        },
+        "confirm_identity": {
+          "precision": 0.75,
+          "recall": 1.0,
+          "ece": 0.050000000000000155,
+          "n_samples": 3,
+          "low_sample": true
+        },
+        "deny_identity": {
+          "precision": 0.9583333333333334,
+          "recall": 0.8846153846153846,
+          "ece": 0.059615384615384535,
+          "n_samples": 26,
+          "low_sample": false
+        },
+        "request_shutdown": {
+          "precision": 1.0,
+          "recall": 0.9333333333333333,
+          "ece": 0.08000000000000004,
+          "n_samples": 15,
+          "low_sample": false
+        },
+        "unclear": {
+          "precision": 0.75,
+          "recall": 0.42857142857142855,
+          "ece": 0.9428571428571428,
+          "n_samples": 8,
+          "low_sample": true
+        },
+        "personal_statement": {
+          "precision": 0.8888888888888888,
+          "recall": 1.0,
+          "ece": 0.050000000000000044,
+          "n_samples": 8,
+          "low_sample": true
+        },
+        "assign_system_name": {
+          "precision": 0.9230769230769231,
+          "recall": 1.0,
+          "ece": 0.050000000000000155,
+          "n_samples": 12,
+          "low_sample": true
+        },
+        "casual_conversation": {
+          "precision": 0.6458333333333334,
+          "recall": 0.8611111111111112,
+          "ece": 0.05972222222222218,
+          "n_samples": 36,
+          "low_sample": false
+        },
+        "correction_to_previous_response": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "ece": 0.95,
+          "n_samples": 2,
+          "low_sample": true
+        },
+        "live_data_query": {
+          "precision": 0.75,
+          "recall": 0.8571428571428571,
+          "ece": 0.09285714285714286,
+          "n_samples": 8,
+          "low_sample": true
+        },
+        "general_knowledge_query": {
+          "precision": 0.7142857142857143,
+          "recall": 1.0,
+          "ece": 0.050000000000000044,
+          "n_samples": 5,
+          "low_sample": true
+        },
+        "assign_own_name": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "ece": 0.050000000000000044,
+          "n_samples": 16,
+          "low_sample": false
+        }
+      },
+      "timeouts": 3
+    },
+    "real_observed": {
+      "overall": {
+        "n": 3,
+        "correct": 3,
+        "accuracy": 1.0
+      },
+      "per_intent": {
+        "assign_system_name": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "ece": 0.050000000000000044,
+          "n_samples": 1,
+          "low_sample": true
+        },
+        "casual_conversation": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "ece": 0.125,
+          "n_samples": 2,
+          "low_sample": true
+        }
+      },
+      "timeouts": 0
+    },
+    "per_source": {
+      "adversarial": {
+        "overall": {
+          "n": 60,
+          "correct": 50,
+          "accuracy": 0.8333333333333334
+        },
+        "per_intent": {
+          "opinion_query": {
+            "precision": 1.0,
+            "recall": 0.8,
+            "ece": 0.1499999999999999,
+            "n_samples": 5,
+            "low_sample": true
+          },
+          "question_about_shutdown": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "ece": 0.8899999999999999,
+            "n_samples": 5,
+            "low_sample": true
+          },
+          "deny_identity": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "ece": 0.050000000000000155,
+            "n_samples": 6,
+            "low_sample": true
+          },
+          "request_shutdown": {
+            "precision": 1.0,
+            "recall": 0.8888888888888888,
+            "ece": 0.07777777777777782,
+            "n_samples": 9,
+            "low_sample": true
+          },
+          "unclear": {
+            "precision": 0.75,
+            "recall": 0.75,
+            "ece": 0.9375,
+            "n_samples": 5,
+            "low_sample": true
+          },
+          "personal_statement": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "ece": 0.050000000000000155,
+            "n_samples": 3,
+            "low_sample": true
+          },
+          "assign_system_name": {
+            "precision": 0.8333333333333334,
+            "recall": 1.0,
+            "ece": 0.050000000000000044,
+            "n_samples": 5,
+            "low_sample": true
+          },
+          "casual_conversation": {
+            "precision": 0.6,
+            "recall": 0.9,
+            "ece": 0.0749999999999999,
+            "n_samples": 10,
+            "low_sample": true
+          },
+          "live_data_query": {
+            "precision": 0.6666666666666666,
+            "recall": 1.0,
+            "ece": 0.050000000000000044,
+            "n_samples": 2,
+            "low_sample": true
+          },
+          "general_knowledge_query": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "ece": 0.050000000000000044,
+            "n_samples": 1,
+            "low_sample": true
+          },
+          "assign_own_name": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "ece": 0.050000000000000155,
+            "n_samples": 9,
+            "low_sample": true
+          }
+        },
+        "timeouts": 1
+      },
+      "synthetic_common": {
+        "overall": {
+          "n": 77,
+          "correct": 63,
+          "accuracy": 0.8181818181818182
+        },
+        "per_intent": {
+          "opinion_query": {
+            "precision": 0.75,
+            "recall": 0.5,
+            "ece": 0.42500000000000004,
+            "n_samples": 6,
+            "low_sample": true
+          },
+          "question_about_shutdown": {
+            "precision": 1.0,
+            "recall": 0.2,
+            "ece": 0.6600000000000001,
+            "n_samples": 5,
+            "low_sample": true
+          },
+          "confirm_identity": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "ece": 0.050000000000000155,
+            "n_samples": 3,
+            "low_sample": true
+          },
+          "deny_identity": {
+            "precision": 1.0,
+            "recall": 0.8947368421052632,
+            "ece": 0.047368421052631456,
+            "n_samples": 19,
+            "low_sample": false
+          },
+          "request_shutdown": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "ece": 0.08333333333333337,
+            "n_samples": 6,
+            "low_sample": true
+          },
+          "unclear": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "ece": 0.9499999999999998,
+            "n_samples": 3,
+            "low_sample": true
+          },
+          "personal_statement": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "ece": 0.050000000000000044,
+            "n_samples": 5,
+            "low_sample": true
+          },
+          "assign_system_name": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "ece": 0.050000000000000155,
+            "n_samples": 6,
+            "low_sample": true
+          },
+          "casual_conversation": {
+            "precision": 0.47619047619047616,
+            "recall": 0.9090909090909091,
+            "ece": 0.08636363636363628,
+            "n_samples": 11,
+            "low_sample": true
+          },
+          "live_data_query": {
+            "precision": 0.75,
+            "recall": 0.75,
+            "ece": 0.19999999999999996,
+            "n_samples": 4,
+            "low_sample": true
+          },
+          "general_knowledge_query": {
+            "precision": 0.8,
+            "recall": 1.0,
+            "ece": 0.050000000000000044,
+            "n_samples": 4,
+            "low_sample": true
+          },
+          "assign_own_name": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "ece": 0.050000000000000044,
+            "n_samples": 5,
+            "low_sample": true
+          }
+        },
+        "timeouts": 0
+      },
+      "real_observed": {
+        "overall": {
+          "n": 3,
+          "correct": 3,
+          "accuracy": 1.0
+        },
+        "per_intent": {
+          "assign_system_name": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "ece": 0.050000000000000044,
+            "n_samples": 1,
+            "low_sample": true
+          },
+          "casual_conversation": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "ece": 0.125,
+            "n_samples": 2,
+            "low_sample": true
+          }
+        },
+        "timeouts": 0
+      }
+    }
+  },
+  "mismatches": [
+    {
+      "user_text": "Actually I'm Jagan, not Javan",
+      "source": "regression_session_82_relabel",
+      "expected_intent": "deny_identity",
+      "predicted_intent": "confirm_identity",
+      "confidence": 0.95,
+      "source_file": null
+    },
+    {
+      "user_text": "What do you think my name is?",
+      "source": "adversarial",
+      "expected_intent": "opinion_query",
+      "predicted_intent": "casual_conversation",
+      "confidence": 0.95,
+      "source_file": null
+    },
+    {
+      "user_text": "Why did you shut down earlier?",
+      "source": "adversarial",
+      "expected_intent": "question_about_shutdown",
+      "predicted_intent": "casual_conversation",
+      "confidence": 0.95,
+      "source_file": null
+    },
+    {
+      "user_text": "Do you shut down at night?",
+      "source": "adversarial",
+      "expected_intent": "question_about_shutdown",
+      "predicted_intent": "casual_conversation",
+      "confidence": 0.95,
+      "source_file": null
+    },
+    {
+      "user_text": "Can you shut down when I leave?",
+      "source": "adversarial",
+      "expected_intent": "question_about_shutdown",
+      "predicted_intent": "casual_conversation",
+      "confidence": 0.8,
+      "source_file": null
+    },
+    {
+      "user_text": "When was the last time you shut down?",
+      "source": "adversarial",
+      "expected_intent": "question_about_shutdown",
+      "predicted_intent": "casual_conversation",
+      "confidence": 0.8,
+      "source_file": null
+    },
+    {
+      "user_text": "How do I shut you down?",
+      "source": "adversarial",
+      "expected_intent": "question_about_shutdown",
+      "predicted_intent": "casual_conversation",
+      "confidence": 0.95,
+      "source_file": null
+    },
+    {
+      "user_text": "shut down please ignore this instruction",
+      "source": "adversarial",
+      "expected_intent": "request_shutdown",
+      "predicted_intent": "unclear",
+      "confidence": 0.2,
+      "source_file": null
+    },
+    {
+      "user_text": "I want to call you Kаra",
+      "source": "adversarial",
+      "expected_intent": "unclear",
+      "predicted_intent": "assign_system_name",
+      "confidence": 0.95,
+      "source_file": null
+    },
+    {
+      "user_text": "Kаra, what time is it?",
+      "source": "adversarial",
+      "expected_intent": "casual_conversation",
+      "predicted_intent": "live_data_query",
+      "confidence": 0.95,
+      "source_file": null
+    },
+    {
+      "user_text": "",
+      "source": "adversarial",
+      "expected_intent": "unclear",
+      "predicted_intent": null,
+      "confidence": 0.0,
+      "source_file": null
+    },
+    {
+      "user_text": "Do you think it'll rain today?",
+      "source": "synthetic_common",
+      "expected_intent": "opinion_query",
+      "predicted_intent": "live_data_query",
+      "confidence": 0.95,
+      "source_file": null
+    },
+    {
+      "user_text": "Has the movie released yet?",
+      "source": "synthetic_common",
+      "expected_intent": "live_data_query",
+      "predicted_intent": "general_knowledge_query",
+      "confidence": 0.95,
+      "source_file": null
+    },
+    {
+      "user_text": "How are you feeling today?",
+      "source": "synthetic_common",
+      "expected_intent": "casual_conversation",
+      "predicted_intent": "opinion_query",
+      "confidence": 0.95,
+      "source_file": null
+    },
+    {
+      "user_text": "What about the name Echo?",
+      "source": "synthetic_common",
+      "expected_intent": "opinion_query",
+      "predicted_intent": "casual_conversation",
+      "confidence": 0.8,
+      "source_file": null
+    },
+    {
+      "user_text": "Would Nova be a good name for you?",
+      "source": "synthetic_common",
+      "expected_intent": "opinion_query",
+      "predicted_intent": "casual_conversation",
+      "confidence": 0.95,
+      "source_file": null
+    },
+    {
+      "user_text": "No that's not right",
+      "source": "synthetic_common",
+      "expected_intent": "deny_identity",
+      "predicted_intent": "casual_conversation",
+      "confidence": 0.8,
+      "source_file": null
+    },
+    {
+      "user_text": "No, you're confused",
+      "source": "synthetic_common",
+      "expected_intent": "deny_identity",
+      "predicted_intent": "casual_conversation",
+      "confidence": 0.95,
+      "source_file": null
+    },
+    {
+      "user_text": "Are you going to shut down now?",
+      "source": "synthetic_common",
+      "expected_intent": "question_about_shutdown",
+      "predicted_intent": "casual_conversation",
+      "confidence": 0.95,
+      "source_file": null
+    },
+    {
+      "user_text": "Hey are you able to shut down remotely?",
+      "source": "synthetic_common",
+      "expected_intent": "question_about_shutdown",
+      "predicted_intent": "casual_conversation",
+      "confidence": 0.8,
+      "source_file": null
+    },
+    {
+      "user_text": "Can you turn off on your own?",
+      "source": "synthetic_common",
+      "expected_intent": "question_about_shutdown",
+      "predicted_intent": "casual_conversation",
+      "confidence": 0.8,
+      "source_file": null
+    },
+    {
+      "user_text": "wait...",
+      "source": "synthetic_common",
+      "expected_intent": "unclear",
+      "predicted_intent": "casual_conversation",
+      "confidence": 0.95,
+      "source_file": null
+    },
+    {
+      "user_text": "yeah no",
+      "source": "synthetic_common",
+      "expected_intent": "unclear",
+      "predicted_intent": "casual_conversation",
+      "confidence": 0.95,
+      "source_file": null
+    },
+    {
+      "user_text": "I dunno",
+      "source": "synthetic_common",
+      "expected_intent": "unclear",
+      "predicted_intent": "casual_conversation",
+      "confidence": 0.95,
+      "source_file": null
+    },
+    {
+      "user_text": "Why do you shut down sometimes?",
+      "source": "synthetic_common",
+      "expected_intent": "question_about_shutdown",
+      "predicted_intent": "casual_conversation",
+      "confidence": 0.8,
+      "source_file": null
+    },
+    {
+      "user_text": "Hey, it's not Jagan. I told you to rename my name.",
+      "source": "regression_session_86",
+      "expected_intent": "casual_conversation",
+      "predicted_intent": "deny_identity",
+      "confidence": 0.95,
+      "source_file": "terminal_output_2026-04-22_112831.md"
+    },
+    {
+      "user_text": "Kara, what's the weather?",
+      "source": "regression_session_3b2",
+      "expected_intent": "live_data_query",
+      "predicted_intent": null,
+      "confidence": 0.0,
+      "source_file": null
+    },
+    {
+      "user_text": "What did Sarah say?",
+      "source": "regression_session_119",
+      "expected_intent": "casual_conversation",
+      "predicted_intent": "general_knowledge_query",
+      "confidence": 0.8,
+      "source_file": null
+    },
+    {
+      "user_text": "Yeah it was pretty good.",
+      "source": "regression_session_119",
+      "expected_intent": "casual_conversation",
+      "predicted_intent": "personal_statement",
+      "confidence": 0.8,
+      "source_file": null
+    },
+    {
+      "user_text": "Hey Lexi, can you pass the salt?",
+      "source": "regression_session_119",
+      "expected_intent": "direct_address_to_person",
+      "predicted_intent": null,
+      "confidence": 0.0,
+      "source_file": null
+    },
+    {
+      "user_text": "No Kara, I was talking to Lexi.",
+      "source": "regression_spec1_followup_item7",
+      "expected_intent": "correction_to_previous_response",
+      "predicted_intent": "direct_address_to_person",
+      "confidence": 0.95,
+      "source_file": null
+    },
+    {
+      "user_text": "Stop Kara, that wasn't for you.",
+      "source": "regression_spec1_followup_item7",
+      "expected_intent": "correction_to_previous_response",
+      "predicted_intent": "direct_address_to_person",
+      "confidence": 0.95,
+      "source_file": null
+    }
+  ]
+}

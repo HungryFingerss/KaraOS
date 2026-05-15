@@ -192,6 +192,7 @@ VOICE_ACCUM_MATURE_SAMPLE_COUNT      = 5       # sample count at which profile i
 # decrement stays), but the cap prevents unbounded indefinite replenishment
 # and the maturity check stops the top-up once Path B is reachable.
 VOICE_BOOTSTRAP_REPLENISH_ENABLED    = True    # toggle the per-turn top-up
+VOICE_BOOTSTRAP_DEBUG                = False   # F2 diagnostic — gating [Voice-Debug] trace lines
 VOICE_MAX_BOOTSTRAP_CREDITS          = 10      # ceiling for per-turn replenishment
                                                 # (distinct from N_INITIAL_VOICE_BOOTSTRAP=20:
                                                 # the initial grant is generous, the
@@ -515,20 +516,6 @@ INTENT_MAX_USER_TEXT_CHARS  = 500    # truncate very long user_text before groun
 # replace proven gates before the data is in.
 INTENT_FALLBACK_TO_REGEX    = True
 
-# Prompt-level enable flag for the <<<STRUCTURED OUTPUT CONTRACT>>> block.
-# Separate from INTENT_FALLBACK_TO_REGEX so we can observe the model's
-# structured output BEFORE any gate wiring runs (Phase 1.2 observation
-# window).
-INTENT_CONTRACT_BLOCK_ENABLED = False   # Session 79: disabled after P1.3
-                                         # shadow classifier made it redundant.
-                                         # The 2026-04-22 live session caught
-                                         # the main 70B emitting the full JSON
-                                         # envelope ('{"content": "...", ...}')
-                                         # into TTS on clean completions
-                                         # (search_web answer, casual convo) —
-                                         # classifier-only is the new path;
-                                         # the contract block is dead weight.
-
 # VISION_ROADMAP Phase 1.3 — shadow classifier for gated-tool turns.
 # When the main 70B stream proposes a gated tool (update_system_name,
 # update_person_name, report_identity_mismatch, search_web, shutdown), we
@@ -581,6 +568,34 @@ HEDGED_NAMING_CONTRACT_ENABLED = True
 # Together they form the honesty-with-privacy contract P3.26 will
 # generalize once this block has lived through a few live sessions.
 CROSS_PERSON_PRIVACY_BLOCK_ENABLED  = True    # render <<<CROSS-PERSON PRIVACY>>> in brain prompt
+
+# ── Wave 4 Item 18 — tier memory: core vs archive ────────────────────────────
+# Core memory = always-on stable facts injected into Section 2 of the
+# session-stable prefix (render_session_stable_prefix). Archive memory =
+# existing semantic search + search_memory tool (unchanged). Additive — core
+# is a superset of what the brain previously had to fetch via search_memory.
+CORE_MEMORY_ENABLED        = True
+CORE_MEMORY_MAX_FACTS      = 30    # max rows injected per session
+CORE_MEMORY_MIN_CONFIDENCE = 0.40  # rows below this are too uncertain for always-on
+CORE_MEMORY_ATTRIBUTES: frozenset = frozenset({
+    # Identity anchors — stable self-descriptions
+    "name", "preferred_name", "nickname",
+    "lives_in", "from_country", "from_state", "from_city",
+    "works_at", "job_title", "occupation",
+    "relationship_to_best_friend", "relationship_to_jagan",
+    # Safety-critical (S105 — append-only, always surface so the brain
+    # proactively addresses past disclosures without being prompted)
+    "expressed_suicidal_thoughts",
+    "mentioned_self_harm",
+    "mentioned_abuse",
+    "reported_substance_abuse",
+    "has_experienced_crisis",
+    # Long-term preferences that shape every conversation
+    "dietary_preference", "favorite_food", "food_restriction",
+    "communication_style", "language_preference",
+    # Household facts
+    "visited_household", "household_role", "lives_in_household",
+})
 
 # ── Session 96 Bug 3 — visitor-context block ────────────────────────────────
 # When a VISITOR_ALERT nudge is present in prompt_addendum AND the current
@@ -1093,13 +1108,22 @@ SCENE_VOICE_STALE             = 30.0  # offscreen voice mention window: sessions
 # recent-visitor section is for within-the-minute context where the
 # brain should proactively acknowledge "Lexi just left."
 SCENE_VISITOR_RECENCY_SECS    = 600.0
+# Wave 6 Item 23: scene_block string cache — avoids redundant string-building
+# when consecutive turns have identical scene state (same faces, same speaker).
+SCENE_BLOCK_CACHE_ENABLED    = True   # master toggle
+SCENE_BLOCK_CACHE_MAX_ENTRIES = 256   # LRU-evict when size reaches this cap
 
 # ── Memory consolidation/pruning (E) ─────────────────────────────────────────
 # Hard caps on table row counts — enforced during each autoDream run.
 # Rows over the cap are deleted (presence/episodes/mentions) or soft-deleted
 # (knowledge rows are invalidated, not hard-deleted, for graph rebuild safety).
 CONVERSATION_HISTORY_LIMIT = 100   # turns loaded into LLM context; older turns stay in DB, retrievable via search_memory
-KNOWLEDGE_MAX_ROWS       = 2000   # active (non-invalidated) knowledge rows
+# Wave 6 Item 21: conversation log archival
+CONVERSATION_ARCHIVE_ENABLED    = True   # move old conversation_log turns to a separate archive DB
+CONVERSATION_ARCHIVE_AFTER_DAYS = 30     # archive turns older than this many days
+KNOWLEDGE_MAX_ROWS                = 2000   # active (non-invalidated) knowledge rows
+KNOWLEDGE_HARD_DELETE_ENABLED    = True   # Wave 6 Item 22: hard-delete soft-deleted knowledge rows
+KNOWLEDGE_HARD_DELETE_AFTER_DAYS = 60     # conservative 60d buffer (archive cutoff is 30d)
 PRESENCE_MAX_ROWS        = 1000   # presence_log rows (oldest pruned first)
 EPISODE_MAX_ROWS         = 500    # episodes rows (oldest pruned first)
 SOCIAL_MENTIONS_MAX_ROWS = 500    # social_mentions rows (oldest updated_at pruned first)
@@ -1114,6 +1138,10 @@ PATTERN_Q_MAX_AGE_DAYS   = 7      # asked pattern questions older than this are 
 DREAM_IDLE_MINUTES         = 5      # minutes of idle before first dream can run
 DREAM_COOLDOWN             = 3600   # minimum seconds between dream runs (1 hour)
 DREAM_MAX_INTERVAL         = 10800  # force dream even if busy after this many seconds (3 hours)
+DAILY_BACKUP_ENABLED       = True   # take daily SQLite snapshots of faces.db + brain.db
+SNAPSHOT_RETENTION_DAYS    = 30     # prune snapshots older than this many days
+SNAPSHOT_DIR               = "faces/snapshots"  # relative to repo root
+WAL_CHECKPOINT_ENABLED     = True   # flush WAL into main DB file at end of each dream cycle
 STRANGER_TTL_DAYS          = 7      # delete unidentified strangers unseen for this many days
 STRANGER_VOICE_TTL_DAYS    = 3      # prune voice_embeddings of strangers whose voice profile never
                                       # reached N_INITIAL_VOICE samples and hasn't been updated in
@@ -1293,4 +1321,18 @@ HISTORY_OVERRIDE_TOOLS: frozenset = frozenset({
 # before the repeat guard fires and aborts the call. Prevents infinite loops
 # where the LLM keeps calling the same tool with the same args with no progress.
 TOOL_REPEAT_MAX_CONSECUTIVE: int = 2
+
+# ── Health summary log (Wave 5 / Item 19) ──────────────────────────────────
+HEALTH_LOG_ENABLED          = True
+HEALTH_LOG_INTERVAL_SECS    = 300   # 5 min — first log fires immediately at boot
+HEALTH_THIN_VOICE_MAX       = 3     # cap thin-gallery [Health-Alert] lines to avoid log spam
+
+# ── Disk space monitor (Wave 5 / Item 20) ──────────────────────────────────
+# Single-volume assumption: all monitored dirs must live on the same filesystem
+# as root_path. If KaraOS ever spans volumes, only the root's volume is monitored.
+DISK_MONITOR_ENABLED        = True
+DISK_ALERT_WARNING_PCT      = 80    # first threshold: warning severity
+DISK_ALERT_CRITICAL_PCT     = 90    # second threshold: critical severity
+DISK_ALERT_BLOCKER_PCT      = 95    # third threshold: critical/blocker — operator must act
+DISK_MONITORED_DIRS         = ["faces/", "data/", "faces/snapshots/", "faces/brain_graph/"]
 

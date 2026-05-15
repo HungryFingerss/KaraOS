@@ -575,6 +575,122 @@ def test_update_silent_observation_skips_old_row():
             db._conn.close()
 
 
+# ── Wave 2 Item 12: vectorized silent-observation cosine ─────────────────────
+
+def test_silent_observation_match_correctness_5_rows():
+    """Item 12: among 5 inserted rows, the closest one must be returned."""
+    import core.db as _db_mod
+    import time as _time
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path    = Path(tmp) / "faces.db"
+        index_path = Path(tmp) / "faces.index"
+
+        with patch.object(_db_mod, "DB_PATH",         db_path), \
+             patch.object(_db_mod, "FAISS_INDEX_PATH", index_path):
+            db = _db_mod.FaceDB()
+
+            # Build 5 orthogonal-ish unit vectors.
+            rng = np.random.default_rng(42)
+            embs = []
+            for _ in range(5):
+                v = rng.standard_normal(512).astype(np.float32)
+                v /= np.linalg.norm(v)
+                embs.append(v)
+
+            # Insert all 5 as silent observations with matched_person_id=NULL.
+            now = _time.time()
+            inserted_ids = []
+            for i, v in enumerate(embs):
+                oid = f"obs_test_{i}"
+                db._conn.execute(
+                    """INSERT INTO silent_observations
+                       (id, first_seen, last_seen, duration_secs, frame_count,
+                        embedding, photo_path, zone, created_at)
+                       VALUES (?, ?, ?, 0, 1, ?, NULL, NULL, ?)""",
+                    (oid, now, now, v.tobytes(), now),
+                )
+                inserted_ids.append(oid)
+            db._conn.commit()
+
+            # Query with a vector very close to embs[2].
+            query = embs[2] * 0.9999 + rng.standard_normal(512).astype(np.float32) * 0.0001
+            query /= np.linalg.norm(query)
+
+            matched_id = db.update_silent_observation(query)
+
+            assert matched_id == inserted_ids[2], (
+                f"Expected '{inserted_ids[2]}' but got '{matched_id}'"
+            )
+            db._conn.close()
+
+
+def test_silent_observation_match_returns_none_below_threshold():
+    """Item 12: when best dot-product is below SILENT_OBS_SIMILARITY, return None."""
+    import core.db as _db_mod
+    from core.config import SILENT_OBS_SIMILARITY
+    import time as _time
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path    = Path(tmp) / "faces.db"
+        index_path = Path(tmp) / "faces.index"
+
+        with patch.object(_db_mod, "DB_PATH",         db_path), \
+             patch.object(_db_mod, "FAISS_INDEX_PATH", index_path):
+            db = _db_mod.FaceDB()
+
+            # Insert a single row.
+            now = _time.time()
+            stored = np.zeros(512, dtype=np.float32)
+            stored[0] = 1.0  # unit vector pointing along axis 0
+            db._conn.execute(
+                """INSERT INTO silent_observations
+                   (id, first_seen, last_seen, duration_secs, frame_count,
+                    embedding, photo_path, zone, created_at)
+                   VALUES ('obs_low', ?, ?, 0, 1, ?, NULL, NULL, ?)""",
+                (now, now, stored.tobytes(), now),
+            )
+            db._conn.commit()
+
+            # Query with a vector orthogonal to stored → dot product ≈ 0.
+            query = np.zeros(512, dtype=np.float32)
+            query[1] = 1.0  # orthogonal axis
+
+            result = db.update_silent_observation(query)
+
+            # The stored dot product is 0.0 < SILENT_OBS_SIMILARITY → new row inserted → None.
+            assert result is None, f"Expected None for low-similarity query, got {result!r}"
+            # A new row should have been inserted.
+            count = db._conn.execute("SELECT COUNT(*) FROM silent_observations").fetchone()[0]
+            assert count == 2, f"Expected 2 rows (no match + new insert), got {count}"
+            db._conn.close()
+
+
+def test_silent_observation_match_handles_empty_window():
+    """Item 12: when no rows exist in the recent window, return None without raising."""
+    import core.db as _db_mod
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path    = Path(tmp) / "faces.db"
+        index_path = Path(tmp) / "faces.index"
+
+        with patch.object(_db_mod, "DB_PATH",         db_path), \
+             patch.object(_db_mod, "FAISS_INDEX_PATH", index_path):
+            db = _db_mod.FaceDB()
+
+            # Empty DB → no rows in window.
+            query = np.zeros(512, dtype=np.float32)
+            query[0] = 1.0
+
+            result = db.update_silent_observation(query)
+
+            assert result is None, f"Expected None on empty window, got {result!r}"
+            # One new row should have been inserted.
+            count = db._conn.execute("SELECT COUNT(*) FROM silent_observations").fetchone()[0]
+            assert count == 1, f"Expected 1 inserted row, got {count}"
+            db._conn.close()
+
+
 # ── #3: Provenance schema migration ──────────────────────────────────────────
 
 def test_add_embedding_stores_source_and_confidence():

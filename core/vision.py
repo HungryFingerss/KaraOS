@@ -375,7 +375,7 @@ class Camera:
         try:
             self._cap.release()
         except Exception:
-            pass
+            pass  # CLEANUP: cap may already be released before reconnect
         self._cap = cv2.VideoCapture(self._index, self._backend)
         self._cap.set(cv2.CAP_PROP_FRAME_WIDTH,  self._width)
         self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._height)
@@ -519,6 +519,7 @@ class AntiSpoofChecker:
         self._models: list[tuple[object, float]] = []  # [(nn.Module, crop_scale), ...]
         self._threshold = threshold
         self._device = None
+        self.unavailable_reason: str = ""
         # Rolling live_prob samples for LOG_ANTISPOOF_SUMMARY. Deque of the last
         # INTERVAL frames; every INTERVAL calls we emit min/mean/max + rejects
         # and then clear. Gives passive drift detection (camera aging, lighting
@@ -548,6 +549,7 @@ class AntiSpoofChecker:
                 self._models.append((model, scale))
             print(f"[Vision] MiniFASNet anti-spoofing loaded ({len(self._models)} models, device={self._device})")
         except Exception as e:
+            self.unavailable_reason = str(e)
             print(f"[Vision] Anti-spoofing unavailable ({e}) — disabled")
             self._models = []
 

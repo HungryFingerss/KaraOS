@@ -17,6 +17,7 @@ import logging as _logging
 import warnings as _warnings
 import numpy as np
 import torch
+from concurrent.futures import ThreadPoolExecutor
 
 from core.config import (
     MIC_SAMPLE_RATE, VOICE_EMBEDDING_DIM,
@@ -50,6 +51,33 @@ if not hasattr(_ta, "list_audio_backends"):
     _ta.list_audio_backends = lambda: ["sox_io"]
 
 _embedder = None   # SpeechBrain EncoderClassifier — lazy singleton
+
+# Wave 3 Item 13: dedicated single-threaded executor for diarization.
+# Isolates 100-500ms pyannote budget from the default executor where TTS,
+# embedder, FAISS, and SQLite all share 12 worker threads.
+# max_workers=1: pyannote isn't safe for concurrent calls (one Pipeline
+# instance, GPU contention). Lazy singleton — not created at import so
+# test environments without pyannote don't pay construction cost.
+_voice_diarize_executor: "ThreadPoolExecutor | None" = None
+
+
+def get_diarize_executor() -> ThreadPoolExecutor:
+    """Return the dedicated diarization executor, creating it on first call."""
+    global _voice_diarize_executor
+    if _voice_diarize_executor is None:
+        _voice_diarize_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="voice-diarize",
+        )
+    return _voice_diarize_executor
+
+
+def shutdown_diarize_executor() -> None:
+    """Shut down the dedicated diarization executor. Call from pipeline shutdown."""
+    global _voice_diarize_executor
+    if _voice_diarize_executor is not None:
+        _voice_diarize_executor.shutdown(wait=False)
+        _voice_diarize_executor = None
 
 
 def load_speaker_embedder(device: str = "cuda") -> None:

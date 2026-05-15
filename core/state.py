@@ -68,5 +68,5 @@ def read() -> dict:
                 data["online"] = False
             return data
     except Exception:
-        pass
+        pass  # OPTIONAL: state-file absent or corrupt — caller gets offline default
     return {"online": False, "mode": "offline", "status": "offline"}

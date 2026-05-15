@@ -4,6 +4,7 @@ See face → identify → greet → listen → respond → repeat
 """
 import asyncio
 import concurrent.futures
+import dataclasses
 import datetime
 from enum import Enum, auto
 import json
@@ -98,12 +99,12 @@ def _log_drain() -> None:
             stream.write(data)
             stream.flush()
         except Exception:
-            pass
+            pass  # OPTIONAL: raising kills the daemon and silences all subsequent logging
         try:
             _LOG_FILE.write(data)
             _LOG_FILE.flush()
         except Exception:
-            pass
+            pass  # OPTIONAL: raising kills the daemon and silences all subsequent logging
 
 _log_drain_thread = _log_thread_mod.Thread(target=_log_drain, daemon=True, name="log-writer")
 _log_drain_thread.start()
@@ -191,7 +192,7 @@ try:
 except Exception:
     # No CUDA / no torch attribute path — silent. Suppression of the
     # warning still works because we set the flags before pyannote loads.
-    pass
+    pass  # OPTIONAL: no CUDA or no torch — TF32 performance opt skipped
 
 import cv2
 import numpy as np
@@ -222,12 +223,21 @@ from core.vision  import (
     AntiSpoofChecker, verify_live,
 )
 from core.db      import FaceDB, wipe_all
-from core.brain   import ask, ask_offline, ask_retry_text, ask_stream, ping_together, generate_greeting, autocompact_history, choose_greeting_order
-from core.config  import CLOUD_OFFLINE_TIMEOUT, CLOUD_RETRY_INTERVAL, DREAM_IDLE_MINUTES, DREAM_COOLDOWN, DREAM_MAX_INTERVAL, KAIROS_SILENCE_THRESHOLD, KAIROS_COOLDOWN, STRANGER_REQUIRE_SYSTEM_NAME, SCENE_STALE_SECS, SCENE_BLOCK_ENABLED, SCENE_VOICE_STALE, STRANGER_TTL_DAYS, STRANGER_VOICE_TTL_DAYS, DISPUTE_MAX_DURATION, DISPUTE_RENAME_BLOCK_THRESHOLD, VALID_PERSON_TYPES, TOOL_PRIVILEGES, N_INITIAL_VOICE_BOOTSTRAP, VOICE_ACCUM_FACE_WITNESS_MIN_CONF, VOICE_ACCUM_FACE_WITNESS_MAX_AGE_SEC, VOICE_ACCUM_VOICE_SELF_MATCH_MIN, VOICE_ACCUM_MATURE_SAMPLE_COUNT, VOICE_ROUTING_MIDRANGE_SWITCH_MIN, VOICE_ROUTING_FACE_ASSIST_MIN, VOICE_ROUTING_SELF_MATCH_FLOOR, VOICE_ROUTING_SELF_MATCH_OFFSCREEN, VOICE_ROUTING_MIN_UTTERANCE_SECS, VOICE_ROUTING_SHORT_UTT_MISMATCH_ENABLED, VOICE_ROUTING_SHORT_UTT_FLOOR, VOICE_ROUTING_MIN_AUDIO_FOR_SCORE, VOICE_ROUTING_SHORT_UTT_AMBIGUOUS, VOICE_ROUTING_STRANGER_FLOOR, VOICE_ROUTING_SINGLE_SEGMENT_MISMATCH_ENABLED, VISION_SHADOW_INTERVAL_SECS, MEMORY_SPARSE_THRESHOLD, SYSTEM_NAME_ASSIGN_PATTERNS, PERSON_NAME_ASSIGN_PATTERNS, IDENTITY_DENIAL_PATTERNS, DISPUTE_AUTO_CLEAR_VOICE_MIN, DISPUTE_AUTO_CLEAR_VOICE_SOLO_MIN, DISPUTE_AUTO_CLEAR_CONSECUTIVE_TURNS, ENROLLMENT_RENAME_GRACE_SECS, ENROLLMENT_RENAME_VOICE_THRESHOLD, SCENE_VISITOR_RECENCY_SECS, KAIROS_PREFER_BEST_FRIEND, BATCH_GREETING_ENABLED, BATCH_GREETING_MIN_PEOPLE, BATCH_GREETING_LLM_TIMEOUT_SECS, ROOM_BLOCK_ENABLED, ROOM_BLOCK_TURN_CAP, ROUTING_USE_RECONCILER
+from core.brain   import ask, ask_offline, ask_retry_text, ask_stream, ping_together, generate_greeting, autocompact_history, choose_greeting_order, render_session_stable_prefix
+from core.config  import CLOUD_OFFLINE_TIMEOUT, CLOUD_RETRY_INTERVAL, DREAM_IDLE_MINUTES, DREAM_COOLDOWN, DREAM_MAX_INTERVAL, KAIROS_SILENCE_THRESHOLD, KAIROS_COOLDOWN, STRANGER_REQUIRE_SYSTEM_NAME, SCENE_STALE_SECS, SCENE_BLOCK_ENABLED, SCENE_VOICE_STALE, STRANGER_TTL_DAYS, STRANGER_VOICE_TTL_DAYS, DISPUTE_MAX_DURATION, DISPUTE_RENAME_BLOCK_THRESHOLD, VALID_PERSON_TYPES, TOOL_PRIVILEGES, N_INITIAL_VOICE_BOOTSTRAP, VOICE_ACCUM_FACE_WITNESS_MIN_CONF, VOICE_ACCUM_FACE_WITNESS_MAX_AGE_SEC, VOICE_ACCUM_VOICE_SELF_MATCH_MIN, VOICE_ACCUM_MATURE_SAMPLE_COUNT, VOICE_ROUTING_MIDRANGE_SWITCH_MIN, VOICE_ROUTING_FACE_ASSIST_MIN, VOICE_ROUTING_SELF_MATCH_FLOOR, VOICE_ROUTING_SELF_MATCH_OFFSCREEN, VOICE_ROUTING_MIN_UTTERANCE_SECS, VOICE_ROUTING_SHORT_UTT_MISMATCH_ENABLED, VOICE_ROUTING_SHORT_UTT_FLOOR, VOICE_ROUTING_MIN_AUDIO_FOR_SCORE, VOICE_ROUTING_SHORT_UTT_AMBIGUOUS, VOICE_ROUTING_STRANGER_FLOOR, VOICE_ROUTING_SINGLE_SEGMENT_MISMATCH_ENABLED, VISION_SHADOW_INTERVAL_SECS, MEMORY_SPARSE_THRESHOLD, SYSTEM_NAME_ASSIGN_PATTERNS, PERSON_NAME_ASSIGN_PATTERNS, IDENTITY_DENIAL_PATTERNS, DISPUTE_AUTO_CLEAR_VOICE_MIN, DISPUTE_AUTO_CLEAR_VOICE_SOLO_MIN, DISPUTE_AUTO_CLEAR_CONSECUTIVE_TURNS, ENROLLMENT_RENAME_GRACE_SECS, ENROLLMENT_RENAME_VOICE_THRESHOLD, SCENE_VISITOR_RECENCY_SECS, KAIROS_PREFER_BEST_FRIEND, BATCH_GREETING_ENABLED, BATCH_GREETING_MIN_PEOPLE, BATCH_GREETING_LLM_TIMEOUT_SECS, ROOM_BLOCK_ENABLED, ROOM_BLOCK_TURN_CAP, ROUTING_USE_RECONCILER, STRANGER_IDENTITY_BLOCK_MIN_TURNS, SCENE_BLOCK_CACHE_ENABLED, SCENE_BLOCK_CACHE_MAX_ENTRIES
+import core.config as config
 from core         import voice as voice_mod
 from core.audio   import record_until_silence, transcribe, speak, speak_stream, listen_and_transcribe, preload_models, stop_audio, play_filler, set_lip_active
 from core.log_utils import _now_log_ts
+# P0.13 — invariant constants live in core.pipeline_invariants so they can
+# be imported by structural tests without triggering pipeline.py's heavy
+# top-level side effects.
+from core.pipeline_invariants import (
+    REPEAT_GUARD_FIELDS,
+    ALLOWED_REPEAT_GUARD_FUNCS,
+)
 from core.brain_agent  import BrainOrchestrator, _infer_location_zone as _brain_infer_zone
+from core.session_state import SessionStore
 from core.emotion      import EmotionAgent
 from core import state
 import jellyfish
@@ -372,6 +382,23 @@ def _face_in_frame(pid: str, persons_in_frame: dict) -> bool:
     return entry is not None and entry.get("source") != "voice"
 
 
+def _has_recent_face_evidence(person_id: str) -> bool:
+    """True iff ``_persons_in_frame`` has a recent face-source entry for person_id.
+
+    Voice-only entries (source='voice') do NOT count — distinguishing them is the
+    entire point of the Bug B fix (Session 64). Used by the Wave 2 Item 9 heuristic
+    to decide whether a thin-gallery known/best_friend session was originally
+    voice-only.
+    """
+    entry = _persons_in_frame.get(person_id)
+    if not entry:
+        return False
+    if entry.get("source") == "voice":
+        return False
+    last_seen = entry.get("last_seen", 0.0)
+    return (time.time() - last_seen) < SCENE_STALE_SECS
+
+
 def _tool_allowed(tool_name: str, caller_type: str) -> bool:
     """Return True iff ``caller_type`` is permitted to invoke ``tool_name``.
 
@@ -389,7 +416,7 @@ def _tool_allowed(tool_name: str, caller_type: str) -> bool:
 def _is_enrollment_mishear_candidate(
     db: "FaceDB | None",
     person_id: str,
-    session: dict,
+    session,
 ) -> bool:
     """Session 100 Bug F — is this a fresh-enrollment session whose stored
     name has no voice corroboration yet, so a speaker-grounded rename should
@@ -421,7 +448,7 @@ def _is_enrollment_mishear_candidate(
     helper only makes the routing decision between dispute-flip and
     promotion-chain rename; it is not itself a security gate.
     """
-    started_at = float(session.get("started_at") or 0.0)
+    started_at = float(session.started_at if session is not None else 0.0)
     if started_at <= 0 or time.time() - started_at > ENROLLMENT_RENAME_GRACE_SECS:
         return False
     if db is None:
@@ -447,7 +474,7 @@ def _is_disputed(pid_or_session) -> bool:
     every check through this helper + the grep-invariant source-inspection
     test makes policy drift visible at CI time.
 
-    Accepts either a ``person_id`` (str — looks up ``_active_sessions``) or
+    Accepts either a ``person_id`` (str — looks up ``_session_store.peek_snapshot()``) or
     a pre-fetched session dict (dict — inspects directly). Returns False for
     missing / unknown sessions (fail-open for readers, fail-closed for
     writers: the LLM doesn't accidentally get "disputed" privileges just
@@ -458,7 +485,8 @@ def _is_disputed(pid_or_session) -> bool:
     # Treat None / empty string as "no session" → not disputed.
     if not pid_or_session:
         return False
-    return _active_sessions.get(pid_or_session, {}).get("person_type") == "disputed"
+    _disp_snap = _session_store.peek_snapshot(pid_or_session)
+    return _disp_snap is not None and _disp_snap.person_type == "disputed"
 
 
 def _user_text_gate_passes(
@@ -493,10 +521,10 @@ def _user_text_gate_passes(
     migrated to this primitive.
     """
     import re as _re
-    _lt = (user_text or "").lower().strip()
+    _lt = _nfkc_lower(user_text).strip()
     if not _lt:
         return not reject_on_empty_user_text
-    _nv_lower = (new_value or "").lower().strip() if new_value is not None else None
+    _nv_lower = _nfkc_lower(new_value).strip() if new_value is not None else None
     for pat in assign_patterns:
         m = _re.search(pat, _lt, _re.IGNORECASE)
         if not m:
@@ -506,21 +534,19 @@ def _user_text_gate_passes(
             return True
         if not m.groups():
             continue
-        _captured = m.group(1).lower().strip()
+        _captured = _nfkc_lower(m.group(1)).strip()
         # Exact match — the captured single-word name equals the proposal.
         if _captured == _nv_lower:
             return True
-        # Session 73 post-review Critical #3: multi-word name accept path.
-        # The pattern captures (\w+) which stops at spaces, so "call me Sarah
-        # Jane" → capture = "sarah" and new_value = "Sarah Jane" would miss
-        # the exact check. Accept if new_value STARTS with the captured
-        # single word AND the remainder of new_value appears in user_text
-        # (confirms the user actually said the whole multi-word name — we
-        # just couldn't capture past \w+). Same-session grounding still
-        # required; doesn't open the gate to arbitrary LLM additions.
-        if _captured and _nv_lower.startswith(_captured + " "):
-            _remainder = _nv_lower[len(_captured):].strip()
-            if _remainder and _remainder in _lt:
+        # P0.3 fix (multi-word contiguous substring): (\w+) captures only the
+        # first word — "call me Sarah Jane" → capture="sarah", proposal=
+        # "sarah jane". Accept iff proposal STARTS with the captured word AND
+        # the FULL proposal appears as a contiguous substring of user_text.
+        # Contiguous check prevents the LLM from combining words from different
+        # parts of the utterance ("call me sarah … is jane" ≠ "Sarah Jane").
+        # NFKC applied above defeats homoglyph spoofing on all three inputs.
+        if _captured and _nv_lower.startswith(_captured):
+            if _nv_lower in _lt:
                 return True
     return False
 
@@ -737,6 +763,9 @@ _cloud_failed_at:     float             = 0.0
 _cloud_recovered:     bool              = False   # flag: announce recovery on next turn
 _cloud_monitor_task:  asyncio.Task | None = None
 
+_last_dream_run_at:   "float | None"    = None   # Wave 5 Item 19: timestamp of last dream() completion
+_health_log_task:     asyncio.Task | None = None  # background health log loop
+
 _active_system_name: str = DEFAULT_SYSTEM_NAME   # loaded from system_identity at startup
 
 
@@ -764,7 +793,9 @@ def _maybe_record_silent_obs(emb, bbox: tuple, frame_w: int, frame_h: int, db) -
 
 _conversation:       dict                  = {}
 _pipeline_state:     PipelineState         = PipelineState.WATCHING
-_active_sessions:    dict[str, dict]       = {}    # person_id → session dict
+_compact_pids:       set[str]              = set() # pids with a background compaction in flight
+_session_store: SessionStore = SessionStore()  # P0.7 — typed session state (single source of truth)
+
 # Session 112 Part 1 — room-session lifecycle. `_active_room_session` holds a
 # single room_{timestamp}_{rand} identifier for as long as ANY person has an
 # active session. Minted by the first _open_session call when no room is
@@ -783,7 +814,7 @@ _active_room_started_at: "float | None" = None
 # current room session. Every _open_session into the live room adds to
 # this set; cleared when the room ends. Drives synthesize_room's
 # speaker_pids arg so the orchestrator knows who was there WITHOUT
-# reading back the now-empty _active_sessions table at room-end time.
+# reading back _session_store at room-end time.
 _active_room_participants: "set[str]" = set()
 # Session 115 Fix 2 — best_friend row cache. db.get_best_friend() returns
 # the same row every call until update_person_name fires (rare). Cached
@@ -807,6 +838,7 @@ _anti_spoof_checker:    "AntiSpoofChecker | None"  = None  # set in run(); None 
 _query_embedding_cache: dict                       = {}    # person_id → embedding from previous turn
 _voice_tasks:           "set[asyncio.Task]"         = set() # pending fire-and-forget voice accumulation tasks
 _last_user_speech_at:   float                       = 0.0   # epoch time of user's most recent utterance (KAIROS)
+_last_silent_update:    float                       = 0.0   # throttle: write silent obs at most every 5s
 _persons_in_frame:      dict[str, dict]             = {}    # person_id → {name, conf, last_seen} — all faces currently visible
 _vision_face_scan_last: float                       = 0.0   # throttle: secondary face recognition in background vision loop
 _vision_prev_det_count: int                         = 0     # face count from previous frame — spike triggers immediate scan
@@ -816,6 +848,10 @@ _unrecognized_embeddings:  dict = {}   # SORT track_id -> latest face embedding 
 _stranger_track_map:       dict = {}   # SORT track_id -> stranger_pid; stable face->session binding across turns
 _track_identity:           dict = {}   # SORT track_id -> person_id; confirmed identity per live track (replaces soft-match)
 _last_vision_report_str: str  = ""   # last emitted [Vision] line; suppresses duplicate emissions
+# Wave 6 Item 23: scene_block string cache.
+_scene_block_cache:        "dict[tuple, str]" = {}
+_scene_block_cache_hits:   int                = 0
+_scene_block_cache_misses: int                = 0
 
 
 
@@ -837,15 +873,18 @@ def _set_state(new_state: PipelineState, person_name: str = None):
 
 def _primary_person_id() -> str | None:
     """Return the most recently active person's ID, or None if no active sessions."""
-    if not _active_sessions:
+    _snaps = _session_store.peek_all_snapshots()
+    if not _snaps:
         return None
-    return max(_active_sessions, key=lambda pid: (_active_sessions[pid]["last_spoke_at"], pid))
+    return max(_snaps, key=lambda s: (s.last_spoke_at, s.person_id)).person_id
 
 
 def _primary_person_name() -> str | None:
     pid = _primary_person_id()
-    sess = _active_sessions.get(pid) if pid else None
-    return sess["person_name"] if sess else None
+    if not pid:
+        return None
+    snap = _session_store.peek_snapshot(pid)
+    return snap.person_name if snap is not None else None
 
 
 def _kairos_preferred_speaker(best_friend_id: "str | None") -> "str | None":
@@ -869,23 +908,24 @@ def _kairos_preferred_speaker(best_friend_id: "str | None") -> "str | None":
     session: flip KAIROS_PREFER_BEST_FRIEND to False and `_primary_person_id`
     takes over.
     """
-    if not _active_sessions:
+    _snaps_ks = _session_store.peek_all_snapshots()
+    if not _snaps_ks:
         return None
-    if len(_active_sessions) == 1:
-        return next(iter(_active_sessions))
+    if len(_snaps_ks) == 1:
+        return _snaps_ks[0].person_id
     if not KAIROS_PREFER_BEST_FRIEND:
         return _primary_person_id()
-    if best_friend_id and best_friend_id in _active_sessions:
+    if best_friend_id and any(s.person_id == best_friend_id for s in _snaps_ks):
         return best_friend_id
     # Longest-silence fallback: pick the pid whose last_spoke_at is oldest.
     now_ks = time.time()
     return max(
-        _active_sessions,
-        key=lambda pid: (
-            now_ks - _active_sessions[pid].get("last_spoke_at", now_ks),
-            pid,
+        _snaps_ks,
+        key=lambda s: (
+            now_ks - s.last_spoke_at,
+            s.person_id,
         ),
-    )
+    ).person_id
 
 
 def _get_best_friend_cached(db) -> "dict | None":
@@ -918,7 +958,7 @@ def _invalidate_bf_cache() -> None:
 
 def _resolve_addressed_to(
     parsed_addr: "str | None",
-    active_sessions: dict,
+    active_sessions: "tuple",
     effective_name: str,
 ) -> str:
     """Session 113 Part 1 — resolve the LLM's [addressing:X] marker into
@@ -953,8 +993,8 @@ def _resolve_addressed_to(
         return effective_name
     addr_lc = parsed_addr.strip().lower()
     matched = next(
-        (s.get("person_name") for s in active_sessions.values()
-         if (s.get("person_name") or "").strip().lower() == addr_lc),
+        (s.person_name for s in active_sessions
+         if s.person_name.strip().lower() == addr_lc),
         None,
     )
     if matched:
@@ -1422,7 +1462,7 @@ def _resolve_actual_speaker(
 
 def _build_cross_person_excerpts(
     speaker_id: str,
-    active_sessions: dict,
+    active_sessions: "tuple",
     conversation: dict,
     best_friend_id: str | None,
 ) -> str | None:
@@ -1445,17 +1485,18 @@ def _build_cross_person_excerpts(
         return None
 
     present_parts = []
-    for pid, sess in active_sessions.items():
-        name = sess.get("person_name", pid)
+    for _cx_snap in active_sessions:
+        pid = _cx_snap.person_id
+        name = _cx_snap.person_name
         # Finding M — disputed sessions take the SCENE label "disputed identity"
         # regardless of the sensor-matched pid's usual role. The IDENTITY DISPUTED
         # block separately tells the brain to treat this person as unknown; the
         # SCENE role must agree rather than say "best friend is present."
-        if _is_disputed(sess):
+        if _is_disputed(pid):
             role = "disputed identity"
         elif pid == best_friend_id:
             role = "best friend"
-        elif sess.get("person_type") == "stranger":
+        elif _cx_snap.person_type == "stranger":
             role = "visitor"
         else:
             role = "known person"
@@ -1464,14 +1505,15 @@ def _build_cross_person_excerpts(
 
     now_ts = time.time()
     cross_lines: list[str] = []
-    for pid, sess in active_sessions.items():
+    for _cx_snap2 in active_sessions:
+        pid = _cx_snap2.person_id
         if pid == speaker_id:
             continue
-        other_name = sess.get("person_name", pid)
+        other_name = _cx_snap2.person_name
         # Critical #2 — only include messages written AFTER this session
         # opened; earlier turns (from a prior session days ago) would
         # confuse the brain about what's happening NOW.
-        other_started = float(sess.get("started_at") or 0.0)
+        other_started = float(_cx_snap2.started_at)
         other_hist    = conversation.get(pid, [])
         in_session = [
             msg for msg in other_hist
@@ -1532,7 +1574,7 @@ def _fetch_recent_visitors_for_scene(best_friend_id: "str | None") -> "list[dict
         return None
     try:
         hours_back = SCENE_VISITOR_RECENCY_SECS / 3600.0
-        return _brain_orchestrator._brain_db.get_recent_visitor_alerts(
+        return _brain_orchestrator.brain_db.get_recent_visitor_alerts(
             best_friend_id, hours_back=hours_back,
         )
     except Exception as _ex:
@@ -1541,7 +1583,7 @@ def _fetch_recent_visitors_for_scene(best_friend_id: "str | None") -> "list[dict
 
 
 def _build_room_block(
-    active_sessions: dict,
+    active_sessions: "tuple",
     conversation: dict,
     emotion_agents: dict,
     room_start_ts: "float | None",
@@ -1590,10 +1632,8 @@ def _build_room_block(
 
     # ── Section 1: active speakers list ──────────────────────────────────
     _active_lines: list[str] = []
-    for _pid, _sess in active_sessions.items():
-        _pname = _sess.get("person_name", _pid)
-        _ptype = _sess.get("person_type", "stranger")
-        _active_lines.append(f"{_pname} ({_ptype})")
+    for _rs in active_sessions:
+        _active_lines.append(f"{_rs.person_name} ({_rs.person_type})")
     _active_str = ", ".join(_active_lines)
 
     # ── Section 2: room duration (optional) ──────────────────────────────
@@ -1612,9 +1652,9 @@ def _build_room_block(
     # ── Section 3: interleaved recent turns ──────────────────────────────
     _boundary = room_start_ts if room_start_ts is not None else 0.0
     _all_msgs: list[tuple[float, str, dict]] = []
-    for _pid, _sess in active_sessions.items():
-        _pname = _sess.get("person_name", _pid)
-        _history = conversation.get(_pid, []) or []
+    for _rs in active_sessions:
+        _pname = _rs.person_name
+        _history = conversation.get(_rs.person_id, []) or []
         for _msg in _history:
             _ts = _msg.get("ts", 0.0)
             if _ts < _boundary:
@@ -1654,9 +1694,8 @@ def _build_room_block(
 
     # ── Section 4: per-person mood ───────────────────────────────────────
     _mood_lines: list[str] = []
-    for _pid, _sess in active_sessions.items():
-        _pname = _sess.get("person_name", _pid)
-        _ag = emotion_agents.get(_pid)
+    for _rs in active_sessions:
+        _ag = emotion_agents.get(_rs.person_id)
         if _ag is None:
             _mood = "unknown"
         else:
@@ -1665,7 +1704,7 @@ def _build_room_block(
                 _mood = _label if _label else "neutral"
             except Exception:
                 _mood = "neutral"
-        _mood_lines.append(f"  {_pname}: {_mood}")
+        _mood_lines.append(f"  {_rs.person_name}: {_mood}")
 
     # ── Assemble ─────────────────────────────────────────────────────────
     _parts: list[str] = ["<<<ROOM>>>"]
@@ -1752,7 +1791,7 @@ def _fetch_recent_room_context(person_id: "str | None") -> "dict | None":
     if _brain_orchestrator is None:
         return None
     try:
-        return _brain_orchestrator._brain_db.get_recent_room_context(
+        return _brain_orchestrator.brain_db.get_recent_room_context(
             person_id, hours=_HOURS,
         )
     except Exception as _ex:
@@ -1760,10 +1799,109 @@ def _fetch_recent_room_context(person_id: "str | None") -> "dict | None":
         return None
 
 
+def _scene_fingerprint(
+    speaker_id: "str | None",
+    now: float,
+    active_sessions: "tuple",
+    persons_in_frame: dict,
+    unrecognized_tracks: dict,
+    best_friend_id: "str | None",
+    recent_visitors: "list[dict] | None",
+) -> tuple:
+    """Hashable key summarising all inputs that affect _build_scene_block output."""
+    now_sec = int(now)  # 1-second granularity — output is stable within a second
+    _snap_by_pid = {s.person_id: s for s in active_sessions}
+
+    vis_items = []
+    for pid, info in persons_in_frame.items():
+        if now - info.get("last_seen", 0) >= SCENE_STALE_SECS:
+            continue
+        name = info.get("name", pid)
+        _snap = _snap_by_pid.get(pid)
+        person_type = _snap.person_type if _snap is not None else "known"
+        if _is_disputed(pid):
+            role = "disputed"
+        elif pid == best_friend_id:
+            role = "best_friend"
+        elif person_type == "stranger":
+            role = "visitor"
+        else:
+            role = "known"
+        secs_ago = int(now - info.get("last_seen", now))
+        vis_items.append((pid, name, role, pid == speaker_id, secs_ago))
+
+    unrec_count = sum(
+        1 for t in unrecognized_tracks.values()
+        if now - t.get("last_seen", 0) < SCENE_STALE_SECS
+    )
+
+    if recent_visitors is None:
+        rv_key: "frozenset | None" = None
+    else:
+        rv_key = frozenset(
+            (v.get("person_id", ""), v.get("visitor_name", ""), str(v.get("safety_flags", [])))
+            for v in recent_visitors
+        )
+
+    return (speaker_id, now_sec, frozenset(vis_items), unrec_count, best_friend_id, rv_key)
+
+
+def _get_scene_block_cached(
+    speaker_id: "str | None",
+    now: float,
+    active_sessions: "tuple",
+    persons_in_frame: dict,
+    unrecognized_tracks: dict,
+    best_friend_id: "str | None",
+    recent_visitors: "list[dict] | None" = None,
+) -> str:
+    """Cache-backed wrapper for _build_scene_block (Wave 6 Item 23)."""
+    global _scene_block_cache, _scene_block_cache_hits, _scene_block_cache_misses
+
+    if not SCENE_BLOCK_CACHE_ENABLED:
+        return _build_scene_block(
+            speaker_id, now, active_sessions, persons_in_frame,
+            unrecognized_tracks, best_friend_id, recent_visitors,
+        )
+
+    key = _scene_fingerprint(
+        speaker_id, now, active_sessions, persons_in_frame,
+        unrecognized_tracks, best_friend_id, recent_visitors,
+    )
+
+    cached = _scene_block_cache.get(key)
+    if cached is not None:
+        _scene_block_cache_hits += 1
+        return cached
+
+    _scene_block_cache_misses += 1
+    result = _build_scene_block(
+        speaker_id, now, active_sessions, persons_in_frame,
+        unrecognized_tracks, best_friend_id, recent_visitors,
+    )
+
+    if len(_scene_block_cache) >= SCENE_BLOCK_CACHE_MAX_ENTRIES:
+        oldest = next(iter(_scene_block_cache))
+        del _scene_block_cache[oldest]
+
+    _scene_block_cache[key] = result
+    return result
+
+
+def get_scene_block_cache_stats() -> dict:
+    """Hit/miss/size stats for the scene_block cache."""
+    return {
+        "hits":        _scene_block_cache_hits,
+        "misses":      _scene_block_cache_misses,
+        "size":        len(_scene_block_cache),
+        "max_entries": SCENE_BLOCK_CACHE_MAX_ENTRIES,
+    }
+
+
 def _build_scene_block(
     speaker_id: str | None,
     now: float,
-    active_sessions: dict,
+    active_sessions: "tuple",
     persons_in_frame: dict,
     unrecognized_tracks: dict,
     best_friend_id: str | None,
@@ -1784,23 +1922,24 @@ def _build_scene_block(
     render last so the brain reads them after the factual context.
 
     ``recent_visitors`` is pre-fetched by the caller from
-    ``_brain_orchestrator._brain_db.get_recent_visitor_alerts(bf_id)``
+    ``_brain_orchestrator.brain_db.get_recent_visitor_alerts(bf_id)``
     and filtered to nudges generated within SCENE_VISITOR_RECENCY_SECS.
     When None (caller unable to reach the orchestrator), those sections
     simply don't render — fallback-safe.
     """
     # ── Section 1: Who's here now (camera) ──────────────────────────
+    _snap_by_pid_scene = {s.person_id: s for s in active_sessions}
     visible_lines: list[str] = []
     for pid, info in persons_in_frame.items():
         if now - info.get("last_seen", 0) >= SCENE_STALE_SECS:
             continue
         name = info.get("name", pid)
-        sess = active_sessions.get(pid, {})
-        person_type = sess.get("person_type", "known")
+        _sc_snap = _snap_by_pid_scene.get(pid)
+        person_type = _sc_snap.person_type if _sc_snap is not None else "known"
         # Finding M — disputed sessions take precedence over the sensor-matched
         # role so the SCENE block agrees with the IDENTITY DISPUTED block instead
         # of saying "best friend is present" for a contested identity.
-        if _is_disputed(sess):
+        if _is_disputed(pid):
             role = "disputed identity"
         elif pid == best_friend_id:
             role = "best friend"
@@ -1825,16 +1964,17 @@ def _build_scene_block(
 
     # ── Section 2: Offscreen voice ──────────────────────────────────
     offscreen_lines: list[str] = []
-    for pid, sess in active_sessions.items():
+    for _off_snap in active_sessions:
+        pid = _off_snap.person_id
         if pid in persons_in_frame:
             continue
-        if sess.get("session_type") != "voice":
+        if _off_snap.session_type != "voice":
             continue
-        last_spoke = sess.get("last_spoke_at", 0)
+        last_spoke = _off_snap.last_spoke_at
         if now - last_spoke >= SCENE_VOICE_STALE:
             continue
-        name = sess.get("person_name", pid)
-        person_type = sess.get("person_type", "known")
+        name = _off_snap.person_name
+        person_type = _off_snap.person_type
         if pid == best_friend_id:
             role = "best friend"
         elif person_type == "stranger":
@@ -1921,8 +2061,8 @@ def _open_session(
 
     ``person_type`` is a REQUIRED keyword-or-positional arg: every caller must
     commit to which session kind they're opening. Seeding the dict at creation
-    time closes the race window where ``_active_sessions[pid]["person_type"]``
-    didn't exist between ``_open_session`` and a later greeting-path write —
+    time closes the race window where ``_session_store.peek_snapshot(pid).person_type``
+    might be absent before the SessionStore task completes after ``_open_session`` —
     with the Step 2 fail-safe "stranger" fallback, that window would mis-gate
     a best_friend as stranger for one iteration.
 
@@ -1938,11 +2078,15 @@ def _open_session(
         f"must be one of {sorted(VALID_PERSON_TYPES)}"
     )
     now = time.time()
-    existing = _active_sessions.get(person_id)
-    if existing:
-        existing["last_spoke_at"]    = now
-        existing["last_face_seen"]   = now
-        existing["voice_confidence"] = voice_confidence
+    existing = _session_store.peek_snapshot(person_id)
+    if existing is not None:
+        # P0.7.3: named lifecycle call covers last_spoke_at, last_face_seen, voice_confidence
+        try:
+            _loop = asyncio.get_running_loop()
+            _loop.create_task(_session_store.update_on_reopen(
+                person_id, voice_confidence=voice_confidence, now=now))
+        except RuntimeError:
+            pass  # OPTIONAL: no running loop in test/early-boot context
         # Don't overwrite person_type on re-open — caller may have promoted
         # stranger→known via update_person_name since the last open.
     else:
@@ -1977,7 +2121,7 @@ def _open_session(
         _current_room_session = _active_room_session
         # Phase 3B.6 — accumulate every pid that joins this room so
         # synthesize_room has the participant list at room-end time
-        # (when _active_sessions is empty). Idempotent on re-open.
+        # (when _session_store has no active sessions). Idempotent on re-open.
         # Session 116 P1 #9 — log room join events explicitly so an
         # outside reviewer can audit room membership transitions
         # without inferring from open/close lines.
@@ -2009,74 +2153,67 @@ def _open_session(
                 if _voice_gallery_sizes.get(person_id, -1) != _db_voice_count:
                     _voice_gallery_sizes[person_id] = _db_voice_count
             except Exception:
-                pass  # cache fallback already seeded above
-        _active_sessions[person_id] = {
-            "person_id":             person_id,
-            "person_name":           person_name,
-            "person_type":           person_type,
-            "session_type":          session_type,
-            "last_face_seen":        now,
-            "last_spoke_at":         now,
-            "voice_confidence":      voice_confidence,
-            "started_at":            now,
-            # Session 112 Part 1 — room_session_id stamped on every session
-            # dict. Wired into log_turn so conversation_log rows carry the
-            # room tag. 3B retrieval will query by this.
-            "room_session_id":       _current_room_session,
-            "kairos_clock_reset":    True,
-            "recent_attributions":   _deque(maxlen=3),  # #21: drift detection
-            # Session 97 Fix 1: per-session user-turn counter drives the
-            # <<<STRANGER IDENTITY>>> promotion-nudge block. Incremented at
-            # the top of conversation_turn before vision_state is built, so
-            # the block fires starting from the turn where turn count meets
-            # the STRANGER_IDENTITY_BLOCK_MIN_TURNS threshold.
-            "user_turns":            0,
-            # S120 #1/#2 — voice_only_origin: True when the session was opened
-            # via voice-only engagement (no face witness available). Bootstrap
-            # replenishment stays active regardless of person_type so a stranger
-            # who reveals their name (and gets promoted to known) can still grow
-            # their voice profile to maturity. Cleared on first face-witness event.
-            "voice_only_origin":     False,
-            # Step 3: structured evidence replaces the boolean voice_face_confirmed
-            # (kept as a dual-write shim below for transition compatibility).
-            "identity_evidence": {
-                "face_match_conf":     0.0,
-                "face_last_seen_ts":   0.0,
-                "anti_spoof_live":     False,
-                "anti_spoof_score":    0.0,
-                "anti_spoof_last_ts":  0.0,
-                "voice_match_conf":    0.0,
-                "voice_sample_count":  _db_voice_count,   # Bug A Part 1: DB-hydrated
-                "voice_last_heard_ts": 0.0,
-                "bootstrap_credits":   _bootstrap,
-            },
-        }
-
-
-def _update_identity_evidence(person_id: str, **fields) -> None:
-    """Single-writer helper for ``_active_sessions[pid]["identity_evidence"]``.
-
-    Keeps the "one writer per signal" invariant clean — every code path that
-    learns a new identity fact goes through this function. Silently no-ops when
-    the session is gone (e.g. closed mid-turn) so callers don't need null-guards.
-    Unknown keys raise KeyError at write time to catch typos during development.
-    """
-    sess = _active_sessions.get(person_id)
-    if not sess:
-        return
-    ev = sess.get("identity_evidence")
-    if ev is None:
-        return
-    for key, value in fields.items():
-        if key not in ev:
-            raise KeyError(
-                f"_update_identity_evidence: unknown field {key!r}. "
-                f"Known keys: {sorted(ev)}"
+                pass  # OPTIONAL: cache fallback already seeded above — stale count safe until next session open
+        # P0.7.2-SHIM: canonical-first — populate SessionStore BEFORE legacy dict
+        try:
+            _loop = asyncio.get_running_loop()
+            _loop.create_task(_session_store.open_session(
+                person_id, person_name, person_type, session_type,
+                now=now,
+                bootstrap_credits=_bootstrap,
+                room_session_id=_current_room_session,
+                voice_sample_count=_db_voice_count,
+            ))
+        except RuntimeError:
+            pass  # OPTIONAL: no running loop in test/early-boot context
+        # Wave 4 Item 18 — fetch core memory at session open so render_session_stable_prefix
+        # can inject it into Section 2 without a DB call on every turn.
+        _core_mem_value: list = []
+        if _brain_orchestrator is not None:
+            try:
+                _bf_row_open = _face_db_ref.get_best_friend() if _face_db_ref else None
+                _bf_id_open  = _bf_row_open["id"] if _bf_row_open else None
+                _core_mem_value = _brain_orchestrator.brain_db.get_core_memory_for(
+                    requester_pid  = person_id,
+                    best_friend_id = _bf_id_open,
+                    entity         = person_name,
+                )
+            except Exception as _cm_err:
+                print(f"[Session] core_memory fetch failed for {person_id}: {_cm_err!r}")
+        # P0.7.3: named lifecycle call (uses local _core_mem_value — no dict read)
+        try:
+            _loop = asyncio.get_running_loop()
+            _loop.create_task(_session_store.set_core_memory(
+                person_id, _core_mem_value))
+        except RuntimeError:
+            pass  # OPTIONAL: no running loop in test/early-boot context
+        # Wave 2 Item 9: backfill heuristic for pre-S120 promoted voice-only strangers.
+        # S120 set voice_only_origin=True at the engagement-gate pass for new promotions.
+        # Pre-S120 promoted persons have voice_only_origin=False and no way to grow their
+        # gallery (bootstrap replenishment was gated on person_type=='stranger', which
+        # becomes False the moment update_person_name fires). Infer the flag retroactively
+        # when: not already True, person is known/best_friend (not disputed/stranger),
+        # gallery is still thin (< N_INITIAL_VOICE), and no face evidence is currently
+        # available (confirming this is a voice-only session). Idempotent across re-opens.
+        if (
+            not (_session_store.peek_snapshot(person_id).voice_only_origin if _session_store.peek_snapshot(person_id) is not None else False)
+            and person_type in ("known", "best_friend")
+            and _voice_gallery_sizes.get(person_id, 0) < N_INITIAL_VOICE
+            and not _has_recent_face_evidence(person_id)
+        ):
+            print(
+                f"[Backfill] {person_name} ({person_id}) — voice_only_origin=True inferred "
+                f"(person_type={person_type}, "
+                f"voice_n={_voice_gallery_sizes.get(person_id, 0)}, no face)"
             )
-        ev[key] = value
+            try:
+                _loop = asyncio.get_running_loop()
+                _loop.create_task(_session_store.set_voice_only_origin(person_id, True))
+            except RuntimeError:
+                pass  # OPTIONAL: no running loop in test/early-boot context
 
 
-def _voice_accum_allowed(session: dict) -> tuple[bool, str, str]:
+def _voice_accum_allowed(pid: str) -> tuple[bool, str, str]:
     """Decide whether voice accumulation is allowed for a session.
 
     Returns (allowed, reason, path). ``path`` is one of ``"face_witness"``,
@@ -2084,37 +2221,41 @@ def _voice_accum_allowed(session: dict) -> tuple[bool, str, str]:
     in that order — first-match wins. No hardcoded thresholds; all values come
     from config so tuning is a single knob per concern.
     """
-    ev = session.get("identity_evidence") or {}
+    snap = _session_store.peek_snapshot(pid)
+    ev = snap.evidence if snap is not None else None
     now = time.time()
 
+    if ev is None:
+        return (False, "no session", "refused")
+
     # Path A — recent confident face witness
-    face_age = now - ev.get("face_last_seen_ts", 0.0)
-    if (ev.get("face_match_conf", 0.0) >= VOICE_ACCUM_FACE_WITNESS_MIN_CONF
-            and ev.get("anti_spoof_live", False)
+    face_age = now - ev.face_last_seen_ts
+    if (ev.face_match_conf >= VOICE_ACCUM_FACE_WITNESS_MIN_CONF
+            and ev.anti_spoof_live
             and face_age <= VOICE_ACCUM_FACE_WITNESS_MAX_AGE_SEC):
         return (True,
-                f"face witness (conf={ev['face_match_conf']:.2f}, age={face_age:.1f}s)",
+                f"face witness (conf={ev.face_match_conf:.2f}, age={face_age:.1f}s)",
                 "face_witness")
 
     # Path B — mature voice profile self-matching
-    if (ev.get("voice_match_conf", 0.0) >= VOICE_ACCUM_VOICE_SELF_MATCH_MIN
-            and ev.get("voice_sample_count", 0) >= VOICE_ACCUM_MATURE_SAMPLE_COUNT):
+    if (ev.voice_match_conf >= VOICE_ACCUM_VOICE_SELF_MATCH_MIN
+            and ev.voice_sample_count >= VOICE_ACCUM_MATURE_SAMPLE_COUNT):
         return (True,
-                f"voice self-match (conf={ev['voice_match_conf']:.2f}, "
-                f"n={ev['voice_sample_count']})",
+                f"voice self-match (conf={ev.voice_match_conf:.2f}, "
+                f"n={ev.voice_sample_count})",
                 "voice_self_match")
 
     # Path C — bootstrap credits from engagement gate
-    if ev.get("bootstrap_credits", 0) > 0:
+    if ev.bootstrap_credits > 0:
         return (True,
-                f"bootstrap ({ev['bootstrap_credits']} credits remaining)",
+                f"bootstrap ({ev.bootstrap_credits} credits remaining)",
                 "bootstrap")
 
     return (False,
-            f"no witness (face_conf={ev.get('face_match_conf', 0.0):.2f}, "
-            f"age={face_age:.1f}s, voice_n={ev.get('voice_sample_count', 0)}, "
-            f"voice_conf={ev.get('voice_match_conf', 0.0):.2f}, "
-            f"bootstrap={ev.get('bootstrap_credits', 0)})",
+            f"no witness (face_conf={ev.face_match_conf:.2f}, "
+            f"age={face_age:.1f}s, voice_n={ev.voice_sample_count}, "
+            f"voice_conf={ev.voice_match_conf:.2f}, "
+            f"bootstrap={ev.bootstrap_credits})",
             "refused")
 
 
@@ -2190,8 +2331,8 @@ def _close_session(person_id: str) -> None:
     """Close and remove a person's session."""
     global _stranger_track_map, _unrecognized_embeddings, _track_identity
     global _active_room_session, _active_room_started_at, _active_room_participants
-    sess = _active_sessions.get(person_id)
-    _pname_log = sess["person_name"] if sess else person_id
+    _close_snap = _session_store.peek_snapshot(person_id)
+    _pname_log = _close_snap.person_name if _close_snap is not None else person_id
     print(f"[Session] Close: {person_id} — {_pname_log}")
     # Session 97 Fix 2: if this is a stranger session that accumulated
     # no usable data (gate-blocked at open and never spoke to the
@@ -2200,13 +2341,16 @@ def _close_session(person_id: str) -> None:
     # person_type=='stranger', zero voice embeddings, zero conversation
     # turns — so a genuine short-interaction stranger with even ONE
     # preserved signal survives until the TTL.
-    _sess_pt_close = sess.get("person_type") if sess else None
+    _sess_pt_close = _close_snap.person_type if _close_snap is not None else None
     if _sess_pt_close == "stranger" and _face_db_ref is not None:
         try:
             _face_db_ref.prune_zero_value_stranger(person_id)
         except Exception as _prune_ex:
             print(f"[Session] zero-value prune failed for {person_id}: {_prune_ex!r}")
-    _active_sessions.pop(person_id, None)
+    try:
+        asyncio.get_running_loop().create_task(_session_store.close_session(person_id))
+    except RuntimeError:
+        pass  # OPTIONAL: no running loop in test/early-boot context
     _sessions_started.discard(person_id)
     # Clean up any face-track → session bindings pointing to this session
     _stranger_track_map = {
@@ -2246,7 +2390,7 @@ def _close_session(person_id: str) -> None:
     # fire-and-forget synthesis tasks (current 3A scope: just log
     # the room end + clear the id; 3B will hook room-level insight,
     # relationship update, cross-person safety scan here).
-    if not _active_sessions and _active_room_session is not None:
+    if not _session_store.peek_all_snapshots() and _active_room_session is not None:
         _ended_room = _active_room_session
         _ended_started_at = _active_room_started_at
         _ended_participants = list(_active_room_participants)
@@ -2283,17 +2427,21 @@ def _expire_stale_sessions() -> bool:
     global _vision_prev_det_count, _detected_lang
     _now_fl = time.time()
     _expired: list[str] = []
-    for _pid, _sess in list(_active_sessions.items()):
+    for _snap in _session_store.peek_all_snapshots():
         # Identity-disputed sessions get a hard cap — vision keeps matching the
         # wrong person so `last_face_seen` never stales out via FACE_LOSS_GRACE.
         # Force-close after DISPUTE_MAX_DURATION so pollution has a bounded tail.
         # Finding K — if a future path sets person_type="disputed" without also
         # setting dispute_set_at, lazily anchor it here on the first check so the
         # timeout still fires (instead of permanently resetting to now each pass).
-        if _is_disputed(_sess):
-            _dispute_start = _sess.get("dispute_set_at")
+        if _is_disputed(_snap.person_id):
+            _dispute_start = _snap.dispute_set_at
             if _dispute_start is None:
-                _sess["dispute_set_at"] = _now_fl
+                try:
+                    _loop = asyncio.get_running_loop()
+                    _loop.create_task(_session_store.set_dispute_set_at(_snap.person_id, _now_fl))
+                except RuntimeError:
+                    asyncio.run(_session_store.set_dispute_set_at(_snap.person_id, _now_fl))  # OPTIONAL: sync fallback
                 _dispute_start = _now_fl
 
             # Bug D1 (2026-04-22 live run): signal-based dispute auto-clear.
@@ -2309,17 +2457,17 @@ def _expire_stale_sessions() -> bool:
             # (stronger corroboration via separate modality), the lower
             # DISPUTE_AUTO_CLEAR_VOICE_MIN (0.70) is acceptable. Restore via
             # prior_person_type (captured at dispute-flip).
-            _ev = _sess.get("identity_evidence") or {}
+            _ev = _snap.evidence
             _face_confirmed = (
-                _face_in_frame(_pid, _persons_in_frame)
-                and _ev.get("face_match_conf", 0.0) >= DISPUTE_AUTO_CLEAR_VOICE_MIN
+                _face_in_frame(_snap.person_id, _persons_in_frame)
+                and _ev.face_match_conf >= DISPUTE_AUTO_CLEAR_VOICE_MIN
             )
             _voice_floor = (
                 DISPUTE_AUTO_CLEAR_VOICE_MIN
                 if _face_confirmed
                 else DISPUTE_AUTO_CLEAR_VOICE_SOLO_MIN
             )
-            _recent_vc = _sess.get("recent_voice_confs", ())
+            _recent_vc = _snap.recent_voice_confs
             _voice_confirmed = (
                 len(_recent_vc) >= DISPUTE_AUTO_CLEAR_CONSECUTIVE_TURNS
                 and all(
@@ -2342,40 +2490,40 @@ def _expire_stale_sessions() -> bool:
                 # "stranger" is the safer fallback; worst case is the session
                 # loses best_friend privileges but a user re-auth via
                 # engagement gate restores them on the next turn.
-                _restore_type = _sess.get("prior_person_type", "stranger")
-                _sess["person_type"] = _restore_type
-                _sess.pop("dispute_reason", None)
-                _sess.pop("dispute_set_at", None)
-                _sess.pop("disputed_claimed_name", None)
-                _sess.pop("prior_person_type", None)
-                _sess.pop("recent_voice_confs", None)
+                _restore_type = _snap.prior_person_type or "stranger"
+                # P0.7.3: atomic named call (handles person_type restore + all dispute fields)
+                try:
+                    _loop = asyncio.get_running_loop()
+                    _loop.create_task(_session_store.clear_dispute(_snap.person_id, now=_now_fl))
+                except RuntimeError:
+                    asyncio.run(_session_store.clear_dispute(_snap.person_id, now=_now_fl))  # OPTIONAL: sync fallback
                 if _brain_orchestrator:
-                    _brain_orchestrator.clear_disputed(_pid)
+                    _brain_orchestrator.clear_disputed(_snap.person_id)
                 print(
-                    f"[Dispute] Auto-cleared for {_sess.get('person_name', _pid)} — "
+                    f"[Dispute] Auto-cleared for {_snap.person_name} — "
                     f"{_reason}; restored person_type={_restore_type!r}"
                 )
                 # Session no longer disputed — fall through to normal session
                 # expiry checks below (not `continue`, so we don't skip them).
             elif _now_fl - _dispute_start > DISPUTE_MAX_DURATION:
                 print(
-                    f"[Pipeline] Dispute timeout for {_sess.get('person_name', _pid)} — "
+                    f"[Pipeline] Dispute timeout for {_snap.person_name} — "
                     f"force-closing after {_now_fl - _dispute_start:.0f}s"
                 )
-                _expired.append(_pid)
+                _expired.append(_snap.person_id)
                 continue
-        if _sess["session_type"] == "face":
-            if _now_fl - _sess["last_face_seen"] > FACE_LOSS_GRACE:
-                _expired.append(_pid)
+        if _snap.session_type == "face":
+            if _now_fl - _snap.last_face_seen > FACE_LOSS_GRACE:
+                _expired.append(_snap.person_id)
         else:  # voice-started
-            if _now_fl - _sess["last_spoke_at"] > VOICE_SESSION_TIMEOUT:
-                _expired.append(_pid)
+            if _now_fl - _snap.last_spoke_at > VOICE_SESSION_TIMEOUT:
+                _expired.append(_snap.person_id)
 
     for _pid in _expired:
-        _sess = _active_sessions.get(_pid)
-        if not _sess:
+        _snap_exp = _session_store.peek_snapshot(_pid)
+        if _snap_exp is None:
             continue
-        _pname = _sess["person_name"]
+        _pname = _snap_exp.person_name
         print(f"[Pipeline] Session expired: {_pname} ({_pid})")
         _conversation.pop(_pid, None)
         _last_greeted[_pid] = time.time()
@@ -2384,7 +2532,7 @@ def _expire_stale_sessions() -> bool:
         _close_session(_pid)
         _vision_prev_det_count = 0
 
-    if _expired and not _active_sessions:
+    if _expired and not _session_store.peek_all_snapshots():
         # All sessions closed — full cleanup
         lip_tracker.reset()
         set_lip_active(False)
@@ -2412,7 +2560,7 @@ async def _accumulate_voice(
     its voice profile until better evidence arrives.
     """
     loop    = asyncio.get_running_loop()
-    session = _active_sessions.get(person_id) or {}
+    _acc_snap = _session_store.peek_snapshot(person_id)
 
     # Session 94 Fix #5 — bootstrap credit replenishment. When an engagement-
     # gated stranger (said the system name earlier, ``waiting_for_name=False``)
@@ -2426,30 +2574,77 @@ async def _accumulate_voice(
     # multiple visits despite passing engagement gates each time.
     from core.config import (
         VOICE_BOOTSTRAP_REPLENISH_ENABLED, VOICE_MAX_BOOTSTRAP_CREDITS,
+        VOICE_BOOTSTRAP_DEBUG,
     )
+    # F2 diagnostic — log entry state before replenishment decision.
+    if VOICE_BOOTSTRAP_DEBUG:
+        _ev_pre = _acc_snap.evidence if _acc_snap is not None else None
+        print(
+            f"[Voice-Debug] _accumulate_voice entry: pid={person_id} "
+            f"voice_only_origin={_acc_snap.voice_only_origin if _acc_snap is not None else False} "
+            f"waiting_for_name={_acc_snap.waiting_for_name if _acc_snap is not None else False} "
+            f"bootstrap_pre={_ev_pre.bootstrap_credits if _ev_pre is not None else 0} "
+            f"voice_n={_ev_pre.voice_sample_count if _ev_pre is not None else 0}"
+        )
     # S120 #1/#2 — condition widened from person_type=="stranger" to
     # voice_only_origin flag. A voice-only person promoted from stranger →
     # known loses person_type=="stranger" the moment update_person_name fires,
     # which previously froze their voice profile permanently at whatever
     # voice_n they had reached. The flag survives promotion and drives
     # replenishment until the profile matures or a face is witnessed.
+    # F2 fix: default changed from True → False. known/best_friend sessions
+    # don't carry waiting_for_name at all; defaulting to True caused
+    # replenishment to always skip for every non-stranger voice-only session.
     if (VOICE_BOOTSTRAP_REPLENISH_ENABLED
-            and session.get("voice_only_origin", False)
-            and not session.get("waiting_for_name", True)):
-        ev = session.get("identity_evidence") or {}
-        voice_n = ev.get("voice_sample_count", 0)
-        current_credits = ev.get("bootstrap_credits", 0)
+            and (_acc_snap.voice_only_origin if _acc_snap is not None else False)
+            and not (_acc_snap.waiting_for_name if _acc_snap is not None else False)):
+        _snap_rep = _session_store.peek_snapshot(person_id)
+        _ev_rep = _snap_rep.evidence if _snap_rep is not None else None
+        voice_n = _ev_rep.voice_sample_count if _ev_rep is not None else 0
+        current_credits = _ev_rep.bootstrap_credits if _ev_rep is not None else 0
         if (voice_n < VOICE_ACCUM_MATURE_SAMPLE_COUNT
                 and current_credits < VOICE_MAX_BOOTSTRAP_CREDITS):
-            _update_identity_evidence(
-                person_id,
-                bootstrap_credits=min(current_credits + 1, VOICE_MAX_BOOTSTRAP_CREDITS),
+            loop.create_task(_session_store.increment_bootstrap_credits(
+                person_id, cap=VOICE_MAX_BOOTSTRAP_CREDITS,
+            ))
+            if VOICE_BOOTSTRAP_DEBUG:
+                print(
+                    f"[Voice-Debug] Replenishment FIRED for {person_id} "
+                    f"→ bootstrap≈{min(current_credits + 1, VOICE_MAX_BOOTSTRAP_CREDITS)}"
+                )
+        elif VOICE_BOOTSTRAP_DEBUG:
+            # Log WHY replenishment was skipped.
+            _reasons = []
+            if not (_acc_snap.voice_only_origin if _acc_snap is not None else False):
+                _reasons.append("voice_only_origin=False")
+            if _ev_rep is not None and _ev_rep.voice_sample_count >= VOICE_ACCUM_MATURE_SAMPLE_COUNT:
+                _reasons.append(f"already_mature(voice_n={_ev_rep.voice_sample_count})")
+            if _ev_rep is not None and _ev_rep.bootstrap_credits >= VOICE_MAX_BOOTSTRAP_CREDITS:
+                _reasons.append(f"at_cap(credits={_ev_rep.bootstrap_credits})")
+            print(
+                f"[Voice-Debug] Replenishment SKIPPED for {person_id}: "
+                f"{', '.join(_reasons) if _reasons else 'condition_gate_false'}"
             )
-            session = _active_sessions.get(person_id) or session   # refresh
+    elif VOICE_BOOTSTRAP_DEBUG:
+        print(
+            f"[Voice-Debug] Replenishment gate skipped for {person_id}: "
+            f"REPLENISH_ENABLED={VOICE_BOOTSTRAP_REPLENISH_ENABLED} "
+            f"voice_only_origin={_acc_snap.voice_only_origin if _acc_snap is not None else False} "
+            f"waiting_for_name={_acc_snap.waiting_for_name if _acc_snap is not None else False}"
+        )
 
-    allowed, reason, path = _voice_accum_allowed(session)
+    allowed, reason, path = _voice_accum_allowed(person_id)
+    if VOICE_BOOTSTRAP_DEBUG:
+        print(f"[Voice-Debug] _voice_accum_allowed for {person_id}: {path} / allowed={allowed} ({reason})")
     if not allowed:
         print(f"[Voice] Refused accumulation for {person_id}: {reason}")
+        if VOICE_BOOTSTRAP_DEBUG:
+            _snap_exit = _session_store.peek_snapshot(person_id)
+            _ev_exit = _snap_exit.evidence if _snap_exit is not None else None
+            print(
+                f"[Voice-Debug] _accumulate_voice exit (refused): pid={person_id} "
+                f"bootstrap_post={_ev_exit.bootstrap_credits if _ev_exit is not None else 0}"
+            )
         return
 
     v_pid, v_score = await loop.run_in_executor(
@@ -2457,11 +2652,9 @@ async def _accumulate_voice(
     )
     # Track the latest voice self-match in evidence regardless of accumulation outcome.
     if v_pid == person_id and v_score > 0.0:
-        _update_identity_evidence(
-            person_id,
-            voice_match_conf=v_score,
-            voice_last_heard_ts=time.time(),
-        )
+        loop.create_task(_session_store.update_voice_heard(
+            person_id, conf=v_score, ts=time.time(),
+        ))
 
     if v_pid == person_id and v_score >= min_self_match:
         source = "voice_self_match"
@@ -2483,15 +2676,18 @@ async def _accumulate_voice(
         count = await loop.run_in_executor(None, db.voice_embedding_count, person_id)
         _voice_gallery_sizes[person_id] = count
         # Update evidence: sample count grew; if this was a bootstrap grant, burn a credit.
-        _update_identity_evidence(person_id, voice_sample_count=count)
+        loop.create_task(_session_store.set_voice_sample_count(person_id, count))
         if path == "bootstrap":
-            ev = (_active_sessions.get(person_id) or {}).get("identity_evidence")
-            if ev and ev.get("bootstrap_credits", 0) > 0:
-                _update_identity_evidence(
-                    person_id,
-                    bootstrap_credits=ev["bootstrap_credits"] - 1,
-                )
+            loop.create_task(_session_store.decrement_bootstrap_credits(person_id))
         print(f"[Voice] Profile updated for {person_id} ({count}/{MAX_VOICE_EMBEDDINGS} voice samples) [via {path}]")
+        if VOICE_BOOTSTRAP_DEBUG:
+            _snap_added = _session_store.peek_snapshot(person_id)
+            _ev_added = _snap_added.evidence if _snap_added is not None else None
+            print(
+                f"[Voice-Debug] _accumulate_voice exit (added): pid={person_id} "
+                f"bootstrap_post={_ev_added.bootstrap_credits if _ev_added is not None else 0} "
+                f"voice_n={_ev_added.voice_sample_count if _ev_added is not None else 0}"
+            )
 
 
 def _should_run_recognition(
@@ -2551,14 +2747,14 @@ async def _background_vision_loop(
             # During active conversation, _last_face_seen is updated by the secondary
             # scan below (which runs recognition). detect() never sets person_id, so
             # we can't filter by active person here.
-            if not _active_sessions:
+            if not _session_store.peek_all_snapshots():
                 _last_face_seen = time.time()
             # Keep bbox current and calibrate lip tracker.
             # Calibration runs during SPEAKING — the person is quiet and still,
             # making it the ideal resting-motion baseline window.
-            if _active_sessions:
+            if _session_store.peek_all_snapshots():
                 for det in detections:
-                    if det.person_id in _active_sessions:
+                    if _session_store.peek_snapshot(det.person_id) is not None:
                         _last_active_bbox = det.bbox
                         if _pipeline_state == PipelineState.SPEAKING:
                             lip_tracker.update_baseline(frame, det.bbox)
@@ -2569,7 +2765,7 @@ async def _background_vision_loop(
             embedder is not None
             and temporal_buffer is not None
             and db is not None
-            and not _active_sessions
+            and not _session_store.peek_all_snapshots()
             and detections
         ):
             for _det in detections:
@@ -2621,7 +2817,7 @@ async def _background_vision_loop(
             embedder is not None
             and temporal_buffer is not None
             and db is not None
-            and _active_sessions
+            and _session_store.peek_all_snapshots()
             and detections
         ):
             # Prune track dicts to currently-live SORT track_ids
@@ -2671,18 +2867,22 @@ async def _background_vision_loop(
                     # Record confirmed identity for this track (used by main-loop track-continuity)
                     if _det.track_id is not None:
                         _track_identity[_det.track_id] = _pid2
-                    if _pid2 in _active_sessions:
+                    if _session_store.peek_snapshot(_pid2) is not None:
                         # Active person confirmed in frame — update their face-seen timestamp
                         # so brain knows they're visible. (detect() never sets person_id,
                         # so the primary loop can't do this; secondary scan is the only place.)
-                        _active_sessions[_pid2]["last_face_seen"] = _bv_scan_now
+                        try:
+                            _loop = asyncio.get_running_loop()
+                            _loop.create_task(_session_store.set_last_face_seen(_pid2, _bv_scan_now))
+                        except RuntimeError:
+                            pass  # OPTIONAL: no running loop in test/early-boot context
                     if _pid2 not in _persons_in_frame:
                         _persons_in_frame[_pid2] = {
                             "name": _pname2, "conf": _conf2,
                             "last_seen": _bv_scan_now, "last_recognized_at": _bv_scan_now,
                             "source": "face",   # Bug B: distinguish from voice-only entries
                         }
-                        if _pid2 not in _active_sessions:
+                        if _session_store.peek_snapshot(_pid2) is None:
                             if verify_live(frame, _det.bbox, _anti_spoof_checker):
                                 print(f"[Vision] New person in frame: {_pname2} (conf={_conf2:.2f})")
                     else:
@@ -2704,16 +2904,22 @@ async def _background_vision_loop(
                     # Step 3: update identity_evidence with the fresh face match.
                     # anti_spoof_live isn't re-checked here (secondary scan is 1 Hz;
                     # liveness was verified at greeting). Session stays recent-witness.
-                    _update_identity_evidence(
-                        _pid2,
-                        face_match_conf=_conf2,
-                        face_last_seen_ts=_bv_scan_now,
-                    )
+                    try:
+                        _loop = asyncio.get_running_loop()
+                        _loop.create_task(_session_store.update_face_seen(
+                            _pid2, conf=_conf2, ts=_bv_scan_now))
+                    except RuntimeError:
+                        pass  # OPTIONAL
                     # S120 #1/#2 — person stepped in front of camera; face
                     # witness now available so voice_only_origin is no longer
                     # the sole accumulation path.
-                    if _pid2 in _active_sessions and _active_sessions[_pid2].get("voice_only_origin"):
-                        _active_sessions[_pid2]["voice_only_origin"] = False
+                    _pid2_snap_voi = _session_store.peek_snapshot(_pid2)
+                    if _pid2_snap_voi is not None and _pid2_snap_voi.voice_only_origin:
+                        try:
+                            _loop = asyncio.get_running_loop()
+                            _loop.create_task(_session_store.set_voice_only_origin(_pid2, False))
+                        except RuntimeError:
+                            pass  # OPTIONAL: no running loop in test/early-boot context
                 else:
                     # Unrecognized face — record by SORT track_id for per-person routing
                     _tid = _det.track_id if _det.track_id is not None else id(_det)
@@ -2724,7 +2930,7 @@ async def _background_vision_loop(
                         import uuid as _uuid_pa
                         _stranger_track_map[_tid] = f"stranger_{_uuid_pa.uuid4().hex[:8]}"
             # Prune recognized persons who left (not seen for >5s)
-            _left_persons = {k: v for k, v in _persons_in_frame.items() if _bv_scan_now - v["last_seen"] >= SCENE_STALE_SECS}
+            _left_persons = {k: v for k, v in list(_persons_in_frame.items()) if _bv_scan_now - v["last_seen"] >= SCENE_STALE_SECS}
             for _lp_id, _lp_info in _left_persons.items():
                 # Bug B: suppress the "left frame" log for voice-only entries — they
                 # were never ON-camera, so "left frame" is misleading and the "conf"
@@ -2738,16 +2944,14 @@ async def _background_vision_loop(
                 # If no active session exists, stay silent — _close_session already
                 # logged the close at VOICE_SESSION_TIMEOUT.
                 if _lp_info.get("source") == "voice":
-                    _sess = _active_sessions.get(_lp_id)
-                    if _sess is not None:
-                        _remaining = VOICE_SESSION_TIMEOUT - (_bv_scan_now - _sess.get("last_spoke_at", _bv_scan_now))
+                    _snap_voice_lp = _session_store.peek_snapshot(_lp_id)
+                    if _snap_voice_lp is not None:
+                        _remaining = VOICE_SESSION_TIMEOUT - (_bv_scan_now - _snap_voice_lp.last_spoke_at)
                         print(f"[Voice] {_lp_info['name']} no longer heard — session expires in {_remaining:.0f}s")
                     continue
                 print(f"[Vision] Person left frame: {_lp_info['name']} (conf={_lp_info['conf']:.2f})")
-            _persons_in_frame = {
-                k: v for k, v in _persons_in_frame.items()
-                if _bv_scan_now - v["last_seen"] < SCENE_STALE_SECS
-            }
+            for _stale_k in _left_persons:
+                _persons_in_frame.pop(_stale_k, None)
 
             # ── Phase 2 / Session 124 — Vision Channel shadow logging ─────
             # Throttled comparison: once per VISION_SHADOW_INTERVAL_SECS,
@@ -2800,7 +3004,7 @@ async def _background_vision_loop(
                     # SUSTAINED multi-scan divergence would indicate a real
                     # gate or stale-window mismatch worth investigating.
                     _prod_visible = {
-                        pid for pid, info in _persons_in_frame.items()
+                        pid for pid, info in list(_persons_in_frame.items())
                         if info.get("source") == "face"
                         and _bv_scan_now - info.get("last_seen", 0) < SCENE_STALE_SECS
                     }
@@ -2829,7 +3033,7 @@ async def _background_vision_loop(
             # Voice-only entries live in _persons_in_frame for routing purposes
             # but don't belong in the "who is ON CAMERA" line.
             _rnames  = sorted(
-                v["name"] for v in _persons_in_frame.values()
+                v["name"] for v in list(_persons_in_frame.values())
                 if (_now_vr - v["last_seen"] < VOICE_ROUTING_FACE_STALE_SECS
                     and v.get("source") != "voice")
             )
@@ -2854,11 +3058,11 @@ async def _background_vision_loop(
         if _bv_now - _vision_last_heartbeat >= 30.0:
             _vision_last_heartbeat = _bv_now
             state_label = _pipeline_state.name if _pipeline_state else "?"
-            if _active_sessions:
-                who = ", ".join(s["person_name"] for s in _active_sessions.values())
+            if _session_store.peek_all_snapshots():
+                who = ", ".join(snap.person_name for snap in _session_store.peek_all_snapshots())
             elif detections:
                 # Bug B: only face-sourced entries count as "known faces" here.
-                _known_faces = [v["name"] for v in _persons_in_frame.values()
+                _known_faces = [v["name"] for v in list(_persons_in_frame.values())
                                 if v.get("source") != "voice"]
                 who = ("recognized=" + ", ".join(_known_faces)) if _known_faces else "unrecognized"
             else:
@@ -2953,39 +3157,40 @@ async def _kairos_tick(person_id: str, person_name: str, db: "FaceDB", memory_se
     history = _conversation.get(person_id, [])
 
     kairos_scene_block = (
-        _build_scene_block(
-            person_id, time.time(), _active_sessions, _persons_in_frame,
+        _get_scene_block_cached(
+            person_id, time.time(), _session_store.peek_all_snapshots(), _persons_in_frame,
             _unrecognized_tracks, best_friend_id,
             recent_visitors=_fetch_recent_visitors_for_scene(best_friend_id),
         )
         if SCENE_BLOCK_ENABLED else None
     )
-    _kairos_sess     = _active_sessions.get(person_id, {}) if person_id else {}
+    _kairos_snap     = _session_store.peek_snapshot(person_id) if person_id else None
     _kairos_rec_conf = _persons_in_frame.get(person_id, {}).get("conf", 0.0) if person_id else 0.0
     kairos_vision_state = {
         "face_in_frame":          time.time() - _last_face_seen < 2.0,
         "person_name":            person_name,
         "person_id":              person_id,
         "recognition_conf":       _kairos_rec_conf,
-        "identity_disputed":      _is_disputed(_kairos_sess),
-        "disputed_claimed_name":  _kairos_sess.get("disputed_claimed_name"),
+        "identity_disputed":      _is_disputed(person_id),
+        "disputed_claimed_name":  _kairos_snap.disputed_claimed_name if _kairos_snap is not None else None,
         # Session person_type drives the brain's <<<TOOL ACCESS>>> block. Fallback
         # to stranger (most restricted) if session dict is missing the field.
-        "session_person_type":    _kairos_sess.get("person_type", "stranger"),
+        "session_person_type":    _kairos_snap.person_type if _kairos_snap is not None else "stranger",
         # Structured identity_evidence drives the brain's <<<IDENTITY EVIDENCE>>> block.
-        "identity_evidence":      _kairos_sess.get("identity_evidence"),
+        # Kept as dict read: brain.py consumes via .get() which requires dict interface.
+        "identity_evidence":      dataclasses.asdict(_kairos_snap.evidence) if _kairos_snap is not None else None,
         # Session 97 Fix 1: surface turn count for <<<STRANGER IDENTITY>>>
         # block. KAIROS does NOT bump — this is a brain-initiated silence
         # fill, not a user turn.
-        "session_user_turns":     _kairos_sess.get("user_turns", 0),
+        "session_user_turns":     _kairos_snap.user_turns if _kairos_snap is not None else 0,
         # Session 113 Part 1: drives the <<<ADDRESS DECISION>>> block.
         # Block only fires in multi-person rooms; single-person keeps
         # current dispatch behavior unchanged.
-        "active_session_count":   len(_active_sessions),
+        "active_session_count":   len(_session_store.peek_all_snapshots()),
         # Phase 3B.1: unified room-state block. Returns None in
         # single-person sessions so this field is benign there.
         "room_block":             _build_room_block(
-            _active_sessions, _conversation, _emotion_agents,
+            _session_store.peek_all_snapshots(), _conversation, _emotion_agents,
             _active_room_started_at, turn_cap=ROOM_BLOCK_TURN_CAP,
         ),
         # Phase 3B.6: recent room context for greeting/engagement
@@ -2995,6 +3200,27 @@ async def _kairos_tick(person_id: str, person_name: str, db: "FaceDB", memory_se
 
     try:
         response_parts: list[str] = []
+
+        # Wave 4 Item 17 — session-stable prefix cache for KAIROS path.
+        if _kairos_snap is not None:
+            if _kairos_snap.cached_prefix is None:
+                _kp_value = render_session_stable_prefix(
+                    system_name=_active_system_name,
+                    session_person_type=_kairos_snap.person_type,
+                    session_user_turns=_kairos_snap.user_turns,
+                    identity_disputed=_is_disputed(person_id),
+                    person_name=person_name,
+                    disputed_claimed_name=_kairos_snap.disputed_claimed_name,
+                    core_memory=_kairos_snap.core_memory,
+                )
+                try:
+                    _loop = asyncio.get_running_loop()
+                    _loop.create_task(_session_store.set_cached_prefix(person_id, _kp_value))
+                except RuntimeError:
+                    pass  # OPTIONAL: no running loop in test/early-boot context
+            _kairos_cached_prefix = _kairos_snap.cached_prefix
+        else:
+            _kairos_cached_prefix = None
 
         async def _kairos_token_gen():
             async for ev_type, payload in ask_stream(
@@ -3009,6 +3235,7 @@ async def _kairos_tick(person_id: str, person_name: str, db: "FaceDB", memory_se
                 ),
                 vision_state=kairos_vision_state,
                 scene_block=kairos_scene_block,
+                cached_prefix=_kairos_cached_prefix,
             ):
                 if ev_type == "text":
                     response_parts.append(payload)
@@ -3039,10 +3266,8 @@ async def _kairos_tick(person_id: str, person_name: str, db: "FaceDB", memory_se
         if not _is_disputed(person_id):
             # Session 112 Part 1 — tag KAIROS-generated turns with the
             # active room_session_id for 3B retrieval parity.
-            _k_room_sid = (
-                _active_sessions.get(person_id, {}).get("room_session_id")
-                if person_id in _active_sessions else None
-            )
+            _k_snap = _session_store.peek_snapshot(person_id)
+            _k_room_sid = _k_snap.room_session_id if _k_snap is not None else None
             db.log_turn(person_id, "user",      "[silence]",
                         room_session_id=_k_room_sid,
                         audience_ids=[person_id])
@@ -3072,6 +3297,7 @@ async def _dream_loop(db: "FaceDB") -> None:
     tidy schema synonyms. Runs at most once per DREAM_COOLDOWN seconds.
     Wakes immediately on shutdown.
     """
+    global _last_dream_run_at
     # Initial delay: let the system settle after startup
     try:
         await asyncio.wait_for(_shutdown_event.wait(), timeout=DREAM_IDLE_MINUTES * 60)
@@ -3083,16 +3309,19 @@ async def _dream_loop(db: "FaceDB") -> None:
     while not _shutdown_event.is_set():
         now = time.time()
         cooldown_elapsed = (now - _last_dream_at) >= DREAM_COOLDOWN
-        idle_trigger     = not _active_sessions and cooldown_elapsed
+        idle_trigger     = not _session_store.peek_all_snapshots() and cooldown_elapsed
         force_trigger    = (now - _last_dream_at) >= DREAM_MAX_INTERVAL
         if idle_trigger or force_trigger:
-            if force_trigger and _active_sessions:
+            if force_trigger and _session_store.peek_all_snapshots():
                 print("[Dream] Force trigger — system has been busy, running dream during active session")
             idle_mins = (now - _last_dream_at) / 60 if _last_dream_at > 0 else 0
             print(f"[Dream] Starting consolidation cycle (idle={idle_mins:.1f}min, force={force_trigger})")
             await _brain_orchestrator.dream()
-            # Stranger TTL cleanup: prune unidentified strangers older than STRANGER_TTL_DAYS
-            pruned_ids = db.prune_old_strangers(STRANGER_TTL_DAYS)
+            # Stranger TTL cleanup — Wave 3 Item 15: rebuild_faiss_async keeps the index
+            # swap off the critical path. recognize() continues on the OLD index while
+            # the new one builds in a worker thread; no conversation latency spike.
+            loop = asyncio.get_event_loop()
+            pruned_ids = await db.prune_old_strangers_async(loop)
             if pruned_ids:
                 _brain_orchestrator.prune_brain_data(pruned_ids)
                 print(f"[Dream] Strangers pruned: {len(pruned_ids)}")
@@ -3135,7 +3364,56 @@ async def _dream_loop(db: "FaceDB") -> None:
             # Silent observations retention (prune_silent_observations() is implemented in db.py
             # but was never called — enforce SILENT_OBS_RETENTION_DAYS from config)
             db.prune_silent_observations()
+            if config.DAILY_BACKUP_ENABLED:
+                try:
+                    from core.backup import run_daily_backup_pass
+                    _loop = asyncio.get_event_loop()
+                    _backup_result = await _loop.run_in_executor(
+                        None,
+                        lambda: run_daily_backup_pass(
+                            [str(config.DB_PATH), str(config.BRAIN_DB_PATH)],
+                            snapshot_dir=config.SNAPSHOT_DIR,
+                            retention_days=config.SNAPSHOT_RETENTION_DAYS,
+                        )
+                    )
+                    if _backup_result["snapshots_created"]:
+                        print(f"[Backup] {len(_backup_result['snapshots_created'])} snapshot(s) created, "
+                              f"{len(_backup_result['pruned'])} old pruned")
+                    if _backup_result["errors"]:
+                        print(f"[Backup] errors: {_backup_result['errors']}")
+                except Exception as _e:
+                    print(f"[Backup] pass failed: {_e!r}")
+            # Wave 6 Item 22: hard-delete old invalidated knowledge.
+            if config.KNOWLEDGE_HARD_DELETE_ENABLED:
+                try:
+                    await loop.run_in_executor(
+                        None,
+                        _brain_orchestrator.brain_db.hard_delete_old_invalidated_knowledge,
+                    )
+                except Exception as _e:
+                    print(f"[Dream] hard-delete prune failed: {_e!r}")
+            # Wave 6 Item 21: archive old conversation_log turns
+            if config.CONVERSATION_ARCHIVE_ENABLED:
+                try:
+                    n_archived = await loop.run_in_executor(
+                        None,
+                        db.archive_old_conversation_log,
+                    )
+                    if n_archived:
+                        print(f"[Dream] Conversation archive: {n_archived} turn(s) moved to archive DB")
+                except Exception as _e:
+                    print(f"[Dream] conversation archive failed: {_e!r}")
+            if config.WAL_CHECKPOINT_ENABLED:
+                try:
+                    db.checkpoint_wal()
+                    _brain_orchestrator.brain_db.checkpoint_wal()
+                    import core.classifier_graph as _cg_mod
+                    _cg_mod.checkpoint_wal_singleton()
+                    print("[Dream] WAL checkpoint complete (faces.db, brain.db, classifier.db)")
+                except Exception as _wal_e:
+                    print(f"[Dream] WAL checkpoint error: {_wal_e!r}")
             _last_dream_at = time.time()
+            _last_dream_run_at = time.time()
         # Smart sleep: wait out remaining cooldown to avoid 60× useless wakeups per hour.
         # Falls back to 60s when cooldown is expired but no idle window yet.
         remaining = max(0.0, _last_dream_at + DREAM_COOLDOWN - time.time())
@@ -3145,6 +3423,54 @@ async def _dream_loop(db: "FaceDB") -> None:
             return
         except asyncio.TimeoutError:
             pass
+
+
+async def _emit_health(loop: asyncio.AbstractEventLoop) -> None:
+    """Gather health + disk snapshots in executor and print summary lines."""
+    from core.config import HEALTH_LOG_ENABLED, DISK_MONITOR_ENABLED
+    from core.health import gather_health_snapshot, format_health_line, format_health_alerts
+    from core.disk_monitor import gather_disk_snapshot, format_disk_line, check_disk_thresholds
+
+    # Health snapshot
+    if HEALTH_LOG_ENABLED:
+        try:
+            snapshot = await loop.run_in_executor(
+                None,
+                lambda: gather_health_snapshot(
+                    db=_face_db_ref,
+                    brain_orchestrator=_brain_orchestrator,
+                    active_sessions=_session_store.peek_all_snapshots(),
+                    cloud_state=_cloud_state,
+                    last_dream_run_at=_last_dream_run_at,
+                ),
+            )
+            print(format_health_line(snapshot))
+            for alert_line in format_health_alerts(snapshot, _brain_orchestrator):
+                print(alert_line)
+        except Exception as _e:
+            print(f"[Health] emit failed: {_e!r}")
+
+    # Disk snapshot
+    if DISK_MONITOR_ENABLED:
+        try:
+            disk_snap = await loop.run_in_executor(None, gather_disk_snapshot)
+            print(format_disk_line(disk_snap))
+            check_disk_thresholds(disk_snap, _brain_orchestrator)
+        except Exception as _e:
+            print(f"[Disk] emit failed: {_e!r}")
+
+
+async def _health_log_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """Periodic health + disk log. First emission fires immediately at boot."""
+    from core.config import HEALTH_LOG_INTERVAL_SECS
+    await _emit_health(loop)
+    while True:
+        try:
+            await asyncio.wait_for(_shutdown_event.wait(), timeout=HEALTH_LOG_INTERVAL_SECS)
+            return
+        except asyncio.TimeoutError:
+            pass
+        await _emit_health(loop)
 
 
 def _detect_yes_no(text: str) -> str:
@@ -3364,7 +3690,7 @@ async def _execute_tool(
                         same Ollama-text retry path in conversation_turn.
       None            — blocked by privilege gate, repeat guard, or internal error.
     """
-    global _active_sessions, _active_system_name, _detected_lang
+    global _active_system_name, _detected_lang
 
     # ── Layer 0: Unknown-tool filter (Bug P, 2026-04-21 live run) ────────────
     # TOOL_PRIVILEGES is the canonical registry — a startup assertion ties every
@@ -3384,24 +3710,32 @@ async def _execute_tool(
     import hashlib as _hl, json as _j
     _args_hash  = _hl.md5(_j.dumps(args, sort_keys=True, default=str).encode()).hexdigest()[:8]
     _repeat_key = f"{name}:{_args_hash}"
-    _session    = _active_sessions.get(person_id, {})
-    if _session.get("_tool_repeat_last") == _repeat_key:
-        _new_count = _session.get("_tool_repeat_count", 1) + 1
+    _session_snap_rg = _session_store.peek_snapshot(person_id)
+    if _session_snap_rg is not None and _session_snap_rg.tool_repeat_last == _repeat_key:
+        _new_count = _session_snap_rg.tool_repeat_count + 1
         if _new_count >= TOOL_REPEAT_MAX_CONSECUTIVE:
             print(
                 f"[Pipeline] WARN: Tool repeat guard — '{name}' fired {_new_count}x "
                 f"consecutively with same args. Aborting to prevent loop."
             )
-            if person_id in _active_sessions:
-                _active_sessions[person_id].pop("_tool_repeat_last",  None)
-                _active_sessions[person_id].pop("_tool_repeat_count", None)
+            try:
+                _loop = asyncio.get_running_loop()
+                _loop.create_task(_session_store.update_tool_repeat(person_id, None, 0))
+            except RuntimeError:
+                pass  # OPTIONAL: no running loop in test/early-boot context
             return None
-        if person_id in _active_sessions:
-            _active_sessions[person_id]["_tool_repeat_count"] = _new_count
+        try:
+            _loop = asyncio.get_running_loop()
+            _loop.create_task(_session_store.update_tool_repeat(person_id, _repeat_key, _new_count))
+        except RuntimeError:
+            pass  # OPTIONAL: no running loop in test/early-boot context
     else:
-        if person_id in _active_sessions:
-            _active_sessions[person_id]["_tool_repeat_last"]  = _repeat_key
-            _active_sessions[person_id]["_tool_repeat_count"] = 1
+        if _session_snap_rg is not None:
+            try:
+                _loop = asyncio.get_running_loop()
+                _loop.create_task(_session_store.update_tool_repeat(person_id, _repeat_key, 1))
+            except RuntimeError:
+                pass  # OPTIONAL: no running loop in test/early-boot context
 
     # ── Privilege gate ────────────────────────────────────────────────────────
     # Table-driven (see TOOL_PRIVILEGES in core/config.py). No hardcoded
@@ -3409,7 +3743,8 @@ async def _execute_tool(
     # it is a config edit with no code change here or in brain.py.
     # Fallback is "stranger" (most restricted) if the session dict is somehow
     # missing person_type — fail-safe rather than fail-open.
-    _caller_type = _active_sessions.get(person_id, {}).get("person_type", "stranger")
+    _exec_snap   = _session_store.peek_snapshot(person_id)
+    _caller_type = _exec_snap.person_type if _exec_snap is not None else "stranger"
     if not _tool_allowed(name, _caller_type):
         allowed = TOOL_PRIVILEGES.get(name, frozenset())
         print(
@@ -3420,8 +3755,7 @@ async def _execute_tool(
 
     if name == "update_person_name":
         new_name, _ = sanitize_name(args.get("name") or "")
-        _sess       = _active_sessions.get(person_id, {})
-        _sess_type  = _sess.get("person_type", "known")
+        _sess_type  = _exec_snap.person_type if _exec_snap is not None else "known"
 
         # Session 101 Bug F.2 — enrollment-mishear escape hatch with
         # widened intent set. Runs BEFORE the normal `_intent_allows` gate
@@ -3450,7 +3784,7 @@ async def _execute_tool(
             new_name
             and new_name.lower() != person_name.lower()
             and _sess_type in ("known", "best_friend")
-            and _is_enrollment_mishear_candidate(db, person_id, _sess)
+            and _is_enrollment_mishear_candidate(db, person_id, _exec_snap)
             and intent_sidecar is not None
         ):
             from core.config import INTENT_CONFIDENCE_MIN as _ICM
@@ -3479,8 +3813,12 @@ async def _execute_tool(
                     _msg_mh["content"] = _old_pat_mh2.sub(
                         new_name, _msg_mh["content"],
                     )
-                if person_id in _active_sessions:
-                    _active_sessions[person_id]["person_name"] = new_name
+                if _session_store.peek_snapshot(person_id) is not None:
+                    try:
+                        _loop = asyncio.get_running_loop()
+                        _loop.create_task(_session_store.rename(person_id, new_name))
+                    except RuntimeError:
+                        pass  # OPTIONAL: no running loop in test/early-boot context
                 # Session 102 Bug F.3: update the in-frame cache
                 # immediately so the SCENE block and [Vision] logs don't
                 # keep rendering the old name until the next background
@@ -3605,7 +3943,7 @@ async def _execute_tool(
             # decides the ROUTING between dispute-flip and promotion-rename.
             if (
                 _sess_type in ("known", "best_friend")
-                and _is_enrollment_mishear_candidate(db, person_id, _sess)
+                and _is_enrollment_mishear_candidate(db, person_id, _exec_snap)
             ):
                 if db:
                     db.update_person_name(person_id, new_name)
@@ -3613,8 +3951,12 @@ async def _execute_tool(
                 old_pat_mh = re.compile(r'\b' + re.escape(person_name) + r'\b', re.IGNORECASE)
                 for msg in _conversation.get(person_id, []):
                     msg["content"] = old_pat_mh.sub(new_name, msg["content"])
-                if person_id in _active_sessions:
-                    _active_sessions[person_id]["person_name"] = new_name
+                if _session_store.peek_snapshot(person_id) is not None:
+                    try:
+                        _loop = asyncio.get_running_loop()
+                        _loop.create_task(_session_store.rename(person_id, new_name))
+                    except RuntimeError:
+                        pass  # OPTIONAL: no running loop in test/early-boot context
                 # Session 102 Bug F.3: refresh in-frame cache immediately.
                 if person_id in _persons_in_frame:
                     _persons_in_frame[person_id]["name"] = new_name
@@ -3642,17 +3984,18 @@ async def _execute_tool(
             # protect. best_friend is especially critical because they're the system
             # owner: a mis-rename would transfer their privileges to the attacker.
             if _sess_type in ("known", "best_friend"):
-                if person_id in _active_sessions:
-                    _active_sessions[person_id]["person_type"] = "disputed"
-                    # Remember the original type so a future dispute-resolution path
-                    # (if we ever add one) can restore best_friend rather than just
-                    # demoting to known.
-                    _active_sessions[person_id]["prior_person_type"] = _sess_type
-                    _active_sessions[person_id]["dispute_reason"] = (
-                        f"speaker claims name '{new_name}', sensor says '{person_name}'"
-                    )
-                    _active_sessions[person_id]["disputed_claimed_name"] = new_name
-                    _active_sessions[person_id]["dispute_set_at"] = time.time()
+                if _session_store.peek_snapshot(person_id) is not None:
+                    _dispute_ts = time.time()
+                    try:
+                        _loop = asyncio.get_running_loop()
+                        _loop.create_task(_session_store.transition_to_disputed(
+                            person_id, new_name,
+                            f"speaker claims name '{new_name}', sensor says '{person_name}'",
+                            now=_dispute_ts,
+                        ))
+                        _loop.create_task(_session_store.set_cached_prefix(person_id, None))
+                    except RuntimeError:
+                        pass  # OPTIONAL: no running loop in test/early-boot context
                 if _brain_orchestrator:
                     _brain_orchestrator.mark_disputed(person_id)
                 print(
@@ -3669,14 +4012,17 @@ async def _execute_tool(
             # active — it will force-close via DISPUTE_MAX_DURATION, and the user
             # can audit+repair the poisoned gallery (audit_person.py / repair_gallery.py)
             # or factory-reset if the drift is severe.
-            if _is_disputed(_sess):
+            if _is_disputed(person_id):
                 # N3 — count persistent blocks and surface a watchdog alert once the
                 # count crosses DISPUTE_RENAME_BLOCK_THRESHOLD. `disputed_block_alerted`
                 # prevents re-firing within the same session; both fields evaporate
                 # when _close_session pops the session dict.
-                _block_count = _sess.get("disputed_block_count", 0) + 1
-                if person_id in _active_sessions:
-                    _active_sessions[person_id]["disputed_block_count"] = _block_count
+                _block_count = (_exec_snap.disputed_block_count if _exec_snap is not None else 0) + 1
+                try:
+                    _loop = asyncio.get_running_loop()
+                    _loop.create_task(_session_store.increment_block_count(person_id))
+                except RuntimeError:
+                    pass  # OPTIONAL: no running loop in test/early-boot context
                 print(
                     f"[Pipeline] Tool: disputed-session rename to '{new_name}' BLOCKED "
                     f"(block #{_block_count}) — pid '{person_id}' belongs to '{person_name}' "
@@ -3684,20 +4030,23 @@ async def _execute_tool(
                     f"dispute stays active until timeout or session end."
                 )
                 if (_block_count >= DISPUTE_RENAME_BLOCK_THRESHOLD
-                        and not _sess.get("disputed_block_alerted")
+                        and not (_exec_snap.disputed_block_alerted if _exec_snap is not None else False)
                         and _brain_orchestrator):
-                    if person_id in _active_sessions:
-                        _active_sessions[person_id]["disputed_block_alerted"] = True
+                    try:
+                        _loop = asyncio.get_running_loop()
+                        _loop.create_task(_session_store.mark_block_alerted(person_id))
+                    except RuntimeError:
+                        pass  # OPTIONAL: no running loop in test/early-boot context
                     # prior_person_type tells us whether this is a "best_friend"
                     # impersonation (critical) or a general "known" one (warning).
-                    _victim_type = _sess.get("prior_person_type") or "known"
+                    _victim_type = (_exec_snap.prior_person_type if _exec_snap is not None else None) or "stranger"
                     _brain_orchestrator.report_dispute_rename_burst(
                         victim_pid=person_id,
                         victim_name=person_name,
                         victim_person_type=_victim_type,
                         claimed_name=new_name,
                         block_count=_block_count,
-                        dispute_started_at=_sess.get("dispute_set_at"),
+                        dispute_started_at=_exec_snap.dispute_set_at if _exec_snap is not None else None,
                     )
                 return "handled"
 
@@ -3710,8 +4059,11 @@ async def _execute_tool(
             old_pat = re.compile(r'\b' + re.escape(person_name) + r'\b', re.IGNORECASE)
             for msg in _conversation.get(person_id, []):
                 msg["content"] = old_pat.sub(new_name, msg["content"])
-            if person_id in _active_sessions:
-                _active_sessions[person_id]["person_name"] = new_name
+            try:
+                _loop = asyncio.get_running_loop()
+                _loop.create_task(_session_store.rename(person_id, new_name))
+            except RuntimeError:
+                pass  # OPTIONAL: no running loop in test/early-boot context
             # Session 102 Bug F.3: refresh in-frame cache immediately.
             if person_id in _persons_in_frame:
                 _persons_in_frame[person_id]["name"] = new_name
@@ -3721,9 +4073,13 @@ async def _execute_tool(
                     db.update_person_type(person_id, "known")
                 if _brain_orchestrator:
                     _brain_orchestrator.on_identity_confirmed(person_id, person_name, new_name)
-                if person_id in _active_sessions:
-                    _active_sessions[person_id]["person_type"] = "known"
-                    _active_sessions[person_id].pop("waiting_for_name", None)  # G4: clear gate
+                try:
+                    _loop = asyncio.get_running_loop()
+                    _loop.create_task(_session_store.promote_type(person_id, "known"))
+                    _loop.create_task(_session_store.set_cached_prefix(person_id, None))
+                    _loop.create_task(_session_store.set_waiting_for_name(person_id, False))
+                except RuntimeError:
+                    pass  # OPTIONAL: no running loop in test/early-boot context
             print(f"[Pipeline] Tool: person name '{person_name}' → '{new_name}'")
             return "handled"
         # Same name — no-op. Bug Q (2026-04-21): return "handled_noop" so the
@@ -3808,16 +4164,16 @@ async def _execute_tool(
             )
 
         reason = (args.get("reason") or "").strip() or "identity mismatch reported"
-        if person_id in _active_sessions:
-            _sess_ridm = _active_sessions[person_id]
-            # Session 73 Bug D1: capture prior_person_type so dispute auto-clear
-            # can restore the original role (e.g. best_friend stays best_friend,
-            # not demoted to known when the dispute resolves).
-            _sess_ridm.setdefault("prior_person_type", _sess_ridm.get("person_type", "known"))
-            _sess_ridm["person_type"]   = "disputed"
-            _sess_ridm["dispute_reason"] = reason
-            _sess_ridm["dispute_set_at"] = time.time()
-            _sess_ridm.pop("disputed_claimed_name", None)
+        if _session_store.peek_snapshot(person_id) is not None:
+            _dispute_ts_ridm = time.time()
+            try:
+                _loop = asyncio.get_running_loop()
+                _loop.create_task(_session_store.transition_to_disputed(
+                    person_id, None, reason, now=_dispute_ts_ridm,
+                ))
+                _loop.create_task(_session_store.set_cached_prefix(person_id, None))
+            except RuntimeError:
+                pass  # OPTIONAL: no running loop in test/early-boot context
         if _brain_orchestrator:
             _brain_orchestrator.mark_disputed(person_id)
         print(f"[Pipeline] Tool: identity DISPUTED for {person_name} — {reason}")
@@ -3904,6 +4260,13 @@ async def _execute_tool(
 
         if new_name.lower() != _active_system_name.lower():
             _active_system_name = new_name
+            # Invalidate prefix cache for ALL sessions — system_name is in Section 2
+            try:
+                _loop = asyncio.get_running_loop()
+                for _snap_inv in _session_store.peek_all_snapshots():
+                    _loop.create_task(_session_store.set_cached_prefix(_snap_inv.person_id, None))
+            except RuntimeError:
+                pass  # OPTIONAL
             if _brain_orchestrator:
                 _brain_orchestrator.set_system_name(new_name)
             if db:
@@ -4052,7 +4415,7 @@ async def _refresh_query_embedding(person_id: str, person_name: str, text: str) 
         if emb is not None:
             _query_embedding_cache[person_id] = emb
     except Exception:
-        pass  # non-critical — next turn falls back to graph context
+        pass  # OPTIONAL: embedding prefetch failed — next turn uses graph-context fallback
 
 
 async def _sentence_stream(tokens):
@@ -4168,7 +4531,7 @@ def _make_memory_search_fn(person_id: str, db: "FaceDB | None"):
             # information about Lexi's feelings" despite those facts
             # being in brain.db. Raising the cap widens brain's material
             # so mentally-filter-for-relevance has more to chew on.
-            facts = _brain_orchestrator._brain_db.query_knowledge_for(
+            facts = _brain_orchestrator.brain_db.query_knowledge_for(
                 requester_pid=person_id,
                 best_friend_id=_bf_id_ms,
                 entity=person_name_q,
@@ -4462,11 +4825,12 @@ async def conversation_turn(
     prompt_addendum_override: str | None = None,
 ) -> tuple[str, str | None]:
     """Handle one turn of conversation. Returns ("continue", None) or ("enroll", name)."""
-    global _conversation, _pipeline_state, _active_sessions, \
+    global _conversation, _pipeline_state, \
            _cloud_state, _cloud_failed_at, _cloud_monitor_task, _active_system_name, \
            _emotion_agents, _query_embedding_cache, _last_user_speech_at, _identity_hints
 
-    _sess_type_badge = _active_sessions.get(person_id, {}).get("person_type", "known")
+    _ct_snap = _session_store.peek_snapshot(person_id)
+    _sess_type_badge = _ct_snap.person_type if _ct_snap is not None else "known"
     _type_badge = " [STRANGER]" if _sess_type_badge == "stranger" else ""
     print(f"[Pipeline] Turn start {_now_log_ts()}: {person_name}{_type_badge} — '{text[:60]}{'...' if len(text) > 60 else ''}'")
 
@@ -4497,7 +4861,7 @@ async def conversation_turn(
     # turn.
     if (
         not person_id.startswith("stranger_")
-        and not _active_sessions.get(person_id, {}).get("_compact_running")
+        and person_id not in _compact_pids
     ):
         async def _compact_history_background(_pid: str, _pname: str):
             try:
@@ -4508,13 +4872,9 @@ async def conversation_turn(
             except Exception as _cex:
                 print(f"[Pipeline] autocompact background failed for {_pid}: {_cex!r}")
             finally:
-                _sess = _active_sessions.get(_pid)
-                if _sess is not None:
-                    _sess.pop("_compact_running", None)
+                _compact_pids.discard(_pid)
 
-        _sess_flag = _active_sessions.get(person_id)
-        if _sess_flag is not None:
-            _sess_flag["_compact_running"] = True
+        _compact_pids.add(person_id)
         asyncio.create_task(_compact_history_background(person_id, person_name))
         # Session 116 P1 #10 — background spawn visibility. The
         # decoupling architecture is invisible from logs without these
@@ -4536,7 +4896,7 @@ async def conversation_turn(
     history    = _conversation.get(person_id, [])
     # Use session dict person_type so that identity confirmation during a session
     # immediately lifts the stranger gates — no restart needed.
-    is_stranger = _active_sessions.get(person_id, {}).get("person_type") == "stranger"
+    is_stranger = (_ct_snap.person_type if _ct_snap is not None else None) == "stranger"
 
     # Phase 3B.2 — user-to-user silent-skip check. Fires BEFORE _set_state
     # and play_filler so the silent path is audibly silent (no THINKING
@@ -4548,7 +4908,7 @@ async def conversation_turn(
         ROOM_STAY_SILENT_ON_USER_TO_USER as _STAY_SILENT,
         USER_TO_USER_HEURISTIC_ENABLED as _U2U_HEURISTIC,
     )
-    if _STAY_SILENT and len(_active_sessions) >= 2:
+    if _STAY_SILENT and len(_session_store.peek_all_snapshots()) >= 2:
         # Session 115 Fix 1 — heuristic pre-check eliminates ~80% of
         # classifier calls. Vocative-name regex against active session
         # names. When the heuristic is confident, skip the classifier
@@ -4557,8 +4917,8 @@ async def conversation_turn(
         _heuristic_decision: "tuple[str, str] | None" = None
         if _U2U_HEURISTIC:
             _other_names = {
-                s.get("person_name") for pid, s in _active_sessions.items()
-                if pid != person_id and s.get("person_name")
+                snap.person_name for snap in _session_store.peek_all_snapshots()
+                if snap.person_id != person_id and snap.person_name
             }
             _heuristic_decision = _user_to_user_heuristic(
                 text, _active_system_name, _other_names,
@@ -4581,7 +4941,7 @@ async def conversation_turn(
             # Inconclusive — call classifier (cached) for the ambiguous case.
             _u2u_sidecar = await _classify_intent_cached(
                 text, history,
-                frozenset(_active_sessions.keys()),
+                frozenset(s.person_id for s in _session_store.peek_all_snapshots()),
             )
         if (
             _u2u_sidecar
@@ -4609,10 +4969,7 @@ async def conversation_turn(
                     "ts":      _now_ts_u2u,
                 })
                 _conversation[person_id] = history
-                _room_sid_u2u = (
-                    _active_sessions.get(person_id, {}).get("room_session_id")
-                    if person_id in _active_sessions else None
-                )
+                _room_sid_u2u = _ct_snap.room_session_id if _ct_snap is not None else None
                 if db and not _is_disputed(person_id):
                     db.log_turn(
                         person_id, "user", text,
@@ -4625,10 +4982,12 @@ async def conversation_turn(
                 # with turns where the brain DID respond — other state reads
                 # (stranger promotion thresholds, address-decision gating)
                 # assume this field reflects every user utterance.
-                _sess_u2u = _active_sessions.get(person_id)
-                if _sess_u2u is not None:
-                    _sess_u2u["user_turns"] = _sess_u2u.get("user_turns", 0) + 1
-                    _sess_u2u["last_spoke_at"] = _now_ts_u2u
+                try:
+                    _loop = asyncio.get_running_loop()
+                    _loop.create_task(_session_store.increment_user_turns(person_id))
+                    _loop.create_task(_session_store.set_last_spoke_at(person_id, _now_ts_u2u))
+                except RuntimeError:
+                    pass  # OPTIONAL
                 return ("continue", None)
 
     # Signal THINKING and play filler immediately — no awaits have fired yet, so
@@ -4705,9 +5064,10 @@ async def conversation_turn(
         # the NEXT turn's context build.
         _emo_lines: list[str] = []
         for _emo_pid, _emo_ag in _emotion_agents.items():
-            if _emo_pid not in _active_sessions:
+            if _session_store.peek_snapshot(_emo_pid) is None:
                 continue
-            _emo_name = _active_sessions[_emo_pid].get("person_name", _emo_pid)
+            _emo_snap_em = _session_store.peek_snapshot(_emo_pid)
+            _emo_name = _emo_snap_em.person_name if _emo_snap_em is not None else _emo_pid
             _emo_ctx  = _emo_ag.get_context_string()
             if _emo_ctx:
                 _emo_lines.append(f"{_emo_name}: {_emo_ctx.replace('CURRENT EMOTIONAL TONE: ', '')}")
@@ -4723,9 +5083,10 @@ async def conversation_turn(
     # Multi-person room context — injected when more than one person is active.
     # Gives the brain full awareness of who is present and recent cross-person
     # exchanges so it can make dynamic, human-like routing decisions.
-    room_context = _build_cross_person_excerpts(person_id, _active_sessions, _conversation, _bf_id)
+    _all_snaps_ct = _session_store.peek_all_snapshots()
+    room_context = _build_cross_person_excerpts(person_id, _all_snaps_ct, _conversation, _bf_id)
     if room_context:
-        print(f"[Brain] Room context: {len(_active_sessions)} people active")
+        print(f"[Brain] Room context: {len(_all_snaps_ct)} people active")
 
     print(f"[Brain] Context: history={len(history)} turns, memory={'yes' if memory_context else 'no'}, emotion={'yes' if emotion_context else 'no'}, room={'yes' if room_context else 'no'}, scene={'yes' if SCENE_BLOCK_ENABLED else 'no'}")
 
@@ -4758,8 +5119,8 @@ async def conversation_turn(
     # SCENE sensor block — always-on snapshot of who is visible / audible,
     # injected into the system prompt on every turn.
     scene_block = (
-        _build_scene_block(
-            person_id, time.time(), _active_sessions, _persons_in_frame,
+        _get_scene_block_cached(
+            person_id, time.time(), _session_store.peek_all_snapshots(), _persons_in_frame,
             _unrecognized_tracks, _bf_id,
             recent_visitors=_fetch_recent_visitors_for_scene(_bf_id),
         )
@@ -4902,6 +5263,28 @@ async def conversation_turn(
             # Memory search callback — executed inside ask_stream when LLM calls search_memory
             _memory_search = _make_memory_search_fn(person_id, db)
 
+            # Wave 4 Item 17 — session-stable prefix cache for main conversation.
+            _snap_conv = _session_store.peek_snapshot(person_id)
+            if _snap_conv is not None:
+                if _snap_conv.cached_prefix is None:
+                    _cp_value = render_session_stable_prefix(
+                        system_name=_active_system_name,
+                        session_person_type=_snap_conv.person_type,
+                        session_user_turns=_snap_conv.user_turns,
+                        identity_disputed=_is_disputed(person_id),
+                        person_name=person_name,
+                        disputed_claimed_name=_snap_conv.disputed_claimed_name,
+                        core_memory=_snap_conv.core_memory,
+                    )
+                    try:
+                        _loop = asyncio.get_running_loop()
+                        _loop.create_task(_session_store.set_cached_prefix(person_id, _cp_value))
+                    except RuntimeError:
+                        pass  # OPTIONAL
+                _conv_cached_prefix = _snap_conv.cached_prefix
+            else:
+                _conv_cached_prefix = None
+
             async def _token_gen():
                 async for ev_type, payload in ask_stream(
                     text,
@@ -4920,6 +5303,7 @@ async def conversation_turn(
                         _active_room_session, person_id, db,
                     ),
                     scene_block=scene_block,
+                    cached_prefix=_conv_cached_prefix,
                 ):
                     if ev_type == "text":
                         # Session 113 Part 1 — intercept the very first
@@ -5196,7 +5580,7 @@ async def conversation_turn(
             )
             if _shadow_sidecar is not None and _brain_orchestrator is not None:
                 try:
-                    _brain_orchestrator._brain_db.log_intent_divergence(
+                    _brain_orchestrator.brain_db.log_intent_divergence(
                         tool_proposed="",
                         gate_decision="shadow_sample",
                         user_text=text,
@@ -5374,8 +5758,8 @@ async def conversation_turn(
             response          = f"Got it, I'll go by {_active_system_name}."
             response_streamed = False  # stop_audio() cut the stream — must speak canonical ack
         elif _override_tool == "update_person_name":
-            _ack_name = (_active_sessions[person_id]["person_name"]
-                         if person_id in _active_sessions else person_name)
+            _post_tool_snap = _session_store.peek_snapshot(person_id)
+            _ack_name = _post_tool_snap.person_name if _post_tool_snap is not None else person_name
             response          = f"Got it, {_ack_name}."
             response_streamed = False  # stop_audio() cut the stream — must speak canonical ack
 
@@ -5400,15 +5784,15 @@ async def conversation_turn(
 
     # ── Update in-memory conversation name if it changed ─────────────────────
     # session dict may have been updated by update_person_name tool
-    effective_name = (_active_sessions[person_id]["person_name"]
-                      if person_id in _active_sessions else person_name)
+    _post_tool_snap = _session_store.peek_snapshot(person_id)
+    effective_name = _post_tool_snap.person_name if _post_tool_snap is not None else person_name
 
     # Session 113 Part 1 — resolve the ADDRESS DECISION marker parsed by
     # _token_gen into the addressed_to field. TTS already played without
     # the marker (stripped in _token_gen); this only affects the history
     # field and, through it, Session 111's cross-person excerpt rendering.
     addressed_to = _resolve_addressed_to(
-        _addr_override[0], _active_sessions, effective_name,
+        _addr_override[0], _session_store.peek_all_snapshots(), effective_name,
     )
 
     # ── History + persistence ──────────────────────────────────────────────────
@@ -5453,10 +5837,7 @@ async def conversation_turn(
     # rows carry the Session 107 Phase 3A.6 column that 3B retrieval will
     # group on. None is acceptable (backward-compat); room_session_id is
     # stamped on session dict at _open_session time.
-    _room_sid = (
-        _active_sessions.get(person_id, {}).get("room_session_id")
-        if person_id in _active_sessions else None
-    )
+    _room_sid = _ct_snap.room_session_id if _ct_snap is not None else None
     if db and not _is_disputed_session:
         db.log_turn(person_id, "user",      text, room_session_id=_room_sid,
                     audience_ids=[person_id])
@@ -5559,10 +5940,15 @@ async def conversation_turn(
                         _msg["content"] = _old_pat.sub(_id_name, _msg["content"])
                     if _brain_orchestrator:
                         _brain_orchestrator.on_identity_confirmed(person_id, _old_name, _id_name)
-                    if person_id in _active_sessions:
-                        _active_sessions[person_id]["person_name"] = _id_name
-                        _active_sessions[person_id]["person_type"] = "known"
-                        _active_sessions[person_id].pop("waiting_for_name", None)  # G4: clear gate
+                    if _session_store.peek_snapshot(person_id) is not None:
+                        try:
+                            _loop = asyncio.get_running_loop()
+                            _loop.create_task(_session_store.rename(person_id, _id_name))
+                            _loop.create_task(_session_store.promote_type(person_id, "known"))
+                            _loop.create_task(_session_store.set_cached_prefix(person_id, None))
+                            _loop.create_task(_session_store.set_waiting_for_name(person_id, False))
+                        except RuntimeError:
+                            pass  # OPTIONAL
                     _identity_hints.pop(person_id, None)
                     print(f"[Identity] Auto-confirmed: {_id_name} (conf={_id_conf:.2f})")
 
@@ -5574,9 +5960,54 @@ async def conversation_turn(
     return ("continue", None)
 
 
+async def _warm_pyannote_via_dedicated_executor(
+    loop: asyncio.AbstractEventLoop, loader
+) -> None:
+    """Warm pyannote on Item 13's dedicated executor thread.
+
+    Loading on the same thread that serves diarize() calls means any
+    thread-local CUDA context is set up before the first real call.
+    """
+    try:
+        t = time.time()
+        await loop.run_in_executor(voice_mod.get_diarize_executor(), loader)
+        print(f"[Warmup] pyannote ready — {time.time() - t:.2f}s")
+    except Exception as e:
+        print(f"[Warmup] pyannote failed (non-fatal): {e!r}")
+
+
+async def _warmup_models(loop: asyncio.AbstractEventLoop) -> None:
+    """Pre-load lazy models so the first user turn pays no cold-start cost.
+
+    Already-eager models (RetinaFace, AdaFace, MiniFASNet, Whisper, Kokoro,
+    Emotion) are not touched — they're loaded earlier in run().
+    E5 has its own warmup block (S120); this covers pyannote + ECAPA.
+    """
+    print("[Warmup] starting model warmup pass...")
+    overall_t0 = time.time()
+
+    async def _warm(label: str, loader) -> None:
+        try:
+            t = time.time()
+            await loop.run_in_executor(None, loader)
+            print(f"[Warmup] {label} ready — {time.time() - t:.2f}s")
+        except Exception as e:
+            print(f"[Warmup] {label} failed (non-fatal): {e!r}")
+
+    tasks = [
+        # Pyannote diarization — lazy per S88; uses Item 13's dedicated executor
+        _warm_pyannote_via_dedicated_executor(loop, voice_mod._load_pyannote_pipeline),
+        # ECAPA speaker embedder — load_speaker_embedder is idempotent if already loaded
+        _warm("ECAPA", voice_mod.load_speaker_embedder),
+    ]
+
+    await asyncio.gather(*tasks, return_exceptions=True)
+    print(f"[Warmup] complete — {time.time() - overall_t0:.2f}s total")
+
+
 async def run():
     """Main pipeline loop."""
-    global _pipeline_state, _active_sessions, \
+    global _pipeline_state, \
            _detected_lang, _last_face_seen, _shutdown_event, _active_system_name, \
            _cloud_recovered, _brain_orchestrator, _yolo_frame_counter, \
            _latest_yolo_detections, _yolo_last_ran, _vision_last_heartbeat, \
@@ -5687,6 +6118,10 @@ async def run():
     except Exception as _e5_warmup_err:
         print(f"[classifier_graph] E5 warmup skipped: {_e5_warmup_err!r}")
 
+    # Wave 3 Item 14 — warm pyannote + ECAPA in parallel so first-turn pays no
+    # cold-start cost. Camera/audio init overlaps with this (~1-2s absorption).
+    await _warmup_models(loop)
+
     # Brain agent — async, decoupled, never blocks the conversation
     _brain_orchestrator = BrainOrchestrator(_shutdown_event)
     _brain_orchestrator.set_system_name(_active_system_name)
@@ -5702,6 +6137,8 @@ async def run():
     elif not ANTISPOOFING_ENABLED:
         print("[Security] Anti-spoofing disabled by config (ANTISPOOFING_ENABLED=False)")
     asyncio.create_task(_dream_loop(db))
+    global _health_log_task
+    _health_log_task = asyncio.create_task(_health_log_loop(asyncio.get_event_loop()))
 
     # YOLO spatial memory — disabled via VISION_YOLO_ENABLED flag
     global _yolo_model, _yolo_executor
@@ -5806,10 +6243,7 @@ async def run():
                 _brain_orchestrator.wipe()
 
                 # Step 2: close ALL file handles so wipe_all() can delete on Windows
-                try:
-                    db._conn.close()
-                except Exception:
-                    pass
+                db.close()  # idempotent; CLEANUP swallow lives in FaceDB.close()
                 _brain_orchestrator.close_connections()
 
                 # Step 3: delete all files from disk
@@ -5840,7 +6274,13 @@ async def run():
                 _voice_gallery.clear()
                 _voice_gallery_sizes.clear()
                 _sessions_started.clear()
-                _active_sessions.clear()
+                for _snap_rst in _session_store.peek_all_snapshots():
+                    try:
+                        _loop = asyncio.get_running_loop()
+                        _loop.create_task(_session_store.close_session(_snap_rst.person_id))
+                    except RuntimeError:
+                        pass  # OPTIONAL
+                _scene_block_cache.clear()  # Wave 6 Item 23
                 _active_system_name = DEFAULT_SYSTEM_NAME
                 _detected_lang      = "en"
                 _last_face_seen     = 0.0
@@ -5973,7 +6413,7 @@ async def run():
                 else:
                     print(f"[Vision] Face score={conf:.3f} (need ≥{threshold:.3f}) — unrecognized")
                     # Silent observation: accumulate face data without engagement.
-                    if not _active_sessions:
+                    if not _session_store.peek_all_snapshots():
                         _maybe_record_silent_obs(embedding, det.bbox, frame.shape[1], frame.shape[0], db)
 
                     # Track-continuity: if this SORT track was previously recognized as a
@@ -5982,9 +6422,10 @@ async def run():
                     # session holder — the gallery-poisoning root cause).
                     if det.track_id is not None:
                         _tracked_pid = _track_identity.get(det.track_id)
-                        if _tracked_pid and _tracked_pid in _active_sessions:
+                        if _tracked_pid and _session_store.peek_snapshot(_tracked_pid) is not None:
                             person_id   = _tracked_pid
-                            person_name = _active_sessions[_tracked_pid]["person_name"]
+                            _tc_snap = _session_store.peek_snapshot(_tracked_pid)
+                            person_name = _tc_snap.person_name if _tc_snap is not None else _tracked_pid
                             print(f"[Vision] Track-continuity: {person_name} (track={det.track_id}, score={conf:.3f})")
 
                 det.embedding        = embedding
@@ -6024,12 +6465,12 @@ async def run():
                     # ── Greet known person or returning stranger ──────────────
                     if _pipeline_state == PipelineState.WATCHING:
                         last_greeted = _last_greeted.get(person_id, 0)
-                        # person_id in _active_sessions means their session is still
+                        # _session_store.peek_snapshot(person_id) being non-None means their session is still
                         # live (e.g., returned to WATCHING after "no speech"). In that
                         # case never re-greet even if the cooldown has technically expired
                         # during a long conversation — the session never actually ended.
                         if (time.time() - last_greeted >= GREET_COOLDOWN
-                                and person_id not in _active_sessions):
+                                and _session_store.peek_snapshot(person_id) is None):
                             # Consume the ambient wake signal unconditionally — whether
                             # anti-spoof blocks or passes, background loop must not re-fire.
                             _ambient_wake_pending.discard(person_id)
@@ -6070,8 +6511,12 @@ async def run():
                                 # in get_dominant_emotion() handles stale entries automatically.
                                 _conversation[person_id] = db.load_conversation_history(person_id)
                                 # person_type was seeded by _open_session; just add the system-name gate.
-                                if person_id in _active_sessions:
-                                    _active_sessions[person_id]["waiting_for_name"] = STRANGER_REQUIRE_SYSTEM_NAME
+                                if _session_store.peek_snapshot(person_id) is not None:
+                                    try:
+                                        _loop = asyncio.get_running_loop()
+                                        _loop.create_task(_session_store.set_waiting_for_name(person_id, STRANGER_REQUIRE_SYSTEM_NAME))
+                                    except RuntimeError:
+                                        pass  # OPTIONAL
                                 if STRANGER_REQUIRE_SYSTEM_NAME:
                                     print(f"[Pipeline] Stranger {person_id} detected — waiting for system name '{_active_system_name}'")
                                 else:
@@ -6086,18 +6531,19 @@ async def run():
                                 # Dual-write voice_face_confirmed=True as a compat shim
                                 # for any code still reading the old boolean — remove in
                                 # a follow-up once all readers migrate to identity_evidence.
-                                if person_id in _active_sessions:
-                                    _active_sessions[person_id]["voice_face_confirmed"] = True
-                                    # S120 #1/#2 — face confirmed; clear voice_only_origin
-                                    # so bootstrap replenishment stops deferring to the
-                                    # flag and face-witness path takes over naturally.
-                                    _active_sessions[person_id]["voice_only_origin"] = False
-                                _update_identity_evidence(
-                                    person_id,
-                                    face_match_conf=conf,
-                                    face_last_seen_ts=time.time(),
-                                    anti_spoof_live=True,
-                                )
+                                if _session_store.peek_snapshot(person_id) is not None:
+                                    try:
+                                        _loop = asyncio.get_running_loop()
+                                        _loop.create_task(_session_store.mark_voice_face_confirmed(person_id))
+                                        _loop.create_task(_session_store.set_voice_only_origin(person_id, False))
+                                    except RuntimeError:
+                                        pass  # OPTIONAL
+                                try:
+                                    _loop = asyncio.get_running_loop()
+                                    _loop.create_task(_session_store.update_face_seen(
+                                        person_id, conf=conf, ts=time.time(), anti_spoof_live=True))
+                                except RuntimeError:
+                                    pass  # OPTIONAL
                                 state.write(
                                     mode="speaking",
                                     current_person=person_name,
@@ -6220,7 +6666,7 @@ async def run():
             # Strangers are not greeted on sight. They engage by addressing
             # the system by name. Only log the sighting once per cooldown.
             grace_expired = time.time() - _last_face_seen > FACE_LOSS_GRACE
-            if _pipeline_state == PipelineState.WATCHING and detections and not _active_sessions and grace_expired:
+            if _pipeline_state == PipelineState.WATCHING and detections and not _session_store.peek_all_snapshots() and grace_expired:
                 unknown_key = "unknown"
                 last_sighted = _last_greeted.get(unknown_key, 0)
                 if time.time() - last_sighted >= GREET_COOLDOWN:
@@ -6242,18 +6688,22 @@ async def run():
             # ── Update face-seen timestamps for visible sessions ──────────────
             if detections:
                 # Keep ambient timer current when no sessions are active.
-                if not _active_sessions:
+                if not _session_store.peek_all_snapshots():
                     _last_face_seen = time.time()
                 else:
                     # Only update _last_face_seen for faces that belong to active sessions.
                     # A stranger walking in during an active session should NOT reset the timer.
                     for _d in detections:
-                        if _d.person_id and _d.person_id in _active_sessions:
+                        if _d.person_id and _session_store.peek_snapshot(_d.person_id) is not None:
                             _last_face_seen = time.time()
-                            _active_sessions[_d.person_id]["last_face_seen"] = time.time()
+                            try:
+                                _loop = asyncio.get_running_loop()
+                                _loop.create_task(_session_store.set_last_face_seen(_d.person_id, _last_face_seen))
+                            except RuntimeError:
+                                pass  # OPTIONAL
 
             # ── Session expiry — check each active session independently ──────
-            if _pipeline_state == PipelineState.WATCHING and _active_sessions:
+            if _pipeline_state == PipelineState.WATCHING and _session_store.peek_all_snapshots():
                 _expire_stale_sessions()
 
             # state.write removed here, handled by _set_state and final WATCHING state
@@ -6278,9 +6728,9 @@ async def run():
 
             # ── Listen for speech ─────────────────────────────────────────────
             # Lip tracker: keep bbox current and calibrate baseline while person is at rest.
-            if _active_sessions and detections:
+            if _session_store.peek_all_snapshots() and detections:
                 for _det in detections:
-                    if _det.person_id in _active_sessions:
+                    if _session_store.peek_snapshot(_det.person_id) is not None:
                         _last_active_bbox = _det.bbox
                         if _pipeline_state not in (PipelineState.LISTENING, PipelineState.THINKING):
                             lip_tracker.update_baseline(frame, _det.bbox)
@@ -6289,7 +6739,7 @@ async def run():
             # ── Listen for speech even without a face in frame ────────────────
             _ambient_text  = ""
             _ambient_audio = None
-            if not _active_sessions and _pipeline_state == PipelineState.WATCHING:
+            if not _session_store.peek_all_snapshots() and _pipeline_state == PipelineState.WATCHING:
                 # Persistent background loop (_vis_bg_task) keeps vision alive — no
                 # per-listen task needed here anymore.
                 _ambient_text, _, _ambient_audio = await listen_and_transcribe()
@@ -6311,7 +6761,7 @@ async def run():
                     # match, (b) a known-face match at WATCHING entry, or (c) a stranger
                     # who said the system name. The gate runs first; camera is a
                     # disambiguator only after authority is established.
-                    if not _active_sessions:
+                    if not _session_store.peek_all_snapshots():
                         if not db.list_people():
                             await first_boot_flow(camera, detector, embedder, db)
                             _set_state(PipelineState.WATCHING)
@@ -6340,7 +6790,7 @@ async def run():
                                     _open_session(_best_pid, _best_pname, "voice", person_type=_best_pt)
                                     if _best_pid not in _conversation:
                                         _conversation[_best_pid] = db.load_conversation_history(_best_pid)
-                            if not _active_sessions:
+                            if not _session_store.peek_all_snapshots():
                                 # No face visible or face unrecognized — voice-only stranger
                                 _sid = db.add_stranger("visitor")
                                 # Session 90 Bug 1 Fix A: this branch OPENS a stranger
@@ -6360,12 +6810,13 @@ async def run():
                                               person_type="stranger",
                                               engagement_gate_passed=True)
                                 _conversation[_sid] = []
-                                if _sid in _active_sessions:
-                                    _active_sessions[_sid]["waiting_for_name"] = False
-                                    # S120 #1/#2 — no face available on this path;
-                                    # bootstrap replenishment must stay active after
-                                    # promotion from stranger → known.
-                                    _active_sessions[_sid]["voice_only_origin"] = True
+                                if _session_store.peek_snapshot(_sid) is not None:
+                                    try:
+                                        _loop = asyncio.get_running_loop()
+                                        _loop.create_task(_session_store.set_waiting_for_name(_sid, False))
+                                        _loop.create_task(_session_store.set_voice_only_origin(_sid, True))
+                                    except RuntimeError:
+                                        pass  # OPTIONAL
                                 print(f"[Pipeline] Stranger engaged (voice-only, system addressed) — {_sid}")
                         else:
                             # Gate FAILED — stay silent
@@ -6383,12 +6834,18 @@ async def run():
                     db.update_last_seen(_primary_pid_conv)
                     _sessions_started.add(_primary_pid_conv)
                     _last_greeted[_primary_pid_conv] = time.time()  # prevent face-recog re-greet
-                    _ppname = _active_sessions[_primary_pid_conv]["person_name"] if _primary_pid_conv in _active_sessions else _primary_pid_conv
+                    _pp_snap = _session_store.peek_snapshot(_primary_pid_conv)
+                    _ppname = _pp_snap.person_name if _pp_snap is not None else _primary_pid_conv
                     print(f"[Pipeline] Conversation started for {_ppname} (voice/camera-fallback path)")
 
                 # Seed the voice session timeout for voice-started sessions
-                if _primary_pid_conv in _active_sessions:
-                    _active_sessions[_primary_pid_conv]["last_spoke_at"] = time.time()
+                if _session_store.peek_snapshot(_primary_pid_conv) is not None:
+                    _conv_start_ts = time.time()
+                    try:
+                        _loop = asyncio.get_running_loop()
+                        _loop.create_task(_session_store.set_last_spoke_at(_primary_pid_conv, _conv_start_ts))
+                    except RuntimeError:
+                        pass  # OPTIONAL
 
                 _ppname_conv = _primary_person_name() or _primary_pid_conv
                 _set_state(PipelineState.LISTENING, _ppname_conv)
@@ -6396,8 +6853,14 @@ async def run():
                 # Reset KAIROS silence clock only when a brand-new session just opened.
                 # On re-entry after "No speech detected", preserve accumulated silence so
                 # Kairos can fire if the person stays silent long enough.
-                if _active_sessions.get(_primary_pid_conv, {}).pop("kairos_clock_reset", False):
+                _kcr_snap = _session_store.peek_snapshot(_primary_pid_conv)
+                if _kcr_snap is not None and _kcr_snap.kairos_clock_reset:
                     _last_user_speech_at = time.time()
+                    try:
+                        _loop = asyncio.get_running_loop()
+                        _loop.create_task(_session_store.consume_kairos_reset(_primary_pid_conv))
+                    except RuntimeError:
+                        pass  # OPTIONAL
 
                 # Persistent _vis_bg_task (started at run() startup) keeps camera
                 # running throughout — no separate per-conversation task needed.
@@ -6422,8 +6885,8 @@ async def run():
                     if not _ambient_text:
                         _kairos_pid = _kairos_preferred_speaker(_bf_id)
                         _kairos_name = (
-                            _active_sessions[_kairos_pid].get("person_name", _kairos_pid)
-                            if _kairos_pid and _kairos_pid in _active_sessions
+                            (_session_store.peek_snapshot(_kairos_pid).person_name if _session_store.peek_snapshot(_kairos_pid) is not None else _kairos_pid)
+                            if _kairos_pid and _session_store.peek_snapshot(_kairos_pid) is not None
                             else None
                         )
                         if _kairos_pid and _kairos_name and await _kairos_tick(_kairos_pid, _kairos_name, db, memory_search_fn=_make_memory_search_fn(_kairos_pid, db), best_friend_id=_bf_id):
@@ -6477,11 +6940,12 @@ async def run():
                     # exit after this turn (the user deserves a response to what they said).
                     _fl_pid = _primary_person_id()
                     _fl_face_gone = False
-                    if _fl_pid and _fl_pid in _active_sessions:
-                        _fl_sess = _active_sessions[_fl_pid]
+                    if _fl_pid and _session_store.peek_snapshot(_fl_pid) is not None:
+                        _fl_snap = _session_store.peek_snapshot(_fl_pid)
                         _fl_face_gone = (
-                            _fl_sess["session_type"] == "face"
-                            and time.time() - _fl_sess["last_face_seen"] > FACE_LOSS_GRACE
+                            _fl_snap is not None
+                            and _fl_snap.session_type == "face"
+                            and time.time() - _fl_snap.last_face_seen > FACE_LOSS_GRACE
                         )
 
                     if not text:
@@ -6578,7 +7042,7 @@ async def run():
                     _multi_speaker_labels: list[str] = []
                     if len(audio_buf) >= DIARIZE_MIN_SECS * MIC_SAMPLE_RATE:
                         _diar = await _ev_loop.run_in_executor(
-                            None, voice_mod.diarize,
+                            voice_mod.get_diarize_executor(), voice_mod.diarize,
                             audio_buf, _voice_gallery, VOICE_RECOGNITION_THRESHOLD
                         )
                         if len(_diar) >= 2:
@@ -6656,7 +7120,7 @@ async def run():
                         _v_name = _v_row["name"] if _v_row else _v_pid
 
                     # Build voice state for brain injection
-                    _matches_active = (_v_pid in _active_sessions) if _v_pid else False
+                    _matches_active = (_session_store.peek_snapshot(_v_pid) is not None) if _v_pid else False
                     _voice_state = {
                         "matched_id":              _v_pid,
                         "matched_name":            _v_name,
@@ -6670,9 +7134,14 @@ async def run():
                     # voice confirms the session holder. When voice ID fails (unknown
                     # speaker), do NOT extend the session — a different person speaking
                     # should not keep the original person's session alive.
-                    if _v_pid and _v_pid in _active_sessions:
-                        _active_sessions[_v_pid]["last_spoke_at"] = time.time()
-                        _active_sessions[_v_pid]["voice_confidence"] = _v_score
+                    if _v_pid and _session_store.peek_snapshot(_v_pid) is not None:
+                        _vs_ts = time.time()
+                        try:
+                            _loop = asyncio.get_running_loop()
+                            _loop.create_task(_session_store.record_voice_spoke(
+                                _v_pid, ts=_vs_ts, voice_confidence=_v_score))
+                        except RuntimeError:
+                            pass  # OPTIONAL
                         # Bug I (2026-04-20 live run): persist the voice match to the
                         # session's identity_evidence BEFORE routing or accumulation
                         # decisions. Without this, a freshly-reopened session's Path B
@@ -6680,23 +7149,18 @@ async def run():
                         # when this turn's voice ID scored ≥ 0.45 — and refuses to
                         # accumulate despite a mature profile. Every Jagan turn in the
                         # second half of the 2026-04-20 run hit this refusal at voice_n=20.
-                        _update_identity_evidence(
-                            _v_pid,
-                            voice_match_conf=_v_score,
-                            voice_last_heard_ts=time.time(),
-                        )
+                        _loop.create_task(_session_store.update_voice_heard(
+                            _v_pid, conf=_v_score, ts=time.time()))
                         # Bug D1 (2026-04-22 live run): feed the disputed-session
                         # auto-clear detector. Only disputed sessions need this
                         # deque; lazy-initialize on first append so non-disputed
                         # sessions don't pay the allocation cost.
                         if _is_disputed(_v_pid):
-                            _dsess = _active_sessions[_v_pid]
-                            _dq = _dsess.get("recent_voice_confs")
-                            if _dq is None:
-                                from collections import deque as _deque
-                                _dq = _deque(maxlen=DISPUTE_AUTO_CLEAR_CONSECUTIVE_TURNS)
-                                _dsess["recent_voice_confs"] = _dq
-                            _dq.append(_v_score)
+                            try:
+                                _loop = asyncio.get_running_loop()
+                                _loop.create_task(_session_store.append_voice_conf(_v_pid, conf=_v_score))
+                            except RuntimeError:
+                                pass  # OPTIONAL
 
                     # ── Per-turn speaker routing ──────────────────────────────
                     # Resolve the ACTUAL speaker using voice + face signals.
@@ -6706,10 +7170,8 @@ async def run():
                     #   new_stranger    — unrecognized speaker; open stranger session
                     #   ambiguous       — unknown; log and skip attribution
                     #   no_action       — nothing to do; drop turn
-                    _cur_person_type = (
-                        _active_sessions.get(_cur_pid, {}).get("person_type")
-                        if _cur_pid else None
-                    )
+                    _pt_snap = _session_store.peek_snapshot(_cur_pid) if _cur_pid else None
+                    _cur_person_type = _pt_snap.person_type if _pt_snap is not None else None
                     # Bug F: pass utterance duration so the short-utterance floor
                     # can drop noisy voice IDs from short social closers.
                     # Session 78: switched from BUFFER length (pre-roll + speech
@@ -6738,12 +7200,12 @@ async def run():
                         # (0.20-0.40 score) only fires when the room plausibly
                         # contains another speaker. Pass the active session count
                         # so the resolver can tell solo from multi-session context.
-                        n_active_sessions=len(_active_sessions),
+                        n_active_sessions=len(_session_store.peek_all_snapshots()),
                         n_diarize_segments=_diar_seg_count,
                         # Session 120: pass holder's voice profile maturity so
                         # the single-segment-voice-mismatch gate can decide
                         # whether ECAPA's "no match" verdict is trustworthy.
-                        cur_holder_voice_n=_active_sessions.get(_cur_pid, {}).get("voice_sample_count", 0) if _cur_pid else 0,
+                        cur_holder_voice_n=(_pt_snap.evidence.voice_sample_count if _pt_snap is not None else 0) if _cur_pid else 0,
                     )
 
                     # ── Session 123 / Phase 1 — Voice Channel shadow logging ──
@@ -6796,7 +7258,7 @@ async def run():
                             unrecognized_tracks=_unrecognized_tracks,
                             cur_pid=_cur_pid,
                             cur_person_type=(_cur_person_type or ""),
-                            n_active_sessions=len(_active_sessions),
+                            n_active_sessions=len(_session_store.peek_all_snapshots()),
                             voice_gallery_sizes=_voice_gallery_sizes,
                             now=_rc_now,
                         )
@@ -6827,7 +7289,7 @@ async def run():
                     if _routing_action == "switch_enrolled":
                         # Different enrolled person is speaking — open/switch their session directly.
                         # No LLM confirmation needed: voice gallery is ground truth for enrolled persons.
-                        if _resolved_pid not in _active_sessions:
+                        if _session_store.peek_snapshot(_resolved_pid) is None:
                             # Fetch DB-sourced person_type BEFORE open so it's seeded at
                             # dict creation (closes the stranger-fallback race window).
                             _switched_pt = (db.get_person_type(_resolved_pid) if db else "known") or "known"
@@ -6838,8 +7300,13 @@ async def run():
                             # Invalidate stale query embedding cache so get_context() fetches
                             # fresh memory on this first turn rather than using a stale vector.
                             _query_embedding_cache.pop(_resolved_pid, None)
-                        _active_sessions[_resolved_pid]["last_spoke_at"]   = time.time()
-                        _active_sessions[_resolved_pid]["voice_confidence"] = _v_score
+                        _sw_ts = time.time()
+                        try:
+                            _loop = asyncio.get_running_loop()
+                            _loop.create_task(_session_store.record_voice_spoke(
+                                _resolved_pid, ts=_sw_ts, voice_confidence=_v_score))
+                        except RuntimeError:
+                            pass  # OPTIONAL
                         # Session 90 Bug 1 Fix B: persist the voice match score to the
                         # switched-in session's ``identity_evidence`` so ``_voice_accum_allowed``
                         # Path B (mature-voice-match) can fire on this turn. The earlier
@@ -6850,11 +7317,8 @@ async def run():
                         # in evidence and every accumulation refused despite a real
                         # routing score of 0.617. Reviewer's 2026-04-22 Jagan re-entry
                         # case after John's session expired.
-                        _update_identity_evidence(
-                            _resolved_pid,
-                            voice_match_conf=_v_score,
-                            voice_last_heard_ts=time.time(),
-                        )
+                        _loop.create_task(_session_store.update_voice_heard(
+                            _resolved_pid, conf=_v_score, ts=time.time()))
                         _cur_pid  = _resolved_pid
                         _cur_name = _v_name
                         # Rebuild voice_state for the switched speaker so conversation_turn()
@@ -6893,18 +7357,27 @@ async def run():
                             _stranger_track_map.get(_speaker_track)
                             if _speaker_track is not None else None
                         )
-                        if _target_sid and _target_sid in _active_sessions:
+                        if _target_sid and _session_store.peek_snapshot(_target_sid) is not None:
                             # Same physical face returned — resume their session
                             _cur_pid  = _target_sid
-                            _cur_name = _active_sessions[_target_sid]["person_name"]
-                            _active_sessions[_cur_pid]["last_spoke_at"] = _now_route
+                            _ts_snap = _session_store.peek_snapshot(_target_sid)
+                            _cur_name = _ts_snap.person_name if _ts_snap is not None else _target_sid
+                            try:
+                                _loop = asyncio.get_running_loop()
+                                _loop.create_task(_session_store.set_last_spoke_at(_cur_pid, _now_route))
+                            except RuntimeError:
+                                pass  # OPTIONAL
                             print(f"[Voice] Track {_speaker_track} → resumed session {_cur_pid}")
                         else:
                             # Open session — use pre-allocated pid if available
                             _sid = _target_sid or f"stranger_{__import__('uuid').uuid4().hex[:8]}"
                             db.add_stranger("visitor", person_id=_sid)  # INSERT OR IGNORE
                             _open_session(_sid, "visitor", "voice", person_type="stranger")
-                            _active_sessions[_sid]["waiting_for_name"] = STRANGER_REQUIRE_SYSTEM_NAME
+                            try:
+                                _loop = asyncio.get_running_loop()
+                                _loop.create_task(_session_store.set_waiting_for_name(_sid, STRANGER_REQUIRE_SYSTEM_NAME))
+                            except RuntimeError:
+                                pass  # OPTIONAL
                             _conversation[_sid] = []
                             _cur_pid  = _sid
                             _cur_name = "visitor"
@@ -6915,11 +7388,16 @@ async def run():
                     elif _routing_action == "ambiguous":
                         # #21: record attribution; 3 consecutive ambiguous → close stale session
                         _drift_pid = _cur_pid
-                        if _drift_pid and _drift_pid in _active_sessions:
-                            _attr_q = _active_sessions[_drift_pid].get("recent_attributions")
-                            if _attr_q is not None:
-                                _attr_q.append("ambiguous")
-                                if len(_attr_q) == 3 and all(a == "ambiguous" for a in _attr_q):
+                        if _drift_pid and _session_store.peek_snapshot(_drift_pid) is not None:
+                            try:
+                                _loop = asyncio.get_running_loop()
+                                _loop.create_task(_session_store.record_attribution(_drift_pid, "ambiguous"))
+                            except RuntimeError:
+                                pass  # OPTIONAL
+                            _drift_snap = _session_store.peek_snapshot(_drift_pid)
+                            if _drift_snap is not None:
+                                _drift_attrs = list(_drift_snap.recent_attributions)
+                                if len(_drift_attrs) == 3 and all(a == "ambiguous" for a in _drift_attrs):
                                     print(f"[Session] Drift: 3 consecutive ambiguous turns for {_drift_pid} — closing stale session")
                                     _close_session(_drift_pid)
                                     _cur_pid  = None
@@ -6975,22 +7453,29 @@ async def run():
                     # "current" — keep existing cur_pid (no speaker switch needed).
 
                     # #22: extend voice session when face confirms holder is present
+                    _ext_snap = _session_store.peek_snapshot(_cur_pid) if _cur_pid else None
                     _now_ext = time.time()
-                    if (_cur_pid and _cur_pid in _active_sessions
-                            and _active_sessions[_cur_pid].get("session_type") == "voice"):
+                    if (_cur_pid and _session_store.peek_snapshot(_cur_pid) is not None
+                            and (_ext_snap.session_type if _ext_snap is not None else None) == "voice"):
                         _holder_vis_ext = (
                             _cur_pid in _persons_in_frame
                             and _now_ext - _persons_in_frame[_cur_pid].get("last_recognized_at", 0)
                             < VOICE_ROUTING_FACE_STALE_SECS
                         )
                         if _holder_vis_ext:
-                            _active_sessions[_cur_pid]["last_spoke_at"] = _now_ext
+                            try:
+                                _loop = asyncio.get_running_loop()
+                                _loop.create_task(_session_store.set_last_spoke_at(_cur_pid, _now_ext))
+                            except RuntimeError:
+                                pass  # OPTIONAL
 
                     # #21: record non-ambiguous attribution (resets any drift streak)
-                    if _cur_pid and _cur_pid in _active_sessions:
-                        _attr_q = _active_sessions[_cur_pid].get("recent_attributions")
-                        if _attr_q is not None:
-                            _attr_q.append(_routing_action)
+                    if _cur_pid and _session_store.peek_snapshot(_cur_pid) is not None:
+                        try:
+                            _loop = asyncio.get_running_loop()
+                            _loop.create_task(_session_store.record_attribution(_cur_pid, _routing_action))
+                        except RuntimeError:
+                            pass  # OPTIONAL
 
                     # Voice accumulation for current person (when verified or early phase)
                     if _cur_pid and _cur_pid != "unknown" and len(audio_buf) > 0:
@@ -7001,7 +7486,7 @@ async def run():
                             (_cur_pid in _persons_in_frame
                              and time.time() - _persons_in_frame[_cur_pid].get("last_recognized_at", 0)
                              < VOICE_ROUTING_FACE_STALE_SECS)
-                            or _active_sessions.get(_cur_pid, {}).get("voice_face_confirmed", False)
+                            or (_ext_snap.voice_face_confirmed if _ext_snap is not None else False)
                         )
                         _t = asyncio.create_task(
                             _accumulate_voice(_cur_pid, audio_buf, db, face_verified=_face_vis_acc)
@@ -7010,33 +7495,53 @@ async def run():
 
                     # Build live sensor state — vision + voice together give brain
                     # the complete picture: what it SEES and who it HEARS, every turn.
-                    _cur_sess      = _active_sessions.get(_cur_pid, {}) if _cur_pid else {}
+                    _cur_snap      = _session_store.peek_snapshot(_cur_pid) if _cur_pid else None
                     _cur_rec_conf  = _persons_in_frame.get(_cur_pid, {}).get("conf", 0.0) if _cur_pid else 0.0
                     # Session 97 Fix 1: bump the user-turn counter BEFORE
                     # building vision_state so `session_user_turns` reflects
                     # "this turn's number" (1-indexed). Drives the
                     # <<<STRANGER IDENTITY>>> block's threshold gate.
-                    if _cur_sess:
-                        _cur_sess["user_turns"] = _cur_sess.get("user_turns", 0) + 1
+                    if _cur_snap is not None:
+                        _prev_turns = _cur_snap.user_turns
+                        try:
+                            _loop = asyncio.get_running_loop()
+                            _loop.create_task(_session_store.increment_user_turns(_cur_pid))
+                        except RuntimeError:
+                            pass  # OPTIONAL
+                        # Item 17: invalidate prefix cache when stranger turn threshold
+                        # is crossed — <<<STRANGER IDENTITY>>> block enters Section 2.
+                        # +1 because create_task(increment_user_turns) hasn't run yet;
+                        # _cur_snap.user_turns still holds the pre-increment value.
+                        if (
+                            _cur_snap.person_type == "stranger"
+                            and _cur_snap.user_turns + 1 == STRANGER_IDENTITY_BLOCK_MIN_TURNS
+                        ):
+                            try:
+                                _loop = asyncio.get_running_loop()
+                                _loop.create_task(_session_store.set_cached_prefix(_cur_pid, None))
+                            except RuntimeError:
+                                pass  # OPTIONAL
                     _vision_state = {
                         "face_in_frame":          time.time() - _last_face_seen < 2.0,
                         "person_name":            _cur_name,
                         "person_id":              _cur_pid,
                         "recognition_conf":       _cur_rec_conf,
-                        "identity_disputed":      _is_disputed(_cur_sess),
-                        "disputed_claimed_name":  _cur_sess.get("disputed_claimed_name"),
+                        "identity_disputed":      _is_disputed(_cur_pid),
+                        "disputed_claimed_name":  _cur_snap.disputed_claimed_name if _cur_snap is not None else None,
                         # Session person_type drives the <<<TOOL ACCESS>>> block.
-                        "session_person_type":    _cur_sess.get("person_type", "stranger"),
+                        "session_person_type":    _cur_snap.person_type if _cur_snap is not None else "stranger",
                         # Structured identity_evidence drives <<<IDENTITY EVIDENCE>>>.
-                        "identity_evidence":      _cur_sess.get("identity_evidence"),
-                        # Session 97 Fix 1: this turn's 1-indexed number.
-                        "session_user_turns":     _cur_sess.get("user_turns", 0),
+                        # Kept as dict read — brain.py requires the dict interface.
+                        "identity_evidence":      dataclasses.asdict(_cur_snap.evidence) if _cur_snap is not None else None,
+                        # Session 97 Fix 1: this turn's 1-indexed number (post-increment).
+                        # +1 because create_task(increment_user_turns) hasn't run yet.
+                        "session_user_turns":     (_cur_snap.user_turns + 1) if _cur_snap is not None else 0,
                         # Session 113 Part 1: gates the ADDRESS DECISION block.
-                        "active_session_count":   len(_active_sessions),
+                        "active_session_count":   len(_session_store.peek_all_snapshots()),
                         # Phase 3B.1: unified room-state block (None in
                         # single-person sessions).
                         "room_block":             _build_room_block(
-                            _active_sessions, _conversation, _emotion_agents,
+                            _session_store.peek_all_snapshots(), _conversation, _emotion_agents,
                             _active_room_started_at, turn_cap=ROOM_BLOCK_TURN_CAP,
                         ),
                         # Phase 3B.6: recent room context for greeting
@@ -7046,7 +7551,7 @@ async def run():
 
                     # ── STT attribution log ───────────────────────────────────────────────
                     _is_stranger_turn = (_cur_pid or "").startswith("stranger_")
-                    _gate_active_turn = _active_sessions.get(_cur_pid, {}).get("waiting_for_name", False) if _cur_pid else False
+                    _gate_active_turn = (_cur_snap.waiting_for_name if _cur_snap is not None else False) if _cur_pid else False
                     _spk_badge = f"STRANGER/{_cur_name}" if _is_stranger_turn else _cur_name
                     _voice_badge = f" (voice={_v_score:.2f})" if _v_score and _v_score > 0.01 else ""
                     _gate_badge = " [gate active]" if _gate_active_turn else ""
@@ -7054,20 +7559,27 @@ async def run():
 
                     # G4: System-name gate — strangers must address system by name first.
                     # Word-boundary match (not substring) — "Rex" must not fire on "reflex".
-                    if _cur_pid and _active_sessions.get(_cur_pid, {}).get("waiting_for_name"):
+                    if _cur_pid and (_cur_snap.waiting_for_name if _cur_snap is not None else False):
                         _name_heard, _name_match_method = _name_heard_in(text, _active_system_name)
                         if _name_heard:
                             # Name heard — unlock this stranger's session
-                            _active_sessions[_cur_pid]["waiting_for_name"] = False
+                            try:
+                                _loop = asyncio.get_running_loop()
+                                _loop.create_task(_session_store.set_waiting_for_name(_cur_pid, False))
+                            except RuntimeError:
+                                pass  # OPTIONAL
                             _match_note = f" (phonetic)" if _name_match_method == "phonetic" else ""
                             print(f"[Pipeline] Stranger {_cur_pid} addressed system by name{_match_note} — engaging")
                             # Progressive enrollment: create DB entry on first system-name
                             # utterance and seed the voice profile with this audio so the
                             # stranger can be recognised by voice from the second turn onward.
-                            if not _active_sessions[_cur_pid].get("db_enrolled"):
+                            if not (_cur_snap.db_enrolled if _cur_snap is not None else False):
                                 db.add_stranger("visitor", person_id=_cur_pid)
-                                _active_sessions[_cur_pid]["db_enrolled"]     = True
-                                _active_sessions[_cur_pid]["confidence_tier"] = "enrolled_1"
+                                try:
+                                    _loop = asyncio.get_running_loop()
+                                    _loop.create_task(_session_store.mark_enrolled(_cur_pid, "enrolled_1"))
+                                except RuntimeError:
+                                    pass  # OPTIONAL
                                 print(f"[Pipeline] Progressive enroll: DB entry created for {_cur_pid}")
                                 # Store face embedding if vision captured one for this track.
                                 # Track whether a face was actually captured so we don't write
@@ -7085,24 +7597,31 @@ async def run():
                                     if _face_captured:
                                         # Real face captured at gate pass — seed face-witness evidence
                                         # so post-routing accumulation trusts this person on turns 2..N.
-                                        _active_sessions[_cur_pid]["voice_face_confirmed"] = True
-                                        _update_identity_evidence(
-                                            _cur_pid,
-                                            face_last_seen_ts=time.time(),
-                                            anti_spoof_live=True,
-                                            face_match_conf=0.50,   # gate-pass-equivalent witness
-                                            bootstrap_credits=N_INITIAL_VOICE_BOOTSTRAP,
-                                        )
+                                        try:
+                                            _loop = asyncio.get_running_loop()
+                                            _loop.create_task(_session_store.mark_voice_face_confirmed(_cur_pid))
+                                        except RuntimeError:
+                                            pass  # OPTIONAL
+                                        try:
+                                            _loop = asyncio.get_running_loop()
+                                            _loop.create_task(_session_store.update_face_seen(
+                                                _cur_pid, conf=0.50, ts=time.time(), anti_spoof_live=True))
+                                            _loop.create_task(_session_store.set_bootstrap_credits(
+                                                _cur_pid, N_INITIAL_VOICE_BOOTSTRAP))
+                                        except RuntimeError:
+                                            pass  # OPTIONAL
                                         _t = asyncio.create_task(_accumulate_voice(_cur_pid, audio_buf, db, face_verified=True))
                                     else:
                                         # Voice-only engagement — NO face was captured. Only grant
                                         # bootstrap credits so the voice profile can grow; don't
                                         # fabricate face evidence that would mislead the brain's
                                         # <<<IDENTITY EVIDENCE>>> verdict or the accumulation gate.
-                                        _update_identity_evidence(
-                                            _cur_pid,
-                                            bootstrap_credits=N_INITIAL_VOICE_BOOTSTRAP,
-                                        )
+                                        try:
+                                            _loop = asyncio.get_running_loop()
+                                            _loop.create_task(_session_store.set_bootstrap_credits(
+                                                _cur_pid, N_INITIAL_VOICE_BOOTSTRAP))
+                                        except RuntimeError:
+                                            pass  # OPTIONAL
                                         _t = asyncio.create_task(_accumulate_voice(_cur_pid, audio_buf, db, face_verified=False))
                                     _voice_tasks.add(_t); _t.add_done_callback(_voice_tasks.discard)
                             # Fall through to conversation_turn() with original text.
@@ -7183,10 +7702,7 @@ async def run():
         _voice_tasks.clear()
 
         # 4. Close database (flushes WAL, releases file locks).
-        try:
-            db._conn.close()
-        except Exception:
-            pass
+        db.close()  # idempotent; CLEANUP swallow lives in FaceDB.close()
 
         # 5. Shutdown brain agent (waits for in-flight extraction to finish).
         try:
@@ -7202,6 +7718,20 @@ async def run():
             except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
                 pass
 
+        # 5.5b. Cancel health log loop (Wave 5 / Item 19).
+        if _health_log_task and not _health_log_task.done():
+            _health_log_task.cancel()
+            try:
+                await asyncio.wait_for(_health_log_task, timeout=2.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                pass
+
+        # 5.6. Shut down dedicated diarization executor (Item 13, Wave 3).
+        try:
+            voice_mod.shutdown_diarize_executor()
+        except Exception as e:
+            print(f"[Pipeline] diarize executor shutdown failed: {e!r}")
+
         # 6. Mark dashboard offline.
         state.write(mode="offline")
 
@@ -7210,7 +7740,7 @@ async def run():
             from core.classifier_graph import get_session_summary as _cg_summary
             print(_cg_summary())
         except Exception:
-            pass
+            pass  # OPTIONAL: classifier session summary at shutdown — non-critical telemetry
 
         print("[Pipeline] Shutdown complete.")
 

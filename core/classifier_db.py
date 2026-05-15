@@ -557,6 +557,16 @@ class ClassifierDB:
 
     # ── Lifecycle ────────────────────────────────────────────────────────
 
+    def checkpoint_wal(self) -> None:
+        """Flush the WAL into the main DB file (TRUNCATE mode).
+
+        Called at the end of each dream cycle so the -wal sidecar stays
+        small and backup copies are self-contained."""
+        try:
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except Exception as _e:
+            print(f"[ClassifierDB] WAL checkpoint failed: {_e!r}")
+
     def close(self) -> None:
         try:
             self._conn.close()

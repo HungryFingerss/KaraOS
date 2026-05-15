@@ -27,6 +27,7 @@ import sqlite3
 import statistics
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -79,7 +80,7 @@ from core.config import (
     CROSS_PERSON_MAX_NUDGES,
     WATCHDOG_INTERVAL, WATCHDOG_SILENT_OBS_SPIKE,
     WATCHDOG_UNUSUAL_HOUR_START, WATCHDOG_UNUSUAL_HOUR_END,
-    KNOWLEDGE_MAX_ROWS, PRESENCE_MAX_ROWS, EPISODE_MAX_ROWS,
+    KNOWLEDGE_MAX_ROWS, KNOWLEDGE_HARD_DELETE_AFTER_DAYS, PRESENCE_MAX_ROWS, EPISODE_MAX_ROWS,
     SOCIAL_MENTIONS_MAX_ROWS, WATCHDOG_MAX_AGE_DAYS,
     AGENT_LOG_MAX_AGE_DAYS, AGENT_LOG_MAX_ROWS, PATTERN_Q_MAX_AGE_DAYS,
     FRICTION_MIN_CONFIDENCE, PREDICATE_VOLATILITY_THRESHOLD, PREDICATE_CONFIDENCE_CAP,
@@ -89,6 +90,10 @@ from core.config import (
     PRIVACY_LEVEL_STATIC_MAP,
     PRIVACY_CLASSIFIER_TIMEOUT_SECS,
     PRIVACY_CLASSIFIER_MAX_TOKENS,
+    CORE_MEMORY_ENABLED,
+    CORE_MEMORY_MAX_FACTS,
+    CORE_MEMORY_MIN_CONFIDENCE,
+    CORE_MEMORY_ATTRIBUTES,
 )
 from core.log_utils import _now_log_ts
 
@@ -746,6 +751,34 @@ class BrainDB:
             self._conn.commit()
         # else: no-op — nothing to commit
 
+    @contextmanager
+    def transaction(self):
+        """Wrap a multi-step write block in BEGIN IMMEDIATE / COMMIT with rollback on exception.
+
+        Uses BEGIN IMMEDIATE to acquire the write lock upfront — prevents SQLITE_BUSY
+        mid-transaction if a reader holds the connection.
+
+        Callers must NOT call self._conn.commit() inside the with-block; the context
+        manager owns commit/rollback. Helpers called from within this block detect
+        they're inside an outer transaction via self._conn.in_transaction (True after
+        BEGIN IMMEDIATE) and skip their own inner commits.
+        """
+        prev_isolation = self._conn.isolation_level
+        self._conn.isolation_level = None  # autocommit — prevents Python auto-BEGIN clash
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield
+                self._conn.execute("COMMIT")
+            except Exception:
+                try:
+                    self._conn.execute("ROLLBACK")
+                except Exception:
+                    pass  # RACE: S65 — ROLLBACK fails if commit auto-rolled
+                raise
+        finally:
+            self._conn.isolation_level = prev_isolation
+
     def _init_tables(self) -> None:
         self._conn.executescript("""
             -- Tracks which conversation_log turn the brain last processed.
@@ -1123,6 +1156,41 @@ class BrainDB:
             for r in rows
         ]
 
+    def get_active_knowledge_for_entities(self, entity_list: list[str]) -> dict[str, list]:
+        """Bulk fetch currently valid facts for all entities in entity_list.
+
+        Single WHERE entity IN (?, ...) query — O(1) DB roundtrips instead of
+        O(distinct entities) when the caller iterates over extracted facts.
+        Returns dict mapping entity → list[dict] (same shape as get_active_knowledge).
+        """
+        if not entity_list:
+            return {}
+        now = time.time()
+        placeholders = ",".join("?" * len(entity_list))
+        rows = self._conn.execute(
+            f"""SELECT entity, attribute, value, confidence, is_temporal, valid_until,
+                      valid_at, last_confirmed_at, privacy_level
+               FROM knowledge
+               WHERE entity IN ({placeholders})
+                 AND invalidated_at IS NULL
+                 AND (valid_until IS NULL OR valid_until > ?)
+               ORDER BY created_at DESC""",
+            (*entity_list, now),
+        ).fetchall()
+        result: dict[str, list] = {ent: [] for ent in entity_list}
+        for r in rows:
+            result[r[0]].append({
+                "attribute":         r[1],
+                "value":             r[2],
+                "confidence":        r[3],
+                "is_temporal":       bool(r[4]),
+                "valid_until":       r[5],
+                "valid_at":          r[6],
+                "last_confirmed_at": r[7],
+                "privacy_level":     r[8],
+            })
+        return result
+
     def get_historical_knowledge(self, entity: str, attribute: str) -> list[dict]:
         """Return all rows for (entity, attribute) in chronological order, including invalidated.
 
@@ -1418,6 +1486,10 @@ class BrainDB:
             self._conn.execute(
                 "ALTER TABLE knowledge ADD COLUMN privacy_level TEXT NOT NULL DEFAULT 'public'"
             )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_privacy_person "
+            "ON knowledge(privacy_level, person_id)"
+        )
 
         # Phase 5 (Session 119) — `intent_divergences.mode` column. Production
         # gate writes 'gate' (default for backward-compat); 1% canary shadow
@@ -1767,6 +1839,57 @@ class BrainDB:
         )
         return rows
 
+    def get_core_memory_for(
+        self,
+        requester_pid:  str,
+        best_friend_id: "str | None",
+        entity:         str,
+    ) -> list[dict]:
+        """Return always-on stable facts for Section 2 prompt injection.
+
+        Fetches rows whose attribute is in CORE_MEMORY_ATTRIBUTES and whose
+        confidence meets CORE_MEMORY_MIN_CONFIDENCE.  Privacy filtering is
+        applied via _visibility_clause — same policy as query_knowledge_for,
+        so cross-person facts cannot leak.
+
+        Returns up to CORE_MEMORY_MAX_FACTS rows ordered by confidence DESC.
+        Returns [] when CORE_MEMORY_ENABLED is False.
+        """
+        if not CORE_MEMORY_ENABLED:
+            return []
+
+        now = time.time()
+        vis_clause, vis_params = _visibility_clause(requester_pid, best_friend_id)
+
+        # Build a SQL IN clause for the attribute whitelist
+        placeholders = ",".join("?" * len(CORE_MEMORY_ATTRIBUTES))
+        where = (
+            f"({vis_clause})"
+            " AND invalidated_at IS NULL"
+            " AND (valid_until IS NULL OR valid_until > ?)"
+            " AND entity = ?"
+            f" AND attribute IN ({placeholders})"
+            " AND confidence >= ?"
+        )
+        params: list = (
+            list(vis_params)
+            + [now, entity]
+            + list(CORE_MEMORY_ATTRIBUTES)
+            + [CORE_MEMORY_MIN_CONFIDENCE]
+        )
+
+        sql = (
+            "SELECT entity, attribute, value, confidence, person_id, privacy_level "
+            f"FROM knowledge WHERE {where} "
+            "ORDER BY confidence DESC LIMIT ?"
+        )
+        params.append(CORE_MEMORY_MAX_FACTS)
+
+        cur = self._conn.execute(sql, params)
+        cols = [c[0] for c in cur.description]
+        rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+        return rows
+
     # ── Object sightings (Spatial Memory) ─────────────────────────────────────
 
     def store_object_sighting(
@@ -1898,6 +2021,33 @@ class BrainDB:
         )
         self._conn.commit()
         return excess
+
+    def hard_delete_old_invalidated_knowledge(
+        self,
+        *,
+        cutoff_days: int = KNOWLEDGE_HARD_DELETE_AFTER_DAYS,
+        now: float | None = None,
+    ) -> int:
+        """Hard-delete knowledge rows soft-deleted longer than cutoff_days.
+
+        Wave 6 / Item 22 — prevents unbounded soft-delete accumulation at year
+        scale. Conservative 60-day cutoff: conversation log archives at 30 days,
+        so a 30-day buffer remains where archived turns can still resolve their
+        invalidated facts.
+        """
+        if now is None:
+            now = time.time()
+        cutoff_ts = now - (cutoff_days * 86400)
+        cur = self._conn.execute(
+            "DELETE FROM knowledge "
+            "WHERE invalidated_at IS NOT NULL AND invalidated_at < ?",
+            (cutoff_ts,),
+        )
+        n = cur.rowcount
+        self._safe_commit()
+        if n > 0:
+            print(f"[Prune] Hard-deleted {n} invalidated knowledge row(s) older than {cutoff_days}d")
+        return n
 
     def _prune_table(self, table: str, order_col: str, max_rows: int) -> int:
         """Hard-delete oldest rows from table when row count exceeds max_rows."""
@@ -2066,7 +2216,7 @@ class BrainDB:
             lines.append("Household & shared facts:")
             for entity, attr, value, conf, status, disputed_json, speakers_json in rows:
                 label = attr.replace("_", " ")
-                if status == "disputed" and disputed_json:
+                if status == "disputed" and disputed_json:  # knowledge-row status field, not person_type — disputed-row-status
                     disputed = json.loads(disputed_json)
                     parts = [f"{v} (per {k})" for k, v in disputed.items()]
                     lines.append(f"  - {label}: DISPUTED — {' vs '.join(parts)}")
@@ -2287,6 +2437,10 @@ class BrainDB:
 
         Returns the number of rows updated.
         """
+        # Capture BEFORE any write. When called inside transaction(), BEGIN IMMEDIATE
+        # has already been issued so in_transaction=True → skip inner commit.
+        # When called standalone, no BEGIN yet → in_transaction=False → commit at end.
+        _in_outer_tx = self._conn.in_transaction
         if person_id:
             cur = self._conn.execute(
                 "UPDATE knowledge SET entity = ? WHERE entity = ? AND person_id = ?",
@@ -2297,7 +2451,8 @@ class BrainDB:
                 "UPDATE knowledge SET entity = ? WHERE entity = ?",
                 (new_name, old_name),
             )
-        self._conn.commit()
+        if not _in_outer_tx:
+            self._conn.commit()
         n = cur.rowcount
         print(f"[BrainDB] migrate_entity_name: '{old_name}' → '{new_name}' ({n} rows updated)")
         return n
@@ -2329,6 +2484,8 @@ class BrainDB:
 
         Returns True if a matching shadow node was found and promoted.
         """
+        # Capture BEFORE any write — same inner-commit gate as migrate_entity_name.
+        _in_outer_tx = self._conn.in_transaction
         now = time.time()
         row = self._conn.execute(
             "SELECT shadow_id, facts FROM shadow_persons WHERE LOWER(known_name) = LOWER(?)",
@@ -2371,7 +2528,8 @@ class BrainDB:
             )
             inserted += 1
 
-        self._conn.commit()
+        if not _in_outer_tx:
+            self._conn.commit()
         print(f"[BrainDB] Shadow '{name}' promoted (face_id={face_id}, {inserted} facts copied)")
         return True
 
@@ -2841,6 +2999,8 @@ class BrainDB:
 
         Returns the number of rows updated.
         """
+        # Capture BEFORE any write — same inner-commit gate as migrate_entity_name.
+        _in_outer_tx = self._conn.in_transaction
         rows = self._conn.execute(
             "SELECT id, content, metadata FROM proactive_nudges "
             "WHERE nudge_type = 'VISITOR_ALERT' "
@@ -2874,7 +3034,8 @@ class BrainDB:
             )
             updated += 1
         if updated:
-            self._conn.commit()
+            if not _in_outer_tx:
+                self._conn.commit()
             print(
                 f"[BrainDB] update_visitor_alert_for_promoted_person: "
                 f"updated {updated} alert(s) for {person_id} → {new_name!r}"
@@ -3166,6 +3327,123 @@ class BrainDB:
         self._conn.commit()
         return affected
 
+    # ── P0.X graph-schema public API ─────────────────────────────────────────
+
+    def get_graph_schema_version(self) -> int:
+        """Return the currently stored graph schema version from brain_state."""
+        return self._conn.execute(
+            "SELECT graph_schema_version FROM brain_state WHERE singleton = 1"
+        ).fetchone()[0]
+
+    def update_graph_schema_version(self, version: int) -> None:
+        """Commit a new graph schema version to brain_state.
+
+        Commits immediately — caller (BrainOrchestrator._ensure_graph_sync)
+        needs the version durable before touching Kuzu so a crash between the
+        SQL commit and the Kuzu rebuild doesn't re-trigger the schema-upgrade
+        path on next boot (sentinel handles the rebuild instead).
+        """
+        self._conn.execute(
+            "UPDATE brain_state SET graph_schema_version = ? WHERE singleton = 1",
+            (version,),
+        )
+        self._conn.commit()
+
+    def count_active_knowledge_entities(self) -> int:
+        """Return the count of distinct active entities in knowledge.
+
+        Used by BrainOrchestrator._ensure_graph_sync for boot-time divergence
+        detection: Kuzu has one Entity node per unique entity name, so
+        COUNT(DISTINCT entity) (not COUNT(*)) is the correct comparand.
+        """
+        return self._conn.execute(
+            "SELECT COUNT(DISTINCT entity) FROM knowledge "
+            "WHERE invalidated_at IS NULL"
+        ).fetchone()[0]
+
+    # ── P0.X layering-cleanup wrappers ───────────────────────────────────────
+    # Raw _conn accesses scattered across BrainOrchestrator and SchemaNormAgent
+    # have been replaced with these public methods so test_layering_invariants
+    # can enforce the boundary (Step 2.H).
+
+    def count_schema_catalog_entries(self) -> int:
+        """Return COUNT(*) of schema_catalog rows."""
+        return self._conn.execute(
+            "SELECT COUNT(*) FROM schema_catalog"
+        ).fetchone()[0]
+
+    def get_knowledge_topic_tags_for_persons(
+        self, person_ids: list[str], since: float, until: float
+    ) -> list[str]:
+        """Return top-10 entity names by frequency for the given persons in [since, until]."""
+        if not person_ids:
+            return []
+        placeholders = ",".join("?" for _ in person_ids)
+        rows = self._conn.execute(
+            f"SELECT entity, COUNT(*) AS n FROM knowledge "
+            f"WHERE person_id IN ({placeholders}) "
+            f"AND created_at >= ? AND created_at <= ? "
+            f"GROUP BY entity ORDER BY n DESC LIMIT 10",
+            (*person_ids, since, until),
+        ).fetchall()
+        return [entity for entity, _n in rows if entity]
+
+    def get_knowledge_rows_for_persons(
+        self, person_ids: list[str], since: float, until: float
+    ) -> list[tuple[str, str, str, str]]:
+        """Return (person_id, entity, attribute, value) tuples for the given persons in [since, until]."""
+        if not person_ids:
+            return []
+        placeholders = ",".join("?" for _ in person_ids)
+        rows = self._conn.execute(
+            f"SELECT person_id, entity, attribute, value FROM knowledge "
+            f"WHERE person_id IN ({placeholders}) "
+            f"AND created_at >= ? AND created_at <= ? "
+            f"AND invalidated_at IS NULL",
+            (*person_ids, since, until),
+        ).fetchall()
+        return list(rows)
+
+    def get_true_valued_attributes(self, person_id: str) -> list[str]:
+        """Return distinct attributes whose value is 'true' or 'yes' for person."""
+        rows = self._conn.execute(
+            "SELECT DISTINCT attribute FROM knowledge "
+            "WHERE person_id = ? AND invalidated_at IS NULL "
+            "AND (value = 'true' OR value = 'yes')",
+            (person_id,),
+        ).fetchall()
+        return [r[0] for r in rows if r[0]]
+
+    def get_shadow_person_names_since(self, cutoff: float) -> list[str]:
+        """Return known_name values from shadow_persons last_mentioned >= cutoff."""
+        rows = self._conn.execute(
+            "SELECT known_name FROM shadow_persons WHERE last_mentioned >= ?",
+            (cutoff,),
+        ).fetchall()
+        return [r[0] for r in rows if r[0]]
+
+    def get_latest_pref_id(
+        self, person_id: str, pref_type: str, content: str
+    ) -> int | None:
+        """Return id of the most recently inserted matching prompt_prefs row, or None."""
+        row = self._conn.execute(
+            "SELECT id FROM prompt_prefs "
+            "WHERE person_id=? AND pref_type=? AND content=? "
+            "ORDER BY id DESC LIMIT 1",
+            (person_id, pref_type, content),
+        ).fetchone()
+        return row[0] if row else None
+
+    def checkpoint_wal(self) -> None:
+        """Flush the WAL into the main DB file (TRUNCATE mode).
+
+        Called at the end of each dream cycle so the -wal sidecar stays
+        small and backup copies are self-contained."""
+        try:
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except Exception as _e:
+            print(f"[BrainDB] WAL checkpoint failed: {_e!r}")
+
     def close(self) -> None:
         self._conn.close()
 
@@ -3449,6 +3727,10 @@ class GraphDB:
         rows = self._conn.execute("MATCH (e:Entity) RETURN count(e)").get_all()
         return not rows or rows[0][0] == 0
 
+    def entity_count(self) -> int:
+        rows = self._conn.execute("MATCH (n:Entity) RETURN count(n)").get_all()
+        return rows[0][0] if rows else 0
+
     def rebuild(self, knowledge_rows: list[dict]) -> None:
         """Populate graph from SQLite knowledge rows (startup sync)."""
         for row in knowledge_rows:
@@ -3478,10 +3760,7 @@ class GraphDB:
         DROP + re-CREATE it.
         """
         for stmt in ("DROP TABLE IF EXISTS RELATES_TO", "DROP TABLE IF EXISTS Entity"):
-            try:
-                self._conn.execute(stmt)
-            except Exception:
-                pass
+            self._conn.execute(stmt)
 
     def delete_person_entity(self, person_name: str) -> bool:
         """Delete the Entity node for person_name and all its edges from the graph.
@@ -4613,9 +4892,7 @@ class SchemaNormAgent:
         self._embed_agent = embed_agent
 
     async def maybe_run(self) -> None:
-        count = self._brain_db._conn.execute(
-            "SELECT COUNT(*) FROM schema_catalog"
-        ).fetchone()[0]
+        count = self._brain_db.count_schema_catalog_entries()
         if count >= SCHEMA_NORM_TRIGGER:
             await self.run()
 
@@ -5840,6 +6117,30 @@ class WatchdogAgent:
             )
             print("[WatchdogAgent] ANTISPOOF_DISABLED alert stored")
 
+    def report_disk_threshold(
+        self,
+        level: int,
+        percent_used: float,
+        free_bytes: int,
+        severity: str,
+    ) -> None:
+        """Store a disk-space threshold crossing alert.
+
+        alert_type encodes the exact threshold (disk_warning_80, disk_warning_90,
+        disk_critical_95) so the dashboard can distinguish them.
+        Called from core/disk_monitor.check_disk_thresholds; idempotency is
+        managed there via _last_disk_alert_level module state.
+        """
+        alert_type = f"disk_critical_{level}" if level >= 95 else f"disk_warning_{level}"
+        self._db.store_alert(
+            alert_type,
+            severity,
+            f"Disk usage crossed {level}% threshold — {percent_used:.1f}% used, "
+            f"{free_bytes // 1_000_000}MB free.",
+            {"percent_used": percent_used, "free_bytes_at_alert": free_bytes, "level": level},
+        )
+        print(f"[WatchdogAgent] {alert_type} alert stored ({percent_used:.1f}% used)")
+
     # ── periodic checks ───────────────────────────────────────────────────────
 
     def _check_silent_obs_anomaly(self) -> None:
@@ -5903,6 +6204,10 @@ class BrainOrchestrator:
         self._graph_db_path  = graph_db_path  if graph_db_path  is not None else GRAPH_DB_PATH
         self._faces_db_path  = str(faces_db_path if faces_db_path is not None else DB_PATH)
         self._brain_db     = BrainDB(self._brain_db_path)
+        # P0.X: if a schema upgrade is pending, write the sentinel BEFORE constructing
+        # GraphDB — GraphDB.__init__ calls _init_schema() which may fail during upgrade.
+        if self._brain_db.get_graph_schema_version() < GRAPH_SCHEMA_VERSION:
+            self._mark_kuzu_dirty()
         self._graph_db     = GraphDB(self._graph_db_path)
         # Separate read-only connection to faces.db — WAL mode allows this
         # to coexist safely with pipeline writes.
@@ -5934,7 +6239,24 @@ class BrainOrchestrator:
         # as disputed (speaker contradicted the sensor). While listed, extraction is
         # paused so we don't pollute either person's knowledge with contradictory facts.
         self._disputed_persons:    set[str]          = set()
+        self._kuzu_degraded: bool = False
         self._ensure_graph_sync()
+
+    def _kuzu_sentinel_path(self) -> "Path":
+        p = Path(self._graph_db_path)
+        return p.parent / (p.name + ".dirty")
+
+    def _mark_kuzu_dirty(self) -> None:
+        try:
+            self._kuzu_sentinel_path().touch()
+        except Exception:
+            pass  # CLEANUP: sentinel write failure is non-fatal
+
+    def _clear_kuzu_dirty(self) -> None:
+        try:
+            self._kuzu_sentinel_path().unlink(missing_ok=True)
+        except Exception:
+            pass  # CLEANUP: sentinel clear failure is non-fatal
 
     def _ensure_graph_sync(self) -> None:
         """Rebuild graph from SQLite if needed.
@@ -5943,40 +6265,70 @@ class BrainOrchestrator:
         1. Cold start / crash recovery: graph is empty but SQLite has rows.
         2. Schema upgrade: GRAPH_SCHEMA_VERSION bumped — Kuzu REL tables can't
            be ALTER TABLE'd, so we wipe the graph and rebuild with new schema.
+
+        P0.X atomicity discipline:
+        - Sentinel written BEFORE any destructive Kuzu op (eager sentinel).
+        - SQL version bump committed BEFORE drop_schema/init_schema (SQL-first).
+        - Boot: sentinel OR entity-count mismatch → rebuild.
+        - Rebuild failure at boot → degraded mode (no raise from __init__).
         """
-        stored_version = self._brain_db._conn.execute(
-            "SELECT graph_schema_version FROM brain_state WHERE singleton = 1"
-        ).fetchone()[0]
+        stored_version = self._brain_db.get_graph_schema_version()
 
         need_rebuild = False
         if stored_version < GRAPH_SCHEMA_VERSION:
-            # Schema changed (e.g. valid_at column added in v1)
             print(
                 f"[BrainAgent] Graph schema v{stored_version}→v{GRAPH_SCHEMA_VERSION}: "
                 "wiping Kuzu graph for rebuild with new schema"
             )
-            # DROP + re-CREATE tables so _init_schema() is not a no-op.
-            # wipe() only deletes rows; Kuzu cannot ALTER rel table columns.
-            self._graph_db.drop_schema()
-            self._graph_db._init_schema()
-            self._brain_db._conn.execute(
-                "UPDATE brain_state SET graph_schema_version = ? WHERE singleton = 1",
-                (GRAPH_SCHEMA_VERSION,),
-            )
-            self._brain_db._conn.commit()
-            need_rebuild = True
+            # 1. Eager sentinel BEFORE any destructive op.
+            self._mark_kuzu_dirty()
+            # 2. SQL-first: commit version bump before touching Kuzu.
+            self._brain_db.update_graph_schema_version(GRAPH_SCHEMA_VERSION)
+            # 3. Kuzu ops AFTER SQL commit — wrapped for degraded-mode boot on failure.
+            try:
+                self._graph_db.drop_schema()
+                self._graph_db._init_schema()
+                need_rebuild = True
+            except Exception as e:
+                self._kuzu_degraded = True
+                print(f"[BrainAgent] Graph schema migration failed — degraded mode: {e!r}")
 
-        if need_rebuild or self._graph_db.is_empty():
+        # Boot reconciliation: sentinel OR entity-count mismatch.
+        if not need_rebuild:
+            if self._kuzu_sentinel_path().exists():
+                need_rebuild = True
+            else:
+                sql_entity_count = self._brain_db.count_active_knowledge_entities()
+                kuzu_entity_count = self._graph_db.entity_count()
+                if sql_entity_count != kuzu_entity_count:
+                    need_rebuild = True
+
+        if need_rebuild and not self._kuzu_degraded:
             knowledge_rows = self._brain_db.get_all_knowledge_rows()
-            if knowledge_rows:
-                self._graph_db.rebuild(knowledge_rows)
-                print(f"[BrainAgent] Graph rebuilt from {len(knowledge_rows)} SQLite rows")
+            try:
+                if knowledge_rows:
+                    self._graph_db.rebuild(knowledge_rows)
+                    print(f"[BrainAgent] Graph rebuilt from {len(knowledge_rows)} SQLite rows")
+                self._clear_kuzu_dirty()
+            except Exception as e:
+                self._kuzu_degraded = True
+                print(f"[BrainAgent] Graph rebuild failed at boot — degraded mode: {e!r}")
 
     def _schedule_startup_tasks(self) -> None:
         """Schedule background tasks that should run once after startup."""
         asyncio.create_task(self._schema_norm.maybe_run())
         asyncio.create_task(self._pattern_agent.maybe_run())
         asyncio.create_task(self._backfill_embeddings())   # Item 5: embed pre-Phase-3 rows
+
+    @property
+    def brain_db(self) -> "BrainDB":
+        """Public read access to the brain knowledge store.
+
+        Pipeline query paths (visitor alerts, room context, core memory,
+        knowledge search, intent logging) use this instead of reaching
+        through the private _brain_db attribute. P1.A1-slice layering fix.
+        """
+        return self._brain_db
 
     def notify(self) -> None:
         """Wake the brain agent immediately to process new turns.
@@ -5997,32 +6349,69 @@ class BrainOrchestrator:
         self._disputed_persons.discard(person_id)
 
     def on_identity_confirmed(self, person_id: str, old_name: str, new_name: str) -> None:
-        """Run the full identity promotion chain when a stranger's name is confirmed.
+        """Atomic-within-brain.db identity promotion chain.
 
-        Called synchronously from the pipeline AFTER faces.db has already been
-        updated (update_person_name + update_person_type). Order matters:
+        Storage ordering (caller must have already committed faces.db):
+            1. CALLER (before this fn): faces.db UPDATE persons SET name=?, type=?  (atomic)
+            2. brain.db transaction (this fn) — all-or-nothing:
+               - migrate_entity_name(old, new, person_id)
+               - promote_shadow_to_confirmed(new, person_id)
+               - update_visitor_alert_for_promoted_person(person_id, new)
+               - get_knowledge_rows_for_kuzu (read-after-write, sees post-rename rows)
+            3. brain_graph: rebuild_entity_from_knowledge (after brain.db commit)
 
-        1. migrate_entity_name  — rename entity in SQLite knowledge rows
-                                  (person_id-scoped to avoid touching other strangers)
-        2. rebuild_entity_from_knowledge — push renamed rows into Kuzu graph
-                                  (creates new entity node; old shared node untouched)
-        3. promote_shadow_to_confirmed   — link shadow node + copy shadow facts
-                                  into knowledge table as first-class rows
+        Crash recovery:
+            - Crash between step 1 and 2: faces.db has new name; brain.db rolls back;
+              old facts still under old name. Re-running promotion is idempotent.
+            - Crash mid-step-2: brain.db rolls back atomically.
+            - Crash between step 2 and 3: brain.db consistent; graph stale.
+              rebuild_entity_from_knowledge self-heals on next graph access.
         """
-        self._brain_db.migrate_entity_name(old_name, new_name, person_id)
-        kuzu_rows = self._brain_db.get_knowledge_rows_for_kuzu(person_id, new_name)
-        self._graph_db.rebuild_entity_from_knowledge(new_name, kuzu_rows)
-        self._brain_db.promote_shadow_to_confirmed(new_name, person_id)
-        # Session 114 Part 5 — visitor alert dedup at promotion time.
-        # Pre-promotion alert (queued while pid was 'stranger') would
-        # otherwise sit alongside the post-promotion alert in
-        # get_recent_visitor_alerts, so the owner gets two notifications
-        # about the same person. Update existing alerts in-place to use
-        # the new name + 'known' type so the read path naturally returns
-        # one canonical row.
-        self._brain_db.update_visitor_alert_for_promoted_person(
-            person_id, new_name,
-        )
+        kuzu_rows = None
+        try:
+            with self._brain_db.transaction():
+                self._brain_db.migrate_entity_name(old_name, new_name, person_id)
+                self._brain_db.promote_shadow_to_confirmed(new_name, person_id)
+                # Session 114 Part 5 — visitor alert dedup at promotion time.
+                self._brain_db.update_visitor_alert_for_promoted_person(
+                    person_id, new_name,
+                )
+                # Read-after-write within the transaction sees post-rename rows.
+                kuzu_rows = self._brain_db.get_knowledge_rows_for_kuzu(person_id, new_name)
+        except Exception as e:
+            print(
+                f"[BrainOrchestrator] on_identity_confirmed brain.db transaction failed: {e!r}"
+            )
+            raise  # RAISE: caller must know
+
+        if self._graph_db and kuzu_rows is not None:
+            self._mark_kuzu_dirty()  # Eager sentinel BEFORE Kuzu op.
+            try:
+                self._graph_db.rebuild_entity_from_knowledge(new_name, kuzu_rows)
+                self._clear_kuzu_dirty()
+            except Exception as e:
+                print(
+                    f"[BrainOrchestrator] on_identity_confirmed graph rebuild failed "
+                    f"(brain.db OK, sentinel written for next-boot): {e!r}"
+                )
+                raise  # RAISE: sentinel preserved for next-boot
+
+    def _persist_extraction_to_kuzu(self, facts, turn_id: int) -> None:
+        """Write extracted facts to Kuzu graph. SWALLOW pattern — brain.db is authoritative.
+
+        P0.X: degraded mode or Kuzu write failure → sentinel written, exception swallowed.
+        """
+        if self._kuzu_degraded:
+            return
+        try:
+            for fact in facts:
+                self._graph_db.upsert_entity(fact.entity, fact.entity_type)
+        except Exception as e:
+            self._mark_kuzu_dirty()  # SWALLOW: sentinel for next-boot heal
+            print(
+                f"[BrainAgent] Kuzu write failed in _persist_extraction_to_kuzu "
+                f"(turn {turn_id}): {e!r}"
+            )
 
     def notify_session_end(self, person_id: str) -> None:
         """Called on face-loss for any person with an active session.
@@ -6210,28 +6599,18 @@ class BrainOrchestrator:
         try:
             # Pull distinct entity values extracted from turns logged by
             # any speaker in this room during the window.
-            placeholders = ",".join("?" for _ in speaker_pids)
-            tag_rows = self._brain_db._conn.execute(
-                f"SELECT entity, COUNT(*) AS n FROM knowledge "
-                f"WHERE person_id IN ({placeholders}) "
-                f"AND created_at >= ? AND created_at <= ? "
-                f"GROUP BY entity ORDER BY n DESC LIMIT 10",
-                (*speaker_pids, started_at, ended_at),
-            ).fetchall()
-            topic_tags = [entity for entity, _n in tag_rows if entity]
+            topic_tags = self._brain_db.get_knowledge_topic_tags_for_persons(
+                speaker_pids, started_at, ended_at
+            )
         except Exception as _ex:
             print(f"[Room] synthesize_room topic aggregation failed: {_ex!r}")
 
         # --- (B) Safety flag aggregation ----------------------------------
         safety_flags: list[dict] = []
         try:
-            safety_rows = self._brain_db._conn.execute(
-                f"SELECT person_id, entity, attribute, value FROM knowledge "
-                f"WHERE person_id IN ({placeholders}) "
-                f"AND created_at >= ? AND created_at <= ? "
-                f"AND invalidated_at IS NULL",
-                (*speaker_pids, started_at, ended_at),
-            ).fetchall()
+            safety_rows = self._brain_db.get_knowledge_rows_for_persons(
+                speaker_pids, started_at, ended_at
+            )
             for pid, entity, attr, value in safety_rows:
                 is_safety = any(
                     _re_sr.match(pat, attr or "") for pat in _SAFETY_PAT
@@ -6397,13 +6776,8 @@ class BrainOrchestrator:
         # safety-flag regardless of whether the specific query path hits.
         safety_flags: list[str] = []
         try:
-            safety_rows = self._brain_db._conn.execute(
-                "SELECT DISTINCT attribute FROM knowledge "
-                "WHERE person_id = ? AND invalidated_at IS NULL "
-                "AND (value = 'true' OR value = 'yes')",
-                (person_id,),
-            ).fetchall()
-            for (_attr,) in safety_rows:
+            safety_rows = self._brain_db.get_true_valued_attributes(person_id)
+            for _attr in safety_rows:
                 if _is_safety_critical_attribute(_attr):
                     safety_flags.append(_attr)
         except Exception as _sfx:
@@ -6478,6 +6852,21 @@ class BrainOrchestrator:
     def report_api_recovered(self) -> None:
         """Mark API_FAILURE alerts resolved after recovery."""
         self._watchdog.resolve_api_failure()
+
+    def report_disk_threshold(
+        self,
+        level: int,
+        percent_used: float,
+        free_bytes: int,
+        severity: str,
+    ) -> None:
+        """Surface a disk-space threshold crossing alert via the watchdog."""
+        self._watchdog.report_disk_threshold(
+            level=level,
+            percent_used=percent_used,
+            free_bytes=free_bytes,
+            severity=severity,
+        )
 
     def get_alerts_summary(self) -> str | None:
         """Return a formatted summary of unresolved watchdog alerts (for state.json)."""
@@ -6600,7 +6989,7 @@ class BrainOrchestrator:
             if r:
                 _ptype = r[0] or "?"
         except Exception:
-            pass
+            pass  # OPTIONAL: enriches log rationale only — triage decision already made above
         _rationale = (
             f"role={role}, words={_word_count}, person_type={_ptype}"
         )
@@ -6667,8 +7056,14 @@ class BrainOrchestrator:
         # double SELECT for each REPLACE fact.
         conflict_counts: dict[str, int] = {}
 
+        # Wave 2 Item 10: pre-fetch all distinct entities in one bulk query
+        # instead of calling get_active_knowledge once per extraction fact.
+        # O(facts) DB reads → O(1) DB reads per turn.
+        _distinct_entities = list({ext.entity for ext in extractions})
+        _existing_by_entity = self._brain_db.get_active_knowledge_for_entities(_distinct_entities)
+
         for ext in extractions:
-            stored      = self._brain_db.get_active_knowledge(ext.entity)
+            stored      = _existing_by_entity.get(ext.entity, [])
             conflicting = [s for s in stored if s["attribute"] == ext.attribute]
             if conflicting:
                 conflicts.append((ext, conflicting[0]["value"]))
@@ -6696,6 +7091,7 @@ class BrainOrchestrator:
                 try:
                     self._graph_db.invalidate_fact(ext.entity, ext.attribute)
                 except Exception as e:
+                    self._mark_kuzu_dirty()  # SWALLOW: sentinel for next-boot heal
                     print(f"[BrainAgent] Graph invalidate error: {e}")
                 self._brain_db.increment_predicate_contradiction(ext.attribute)
                 self._brain_db.log_agent(
@@ -6844,14 +7240,7 @@ class BrainOrchestrator:
             print(f"[HouseholdAgent] phantom-check enrolled-name fetch failed: {_ex!r}")
         try:
             cutoff = time.time() - 86400.0
-            rows = self._brain_db._conn.execute(
-                "SELECT known_name FROM shadow_persons "
-                "WHERE last_mentioned >= ?",
-                (cutoff,),
-            ).fetchall()
-            for r in rows:
-                if r[0]:
-                    names.append(r[0])
+            names.extend(self._brain_db.get_shadow_person_names_since(cutoff))
         except Exception as _ex:
             print(f"[HouseholdAgent] phantom-check recent-shadows fetch failed: {_ex!r}")
         # Dedupe (case-insensitive) preserving first occurrence.
@@ -7411,7 +7800,7 @@ class BrainOrchestrator:
                 try:
                     self._graph_db.invalidate_fact(entity, f["attribute"])
                 except Exception:
-                    pass
+                    self._mark_kuzu_dirty()  # SWALLOW: brain.db is authoritative, sentinel for next-boot heal
                 self._brain_db.log_agent(
                     turn_id, "retro_scan",
                     f"invalidated: {entity}.{f['attribute']}",
@@ -7603,15 +7992,12 @@ class BrainOrchestrator:
                     person_id, ptype, content, source=source
                 )
                 if is_new and new_emb is not None:
-                    _row = self._brain_db._conn.execute(
-                        "SELECT id FROM prompt_prefs "
-                        "WHERE person_id=? AND pref_type=? AND content=? "
-                        "ORDER BY id DESC LIMIT 1",
-                        (person_id, ptype, content),
-                    ).fetchone()
-                    if _row:
+                    _pref_id = self._brain_db.get_latest_pref_id(
+                        person_id, ptype, content
+                    )
+                    if _pref_id is not None:
                         self._brain_db.set_pref_embedding(
-                            _row[0],
+                            _pref_id,
                             _np_l.asarray(new_emb, dtype=_np_l.float32).tobytes(),
                         )
                 status = "activated (new)" if is_new else "seen again (+1 session)"
@@ -7674,15 +8060,15 @@ class BrainOrchestrator:
         try:
             self._brain_db.close()
         except Exception:
-            pass
+            pass  # CLEANUP: best-effort close before factory-reset file deletion
         try:
             self._faces_conn.close()
         except Exception:
-            pass
+            pass  # CLEANUP: best-effort close before factory-reset file deletion
         try:
             self._graph_db.close()
         except Exception:
-            pass
+            pass  # CLEANUP: best-effort close before factory-reset file deletion
 
     def reopen_connections(self) -> None:
         """Re-open all database connections after wipe_all() has deleted the files.
