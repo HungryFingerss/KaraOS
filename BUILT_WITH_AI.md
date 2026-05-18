@@ -63,13 +63,15 @@ Each pattern below has a multi-cycle empirical track record. Patterns are "banke
 
 **The discipline:** every structural invariant ships with an induction protocol that deliberately exercises the failure mode it is meant to prevent. The induction is the test of the invariant, not the test of the production code. When induction surfaces a gap (either in the invariant's coverage or in production code), the gap is closed in the same cycle, not deferred.
 
-**Track record (5×):**
+**Track record (7×):**
 
 - **Store-pattern migration closure** — 8 deliberate-regression checks induced field-drift, unenumerated-writer, paired-write-atomicity, producer-copy, peek-not-mutate, ratchet-bypass, autouse-fixture-coverage, and prior-state-guard violations across 8 typed Store classes. All 8 fired correctly with useful error messages.
 - **Tool-timeout structural invariants** — induced a synchronous `.execute()` loop without `await asyncio.sleep(0)` checkpoint (would break transaction rollback on `wait_for` cancellation) and flipped `include_tools=False` → `True` on the retry path (would re-enable tools recursively). Both AST-based invariants fired correctly.
 - **Atomic-replace for shared dict (`_persistent`)** — three deliberate-regression checks; the third surfaced a detector gap (attribute-form access from external modules wasn't caught alongside bare-name access in the owning module). Detector strengthened in the same cycle to scan both shapes.
 - **Brain LLM JSON parser hardening** — Hypothesis property-based tests (1000 examples per test) induced two real production bugs: `_parse_json` returned non-dict types on valid scalar JSON (contract violation), and `_parse_intent_sidecar` didn't catch Python 3.11+ `ValueError` on oversized integer strings (DoS vector). Both fixed in the same sub-PR with regression tests pinned to the falsifying inputs.
 - **Caller-audit downstream regression catch** — auditing every caller of the parser hardening above surfaced one real downstream regression (a list-shape branch became unreachable after the parser's contract was narrowed). Fix landed in the same cycle via a sibling `_parse_json_array` parser preserving the old contract for that one call site.
+- **Event-log fixture coverage gate** — a round-trip test asserting every event_type in the closed registry deserializes correctly surfaced one event_type (`presence_state`) missing from the canonical scenario fixtures. Added to the relevant scenario builder in the same cycle. The induction was an exhaustive-set coverage check, not a behavior probe — and it caught a real omission before the fixtures shipped as reusable test infrastructure.
+- **Full-suite verification catches subset-blind regression** — Steps 4-5 of the event-log work claimed "no regressions" based on a subset run that excluded the silent-except invariant test. Full-suite verification surfaced 12 P0.4 silent-except violations at the producer-hook surface. Fix consolidated into a single annotated swallow helper (see developer-improves-on-spec instance below) in the same cycle. Process lesson banked: subset verification is necessary but not sufficient.
 
 **Operational rule:** mid-flight production fixes from induction findings are NOT scope creep — they are the protocol working. The whole point of inducing a violation is to find out whether the test catches it; if the test catches a real bug while you're at it, that's the discipline paying its rent.
 
@@ -77,13 +79,14 @@ Each pattern below has a multi-cycle empirical track record. Patterns are "banke
 
 **The discipline:** for sub-PRs estimated > 1 day, the workflow is: Phase 0 audit → D1-Dn decisions surfaced → Plan v1 → architect/auditor review → Plan v2 → code. Phase 0 is grep-verified findings reported BEFORE any test code is written; Plan v1 is the first complete spec; architect/auditor feedback drives a Plan v2 revision before any code lands.
 
-**Track record (5-for-5 across multi-day sub-PRs):**
+**Track record (6-for-6 across multi-day sub-PRs):**
 
 - **Store-pattern migration** — retired 28 module-level mutable globals in pipeline.py and replaced them with 8 typed Store classes (`asyncio.Lock`-guarded async mutators, sync `peek_*` reads, atomic snapshots). +362 tests across the arc.
 - **Typed session state foundation** — replaced the pre-existing `_active_sessions: dict` with a typed `SessionStore` + frozen `SessionSnapshot` immutable views, with structural invariants enforcing single-writer discipline and no-raw-dict-leak across the entire pipeline.
 - **Per-tool timeout protection** — every LLM-callable tool handler wrapped in `asyncio.wait_for` with per-tool wall-clock budgets and cancellation-safe partial SQL rollback; covers dispatch-routed tools AND inline tools (Tavily web search).
 - **Schema-migrations versioning** — versioned migration ledger across all 3 SQLite databases (faces.db, brain.db, classifier_scenarios.db); 19 historical schema mutations retrofitted into the ledger; bootstrap routine handles fresh / legacy-fully-migrated / partially-migrated DB shapes; live-production-DB validation gate before legacy idempotency paths deleted.
 - **Reconciler legacy-router deletion** — deleted a 270-line legacy voice-routing function and its 54 direct-call tests, replaced with a rule-cascade reconciler under structural invariants. Phase 0 audit caught the wrong premise before code was written (see worked example below).
+- **Event log + replay harness** — full event-sourcing foundation across 9 staged steps. Phase 0 boundary audit → Plan v1 with locked D1-D8 decisions → Plan v2 with R1-R5 mid-spec refinements → code phase. 12 typed payload dataclasses, exactly-one-producer-per-event-type AST invariant, 11 producer hooks at 12 sites, read-only replay CLI, reusable scenario fixtures consumed by the next sub-PR's regression tests, health-log integration via observability counters.
 
 **Spec-time investment pays back 2-4× in mid-flight rework avoided.** Every cycle that skipped the Phase 0 audit hit larger surprises. The reconciler refactor specifically saved an entire spec-cycle of rework — see the worked example below.
 
@@ -101,7 +104,7 @@ Each pattern below has a multi-cycle empirical track record. Patterns are "banke
 
 **The discipline:** when implementation reveals a better path that preserves the spec's architectural intent, bank the improvement explicitly in the closure report so the architect/auditor sees the deviation + rationale.
 
-**Track record (4-for-4):**
+**Track record (5-for-5):**
 
 - **Internal-contract recognition in retry-path invariant** — spec named external call sites as the invariant target ("every caller of the retry function must pass `include_tools=False`"). Developer's caller audit found the actual contract was internal — the retry function doesn't accept `include_tools` as a parameter by design; the override happens inside the function body when it calls a deeper LLM helper. Developer rewrote the invariant to verify the internal contract directly. Strictly stronger guarantee.
 
@@ -110,6 +113,8 @@ Each pattern below has a multi-cycle empirical track record. Patterns are "banke
 - **Split verification function for data-backfill migrations** — spec defined migrations as 4-tuples `(version, description, apply, verify)`. Developer split `verify` into `verify_post` (runner uses after the migration applies, asserts the post-condition) and `verify_present` (bootstrap uses to detect "is this already done on a legacy DB?"). For schema-only migrations these collapse to the same predicate; for data backfills they diverge sharply — conflating them would let bootstrap stamp `is_initial=1` on a partially-backfilled DB, and the runner would never finish the data migration. Real correctness issue, developer-caught.
 
 - **Band-divergence retargeting in reconciler shadow-log** — spec said *"extend the existing divergence-log block with more fields, don't change the trigger condition."* The reconciler-deletion plan would remove the legacy variable that the existing trigger compared against, so the original trigger becomes unworkable. Developer retargeted to band-divergence detection (firing rule not in expected-rule set for the utterance-duration band), preserving the gate criteria semantically while making the check independent of the legacy code being deleted. Architecturally cleaner than the spec.
+
+- **Swallow-helper consolidation across producer-hook surface** — auditor's structural-invariant remediation prescribed annotating each of 12 per-call-site try/except blocks at the producer-hook surface with the `# OPTIONAL:` annotation that satisfies the silent-except invariant. Developer instead consolidated to a single `safe_emit_sync(...)` helper carrying one annotated except, with all 12 hook sites delegating to it. 12 violations collapsed into 1 annotated except + 12 unannotated call sites; future hooks automatically inherit the swallow-discipline without an annotation step. Same shape as a prior `_TOOL_HANDLERS` consolidation in the per-tool timeout work — strictly better than the patch the auditor proposed.
 
 This pattern emerges *because* of the spec-contracts-not-implementations discipline. If the spec locked mechanism, the developer couldn't propose better mechanism without violating the spec. Pairing the two disciplines is what makes the developer's careful-reading useful instead of insubordinate.
 

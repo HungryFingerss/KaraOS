@@ -169,7 +169,8 @@ Store-pattern migration final closure          (suite at 2,079)
   → Versioned schema-migration ledger arc       (+47 tests across 3 sub-phases)
   → Legacy voice-router deletion                (-15 raw, +40 architectural coverage)
   → Tiered CI scaffold + dashboard auth tripwire (+19 tests with polish)
-                                                = 2,179
+  → Event log + replay harness                  (+36 tests across 9 staged steps)
+                                                = 2,215
 ```
 
 The `-15` raw count for the legacy-router deletion reflects deletion of a 270-line legacy function and its 54 direct-call tests, replaced with 40 contract / invariant / per-rule behavioral tests. Architectural coverage measurably increased; raw test count decreased. This is the natural outcome of legacy-deletion phases with replacement — not a regression.

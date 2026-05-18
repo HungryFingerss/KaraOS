@@ -103,10 +103,10 @@ The workflow:
 
 Four architectural disciplines have emerged and been validated across 10+ multi-day sub-PRs:
 
-- **Induction-surfaces-invariant-gaps** (5× validated) — every structural invariant ships with a deliberate-regression check that exercises its failure mode. Property-based testing (Hypothesis, 1000 examples per test) surfaces real production bugs the example-based suite misses.
-- **Spec-first review cycle** (5-for-5) — Phase 0 audit → Plan v1 → architect review → Plan v2 → joint sign-off → code. The most recent multi-day sub-PR (the legacy voice-router deletion) had its Phase 0 audit catch a wrong premise that would have re-introduced a bug in production after the legacy code was deleted — single largest spec-cycle save in the project's history.
+- **Induction-surfaces-invariant-gaps** (7× validated) — every structural invariant ships with a deliberate-regression check that exercises its failure mode. Property-based testing (Hypothesis, 1000 examples per test) surfaces real production bugs the example-based suite misses.
+- **Spec-first review cycle** (6-for-6) — Phase 0 audit → Plan v1 → architect review → Plan v2 → joint sign-off → code. One multi-day sub-PR (the legacy voice-router deletion) had its Phase 0 audit catch a wrong premise that would have re-introduced a bug in production after the legacy code was deleted — single largest spec-cycle save in the project's history.
 - **Spec-contracts-not-implementations** — specs describe invariants that must hold, not code shape. Developers find the best mechanism.
-- **Developer-improves-on-spec-by-reading-carefully** (4-for-4) — when implementation reveals a better path that preserves the spec's architectural intent, the developer surfaces the improvement in the closure report. Pairs with the prior discipline.
+- **Developer-improves-on-spec-by-reading-carefully** (5-for-5) — when implementation reveals a better path that preserves the spec's architectural intent, the developer surfaces the improvement in the closure report. Pairs with the prior discipline.
 
 The result is a codebase where:
 
