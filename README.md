@@ -1,16 +1,17 @@
 # KaraOS
 
-**Cognitive runtime above GR00T**
+**Privacy-first multi-person cognitive AI**
+*Designed as the cognitive layer for embodied systems.*
 
 ---
 
 ## What it is
 
-A companion AI for social robots. Built to be present, not just useful.
+A companion AI for households. Built to be present, not just useful.
 
 Most AI today answers questions. This one keeps you company.
 
-Kara-OS is the cognitive layer for a robot companion — the part that recognizes who you are, remembers your conversations, reads the room, and knows when to speak and when to stay quiet. The hardware comes later. The mind comes first.
+Kara-OS is the cognitive layer — the part that recognizes who you are, remembers your conversations, reads the room, and knows when to speak and when to stay quiet. It's the mind a robot companion or ambient home AI would need. The hardware comes later. The mind comes first.
 
 It's designed to feel less like a product and more like a presence.
 
@@ -44,9 +45,9 @@ It's not optimized to be impressive. It's optimized to be there. Quiet when you 
 
 ## Status
 
-The cognitive layer is real, working, and validated through 1,314 automated tests and live multi-person sessions. It runs locally — your home, your data. Hardware integration is the next chapter.
+The cognitive layer is real, working, and validated through **2,179 automated tests** and live multi-person sessions. It runs locally — your home, your data. Hardware integration is the next chapter.
 
-What you'd see in a live demo today: a robot that knows who's home, remembers what they care about, holds a conversation that actually goes somewhere, and handles a room of people without losing track.
+What you'd see in a live demo today: a system that knows who's home, remembers what each person cares about, holds a conversation that actually goes somewhere, handles a room of people without losing track, and refuses to fabricate when it doesn't know.
 
 ---
 
@@ -87,6 +88,36 @@ The gap between 31.4% and 1.9% is structural, not a defect. A robot living in yo
 Full benchmark journey, all three result runs, comparison tables, methodology, honest caveats, and reproducibility: [`published-papers-tests/results/RESULTS.md`](published-papers-tests/results/RESULTS.md).
 
 For a high-level walkthrough of how the system actually works — identity, memory, privacy, conversation, the new graph classifier, safety — see [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
+---
+
+## How this was built
+
+KaraOS is a solo project built in close collaboration with Claude (Anthropic's frontier model) over several months. Not as a code-generation tool, and not as a chat assistant — as an architect, auditor, and developer working under explicit discipline.
+
+The workflow:
+
+1. **Architect role** — writes phase specs as contracts (invariants that must hold), not implementations (code shape). Each multi-day sub-PR starts with a Phase 0 audit: grep-verified findings, zero production-code changes, surfaces decisions before any test is written.
+2. **Auditor role** — independent review pass before sign-off. Locks decisions (D1-Dn) explicitly, then reviews Plan v1 → revisions → Plan v2 → joint sign-off → code starts.
+3. **Developer role** — implements against the contract, surfaces better mechanisms when careful reading reveals them, flags deviations in closure reports.
+
+Four architectural disciplines have emerged and been validated across 10+ multi-day sub-PRs:
+
+- **Induction-surfaces-invariant-gaps** (5× validated) — every structural invariant ships with a deliberate-regression check that exercises its failure mode. Property-based testing (Hypothesis, 1000 examples per test) surfaces real production bugs the example-based suite misses.
+- **Spec-first review cycle** (5-for-5) — Phase 0 audit → Plan v1 → architect review → Plan v2 → joint sign-off → code. The most recent multi-day sub-PR (the legacy voice-router deletion) had its Phase 0 audit catch a wrong premise that would have re-introduced a bug in production after the legacy code was deleted — single largest spec-cycle save in the project's history.
+- **Spec-contracts-not-implementations** — specs describe invariants that must hold, not code shape. Developers find the best mechanism.
+- **Developer-improves-on-spec-by-reading-carefully** (4-for-4) — when implementation reveals a better path that preserves the spec's architectural intent, the developer surfaces the improvement in the closure report. Pairs with the prior discipline.
+
+The result is a codebase where:
+
+- Every structural invariant is CI-enforced (~30+ AST-based ratchets across paired writes, sync-mutator allowlists, sentinel disciplines, rule-cascade ordering, migration ledger schemas)
+- Every audit log entry is replayable
+- Every legacy-deletion phase is gated on live production validation, not just pytest-green
+- Every claim in this README maps to either a passing test or an explicit limitation statement
+
+For a deeper walkthrough of the engineering process, the four banked disciplines, and a worked example covering the recent voice-router refactor end-to-end, see [`BUILT_WITH_AI.md`](BUILT_WITH_AI.md).
+
+For where this is going — embodied integration via ROS 2, the Adapter SDK + conformance suite for partner robots, and the architectural decisions distinguishing this from "another robotics demo" — see [`ROADMAP.md`](ROADMAP.md).
 
 ---
 

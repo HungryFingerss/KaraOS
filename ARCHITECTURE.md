@@ -142,11 +142,39 @@ Full benchmark journey, all three runs in detail, methodology, comparison table,
 
 ## Engineering discipline
 
-- **1,314 automated tests** spanning identity, memory, privacy enforcement, room orchestration, conversation, intent classification, the graph classifier, and safety preservation
-- **Closed-world privacy regression tests** assert internal state is never reachable through user-facing query paths
+- **2,179 automated tests** spanning identity, memory, privacy enforcement, room orchestration, conversation, intent classification, the graph classifier, schema migrations, atomic SQLite, cross-storage reconciliation, tool timeouts, and safety preservation
+- **~30 structural invariants enforced at CI time via AST ratchets** — every paired-write site is enumerated (FAISS↔SQL, brain.db↔Kuzu), every sync mutator on a Store class is allowlist-gated, every migration entry must carry a `verify_post` + `verify_present` companion, every rule in the routing cascade has a `LOWER_BOUND` attribute and the band-ordering is non-decreasing, every retry path uses BEGIN IMMEDIATE on SQLite, every tool handler with a sync loop must have an `await asyncio.sleep(0)` checkpoint so transaction rollback fires on `wait_for` cancellation. The discipline is: turn coding conventions into invariants, then turn invariants into CI-enforced AST scans
+- **Closed-world privacy regression tests** assert internal state is never reachable through user-facing query paths; a separate `system_only` privacy tier is structurally invisible to every retrieval path including the owner's
+- **Versioned schema-migration ledger** across all three SQLite databases — every historical mutation retrofitted into numbered `_m_NNNN_apply` / `_m_NNNN_verify_post` / `_m_NNNN_verify_present` tuples; bootstrap routine handles fresh / legacy / partially-migrated DBs separately; live-production-DB validation gate runs before legacy idempotency paths are deleted
+- **Three-gate safety model for cross-storage atomicity** — SQL-first transactional ordering + dirty sentinels + boot reconciliation with `_faiss_degraded` / `_kuzu_degraded` fallback. A crash between SQL commit and FAISS/Kuzu write leaves a sentinel; next boot detects mismatch and rebuilds from authoritative storage. Tested with crash-injection across all 5 paired-write methods
+- **Per-tool wall-clock timeouts** with cancellation-safe partial SQL rollback — `asyncio.wait_for` wraps every tool handler; on timeout, `CancelledError` propagates through `async with transaction(): __aexit__` and ROLLBACK fires before any partial write commits. Verified with the hard case (synchronous SQL loop with periodic checkpoints, 1ms forced timeout — count of inserted rows = 0)
+- **Property-based testing (Hypothesis)** for parser-shaped contracts — 1000 examples per test surfaces real production bugs example-based tests can't reach. Found and fixed two production bugs in `_parse_json` (non-dict return on valid scalar JSON) and `_parse_intent_sidecar` (uncaught `ValueError` on Python 3.11+ int-string DoS) in the same sub-PR they were surfaced
 - **Golden corpus** for the intent classifier with append-only regression rows; classifier prompt changes trigger explicit hash-based drift detection
 - **Shadow-mode classifiers** logging divergences between primary and fallback paths, so production drift is visible the moment it appears
 - **External benchmark** validated, with full methodology and an honest record of what was tried, what worked, and what was rolled back
+- **Tiered CI scaffold** — fast tier runs on every push + PR (≤5 min target), slow tier nightly with HF model cache, security tier weekly via pip-audit + Trivy. The ~30 banked invariants run on every PR; legacy idempotency patterns can't sneak back in past code review
+
+### Test progression across the recent correctness arc
+
+Each entry below corresponds to a multi-day sub-PR that ran through the full Phase 0 audit → Plan v1 → architect/auditor review → Plan v2 → code → closure discipline.
+
+```
+Store-pattern migration final closure          (suite at 2,079)
+  → Per-tool wall-clock timeouts                (+14 tests)
+  → Network-tool timeout extension              (+3 tests)
+  → Structural invariants for the above         (+2 tests)
+  → Atomic-replace for shared module dict       (+4 tests)
+  → Brain JSON parser hardening (Hypothesis)    (+33 tests)
+  → Caller-audit downstream regression fix      (+3 tests)
+  → Versioned schema-migration ledger arc       (+47 tests across 3 sub-phases)
+  → Legacy voice-router deletion                (-15 raw, +40 architectural coverage)
+  → Tiered CI scaffold + dashboard auth tripwire (+19 tests with polish)
+                                                = 2,179
+```
+
+The `-15` raw count for the legacy-router deletion reflects deletion of a 270-line legacy function and its 54 direct-call tests, replaced with 40 contract / invariant / per-rule behavioral tests. Architectural coverage measurably increased; raw test count decreased. This is the natural outcome of legacy-deletion phases with replacement — not a regression.
+
+The phases above are tracked internally with sequential identifiers (e.g. "P0.10" is the legacy voice-router deletion; "P0.9" is the schema migration ledger). The identifiers are project bookkeeping; the work itself is what's described above.
 
 ---
 
