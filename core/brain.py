@@ -73,6 +73,7 @@ from core.config import (
     VOICE_ACCUM_VOICE_SELF_MATCH_MIN,
     VOICE_ACCUM_MATURE_SAMPLE_COUNT,
     CORE_MEMORY_ENABLED,
+    TOOL_TIMEOUT_SECS, TOOL_TIMEOUT_OVERRIDES,
 )
 from core.log_utils import _now_log_ts
 
@@ -603,16 +604,32 @@ async def _web_search(query: str) -> "str | dict | None":
             print(f"[Brain] Tavily cache hit ({len(_cached_result)} chars): '{final_query}'")
             return _cached_result
 
+    # P0.8.1: hard wall-clock cap on the Tavily round-trip.  httpx already
+    # provides per-phase timeouts via the client config (timeout=8.0), but
+    # pathological cases (DNS hang, connection-pool starvation, kernel
+    # buffer wedges) can still produce >>8s waits in practice.  Wrap with
+    # asyncio.wait_for so search_web cannot hang the pipeline even when the
+    # underlying client misbehaves.  Budget matches the dispatch-table
+    # override TOOL_TIMEOUT_OVERRIDES["search_web"] (20s default) so all
+    # tool-timeout budgeting is config-driven from one place.  search_web
+    # is consumed inline inside ask_stream (NOT via _TOOL_HANDLERS dispatch
+    # per Session 79 architecture), so this wrap is the only enforcement
+    # site — without it, P0.8's "no tool can hang the pipeline" property
+    # would be incomplete for the single most likely real-world hang point.
+    _search_budget = TOOL_TIMEOUT_OVERRIDES.get("search_web", TOOL_TIMEOUT_SECS)
     try:
-        resp = await _tavily_http.post(
-            "https://api.tavily.com/search",
-            json={
-                "api_key":        TAVILY_API_KEY,
-                "query":          final_query,
-                "search_depth":   TAVILY_SEARCH_DEPTH,
-                "max_results":    TAVILY_MAX_RESULTS,
-                "include_answer": True,
-            },
+        resp = await asyncio.wait_for(
+            _tavily_http.post(
+                "https://api.tavily.com/search",
+                json={
+                    "api_key":        TAVILY_API_KEY,
+                    "query":          final_query,
+                    "search_depth":   TAVILY_SEARCH_DEPTH,
+                    "max_results":    TAVILY_MAX_RESULTS,
+                    "include_answer": True,
+                },
+            ),
+            timeout=_search_budget,
         )
         resp.raise_for_status()
         data         = resp.json()
@@ -634,6 +651,26 @@ async def _web_search(query: str) -> "str | dict | None":
             print(f"[Brain] Tavily answer ({len(result)} chars): '{result[:80]}{'...' if len(result) > 80 else ''}'")
             _search_cache[_cache_key] = (result, _now)
             return result
+    except asyncio.TimeoutError:
+        # P0.8.1: surface a structured timeout dict so callers route through
+        # the existing `isinstance(result, dict)` branch (same shape as the
+        # short-query / empty-query errors).  Tells the LLM the search did
+        # not complete — it can answer from training knowledge or
+        # acknowledge the network reach failed, but it must NOT pretend the
+        # search returned useful information.
+        print(
+            f"[Brain] Tavily search TIMEOUT after {_search_budget}s "
+            f"(query={final_query!r}) — surfacing structured error to LLM"
+        )
+        return {
+            "error": "timeout",
+            "hint": (
+                "Web search timed out — couldn't reach the network in time. "
+                "Answer the user from your training knowledge or tell them "
+                "honestly you couldn't reach the web; do NOT fabricate "
+                "search results."
+            ),
+        }
     except Exception as e:
         print(f"[Brain] Tavily search failed: {e}")
     return None
@@ -910,15 +947,20 @@ def _parse_intent_sidecar(raw: str) -> "dict | None":
     # as brain_agent._parse_json but kept inline to avoid cross-module
     # import just for this.
     _raw = (raw or "").strip()
+    # P0.12: also catch RecursionError (deeply-nested JSON DoS) and
+    # ValueError (Python 3.11+ rejects integer strings longer than
+    # sys.get_int_max_str_digits() — default 4300 — to prevent
+    # quadratic int-conversion DoS).  Both are observable failure modes
+    # for adversarial / malformed LLM output.
     try:
         data = json.loads(_raw)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError, ValueError):
         _start = _raw.find("{")
         _end   = _raw.rfind("}") + 1
         if _start >= 0 and _end > _start:
             try:
                 data = json.loads(_raw[_start:_end])
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, RecursionError, ValueError):
                 data = None
         else:
             data = None
@@ -1070,6 +1112,33 @@ async def _classify_intent(
 
 # ── Spec 2: graph classifier orchestrator ────────────────────────────────
 
+def _emit_intent_classification_safe(
+    result: "dict | None",
+    *,
+    user_text: str,
+    mode: str,
+    from_cache: bool = False,
+) -> "dict | None":
+    """P0.0.7 H6 single producer location for intent_classification events.
+
+    Called by every return path of `_classify_intent_smart` so D7 N=1 holds.
+    Delegates to `safe_emit_sync` so any event_log failure never breaks
+    the classifier (the single P0.4-annotated except lives in safe_emit_sync).
+    """
+    from core.event_log import safe_emit_sync, IntentClassificationPayload
+    sidecar = result if isinstance(result, dict) else {}
+    safe_emit_sync(
+        "intent_classification",
+        IntentClassificationPayload(
+            sidecar=dict(sidecar),
+            mode=mode,
+            text=user_text,
+            from_cache=from_cache,
+        ),
+    )
+    return result
+
+
 async def _classify_intent_smart(
     user_text: str,
     conversation_history: "list[dict] | None" = None,
@@ -1140,7 +1209,9 @@ async def _classify_intent_smart(
                     pass  # OPTIONAL: shadow-divergence counter — non-blocking metrics
         if isinstance(llm_result, dict):
             llm_result.setdefault("__usage", {})["mode"] = "shadow"
-        return llm_result
+        return _emit_intent_classification_safe(
+            llm_result, user_text=user_text, mode="shadow",
+        )
 
     if mode == "primary":
         graph_result = await classify_intent_graph(
@@ -1157,12 +1228,16 @@ async def _classify_intent_smart(
             record_pending_outcome(graph_result, user_text,
                                    persons_in_room=persons_in_room,
                                    system_name=sys_name)
-            return graph_result
+            return _emit_intent_classification_safe(
+                graph_result, user_text=user_text, mode="primary",
+            )
         # Low-confidence fallback: ask the LLM classifier.
         llm_result = await _classify_intent(user_text, conversation_history)
         if isinstance(llm_result, dict):
             llm_result.setdefault("__usage", {})["mode"] = "primary_fallback_llm"
-        return llm_result
+        return _emit_intent_classification_safe(
+            llm_result, user_text=user_text, mode="primary_fallback_llm",
+        )
 
     # mode == "retired"
     graph_result = await classify_intent_graph(
@@ -1176,7 +1251,9 @@ async def _classify_intent_smart(
         record_pending_outcome(graph_result, user_text,
                                persons_in_room=persons_in_room,
                                system_name=sys_name)
-    return graph_result
+    return _emit_intent_classification_safe(
+        graph_result, user_text=user_text, mode="retired",
+    )
 
 
 async def _stream_together_raw(

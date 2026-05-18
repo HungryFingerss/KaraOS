@@ -1,0 +1,80 @@
+name: fast
+
+# P0.0 — fast CI workflow. Target ≤5 minutes wall-clock.
+# Runs on every push + every PR. Catches the structural-invariant violations
+# (induction-surfaces-invariant-gaps, paired-write tuples, RULES ordering,
+# BEGIN IMMEDIATE, etc.) that were architect-advisory before P0.0.
+#
+# Excludes:
+#   - `@pytest.mark.slow`    — heavy-model tests (pyannote, SpeechBrain, …)
+#   - `@pytest.mark.network` — live Together.ai / Tavily calls
+#   - `@pytest.mark.models`  — HF model download tests
+# Run those in slow.yml (nightly + manual).
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fast-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15        # hard cap; spec target ≤5 min
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dev tooling + deps
+        run: |
+          python -m pip install --upgrade pip
+          # Lint/type tools first — needed even if requirements install is slow.
+          pip install ruff mypy
+          # Project deps. Use CPU-only torch wheel to avoid the cu128 timeout
+          # in CI (dev machines pin GPU torch; CI doesn't need it because
+          # `not slow and not models` excludes every test that touches a GPU
+          # codepath).
+          pip install --index-url https://download.pytorch.org/whl/cpu \
+            torch torchvision torchaudio || true
+          pip install -r requirements.txt
+
+      - name: Ruff lint
+        run: ruff check . --output-format=github
+
+      - name: Ruff format check
+        run: ruff format --check .
+        # Format check failures are informational on first rollout — don't
+        # block CI until repo-wide format pass lands separately.
+        continue-on-error: true
+
+      - name: Mypy (permissive — allow-list mode)
+        # P0.0 starts mypy in informational mode. Tighten in a follow-up PR
+        # once the type-error baseline is captured. Per the
+        # "spec-first review cycle" discipline, a full strict mypy pass is
+        # a multi-day spec on its own.
+        run: mypy core/ --ignore-missing-imports --no-strict-optional || true
+
+      - name: Pytest — fast subset
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUNBUFFERED: "1"
+        run: |
+          pytest tests/ \
+            -m "not slow and not network and not models" \
+            --maxfail=5 \
+            -q

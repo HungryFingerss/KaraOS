@@ -172,8 +172,12 @@ def _reset_pipeline_state_between_tests():
         "_conversation_store",     # P0.6.3
         "_voice_gallery_store",    # P0.6.4
         "_per_person_agent_store", # P0.6.4
-        "_cache_store",            # P0.6.5
+        "_identity_hints_store",   # P0.6.5
+        "_query_embedding_store",  # P0.6.5
+        "_scene_block_store",      # P0.6.5
+        "_classifier_cache_store", # P0.6.5
         "_pipeline_state_store",   # P0.6.6
+        "_vision_frame_store",     # P0.6.7v2
     )
     setup_pipeline_stubs()
     from core.session_state import SessionStore  # noqa: PLC0415
@@ -186,6 +190,16 @@ def _reset_pipeline_state_between_tests():
         for _sname in _STORE_NAMES:
             if hasattr(_pipeline, _sname):
                 getattr(_pipeline, _sname).reset()
+        # P0.6.6: replace _pipeline_state_store with a fresh production-shape
+        # instance — restores initial_pipeline_state=WATCHING + initial_cloud_state=ONLINE
+        # defaults that reset() alone would wipe (reset() is sync arg-less).
+        if (hasattr(_pipeline, "PipelineStateStore")
+                and hasattr(_pipeline, "PipelineState")
+                and hasattr(_pipeline, "CloudState")):
+            _pipeline._pipeline_state_store = _pipeline.PipelineStateStore(
+                initial_pipeline_state=_pipeline.PipelineState.WATCHING,
+                initial_cloud_state=_pipeline.CloudState.ONLINE,
+            )
     except Exception as _e:
         print(f"[conftest] store reset failed: {_e!r}")
     yield

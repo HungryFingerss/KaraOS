@@ -66,6 +66,15 @@ class ClassifierDB:
     table from outside this module.
     """
 
+    # P0.9.1 Phase 1: future-versioned migrations consumed by the shared
+    # core.schema_migrations runner.  This DB pre-dates P0.9 with its own
+    # _run_migrations() that handles v=1 and v=2 (Spec 1 baseline + Spec 2
+    # extracted_value).  Phase 2 will fold those into MIGRATIONS as proper
+    # 4-tuples (version, description, apply_fn, verify_fn).  Empty for now —
+    # the shared runner is wired in __init__ so future entries activate
+    # automatically.
+    MIGRATIONS: list = []
+
     def __init__(
         self,
         db_path: "str | Path | None" = None,
@@ -77,12 +86,36 @@ class ClassifierDB:
         )
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._audit_log_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        # P0.9.1 Imp-1: IMMEDIATE isolation for explicit BEGIN-IMMEDIATE compatibility.
+        self._conn = sqlite3.connect(
+            str(self._db_path), check_same_thread=False,
+            isolation_level="IMMEDIATE",
+        )
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._init_schema()
         self._run_migrations()
+        # P0.9.1 Phase 1: harmonize with the shared ledger discipline.  This
+        # DB already shipped a `schema_migrations` table from Spec 1 / Session
+        # 122 — `init_ledger` is self-evolving and ADD COLUMN's the
+        # `is_initial` flag onto the pre-P0.9 ledger (idempotent PRAGMA-guarded
+        # ALTER).  Existing rows get is_initial=0 via DEFAULT (correct — they
+        # are real migrations, not bootstrap stamps).  Bootstrap is a no-op
+        # because the ledger already has rows.  apply_migrations runs the
+        # class-level MIGRATIONS list (empty in Phase 1).
+        from core.schema_migrations import (
+            init_ledger as _il, bootstrap_ledger_if_unversioned as _bl,
+            apply_migrations as _am,
+        )
+        _il(self._conn)
+        _bl(
+            self._conn,
+            baseline_description="classifier_scenarios.db initial baseline (pre-P0.9)",
+            migrations=self.MIGRATIONS,
+            db_label="classifier_scenarios.db",
+        )
+        _am(self._conn, self.MIGRATIONS, db_label="classifier_scenarios.db")
         self._seed_metadata()
 
     # ── Schema ───────────────────────────────────────────────────────────

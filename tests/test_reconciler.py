@@ -91,13 +91,18 @@ def _cascade_rule_names() -> list[str]:
     return [r.__name__ for r in _CASCADE]
 
 
-def test_cascade_has_22_rules():
-    """The cascade is exactly 22 rules. Adding/removing rules without
+def test_cascade_has_23_rules():
+    """The cascade is exactly 23 rules. Adding/removing rules without
     spec review is a calibration drift risk; this test forces the
     addition or removal to be deliberate.
+
+    Was 22 before P0.10 (2026-05-17) — bumped by Block A's
+    `_p0_short_utterance_gap_hold_current` rule that closes the 0.3-0.5s
+    coverage gap exposed when Phase 4 cutover removed the legacy router's
+    1.0s blanket-hold floor (Bug-W).
     """
-    assert len(_CASCADE) == 22, (
-        f"Cascade must have exactly 22 rules; got {len(_CASCADE)}. "
+    assert len(_CASCADE) == 23, (
+        f"Cascade must have exactly 23 rules; got {len(_CASCADE)}. "
         f"Adding or removing a rule changes calibration; update the "
         f"design doc + mapping table BEFORE editing _CASCADE."
     )

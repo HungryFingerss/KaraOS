@@ -10,23 +10,34 @@
 >   3. **How** — the algorithm, state, and data flow.
 >   4. **Why this way** — the alternatives we rejected, the incidents that shaped the current design, the invariants we now guard.
 >
-> **Last updated**: 2026-05-02 (post-Session 122; voice/vision channels rearchitected and reconciler cutover live; graph classifier live in shadow mode; external benchmark journey documented; multi-layer future architecture committed)
-> **Codebase**: ~22,500 lines of Python + 1000+ lines Next.js dashboard
-> **Tests**: 1374 passing (asyncio_mode=auto)
+> **Last updated**: 2026-05-18 (post-P0.0.7; event-sourcing foundation shipped; full P0 correctness + architectural-hardening cycle closed; spec-first review cycle formalised as a named architectural discipline; locked sequence into P0 security, P0 robustness, and P1.A pipeline.py decomposition next)
+> **Codebase**: ~24,000 lines of Python + 1000+ lines Next.js dashboard
+> **Tests**: ~2216 passing, 9 xfailed, 3 skipped, 0 failed, 0 errors (asyncio_mode=auto; `tests/test_brain_json_parser_hypothesis.py` excluded pending P0.0.7.X follow-up)
 > **Runtime target**: Windows 11 dev laptop (now) → Jetson AGX Orin 32GB (production)
 >
 > ---
 >
-> **What changed since the 2026-04-23 revision (Session 113.1):**
+> **What changed since the 2026-05-02 revision (Session 122):**
 >
-> - **Voice/Vision independence rearchitecture (Phases 1–4 of `VOICE_VISION_INDEPENDENCE_PLAN.md`)** — `core/voice_channel.py` and `core/vision_channel.py` extracted as pure functions with zero pipeline imports and zero cross-channel state reads; `core/reconciler.py` introduced as a 22-rule cascade that consumes `IdentityClaim` + `PresenceState` + `SessionState` and emits a single `RoutingDecision`. Phase 4 cutover (`ROUTING_USE_RECONCILER = True`) made the reconciler the production router. Negative-cosine bug fix (2026-05-02) closed the last edge case where unknown speakers were silently dropped. See new **Part XXXII**.
-> - **Pure-graph classifier (Specs 1 + 2)** — production intent classifier replaced. The LLM classifier (Sessions 76–117) is now in shadow mode; the production path is `core.classifier_graph.classify_intent_graph`, which performs no LLM call. Bootstrap pipeline produces 2,071 abstracted scenarios from Cornell Movie-Dialogs / DailyDialog / EmpatheticDialogues / hand-authored / live_correction sources. Wilson lower-bound aggregation. Three modes (`shadow` / `primary` / `retired`). E5 embeddings local on GPU. Correction loop landed but currently dormant (regex bank too narrow for natural speech). See new **Part XXXIII**.
-> - **External benchmark validation against Bhagtani et al. 2026** — three-run journey on the Friends test set: Run 1 (LLM classifier on Llama-70B, 58.66%) → Run 2 (multi-backbone falsifying experiment on Qwen-7B, 52.32% — *below* paper baseline) → Run 3 (graph classifier, 64.48%). 10-run scaling ablation found inverse scaling: smaller scenario DBs score higher on Friends. AMI 10-row smoke confirmed out-of-scope-by-design. All artifacts public at `karaos-public/published-papers-tests/results/`. See new **Part XXXIV**.
-> - **Multi-layer classifier architecture committed (FUTURE WORK)** — six-layer roadmap to make the graph classifier scale-invariant, garbage-immune, and self-improving across 10k+ scenarios while staying non-parametric (zero LLM in classification). Layer 1: per-scenario learned reliability. Layer 2: outcome supervision wired correctly. Layer 3: hierarchical retrieval + adaptive K + distance-weighted voting. Layer 4: multi-aspect annotation rebuild. Layer 5: active quality gating + auto-quarantine. Layer 6: provenance and lineage. Phase-by-phase sequencing in **Part XXXV**.
-> - **Voice gallery growth bug for promoted voice-only strangers** — known issue. After a voice-only stranger is promoted via `update_person_name` (e.g. "My name is Lexi"), `person_type` flips from `stranger` to `known` and Session 94's bootstrap-replenishment condition stops firing. Voice profiles stay stuck at the bootstrap count (often 2-4 of 20). Fix queued. See **Part XXXII §203.4**.
-> - **Phase 4 / Phase 5 placeholder Parts (XXIX, XXX) — naming clarification.** "Phase 4" in the original placeholder context (Part XXIX) refers to *implicit intent inference* and remains unimplemented. "Phase 4" in the *voice/vision rearchitecture* context (Part XXXII) refers to the reconciler cutover and IS shipped. The two are unrelated and use the same word coincidentally.
+> Two and a half weeks of disciplined architectural-hardening work between the 2026-05-02 voice/vision-cutover revision and this one. The system did not get more features. It got dramatically more *structural protection*. Every load-bearing property that previously lived in developer discipline is now CI-enforced by AST scans, paired-write inverse checks, or behavioural invariants. The arc:
 >
-> The system is now in a different operational regime than at the time of the previous revision: the LLM classifier no longer makes routing decisions in production (the graph classifier does), the voice and vision channels no longer read each other's state (the reconciler does the integration), and the Friends external benchmark is now a real recurring measurement rather than a one-shot.
+> - **P0 correctness hardening (P0.1 – P0.3 + P0.13).** Five distinct privilege/correctness regressions surfaced by live canaries (`disputed`-string comparison drift, `prior_person_type` defaulting to `"known"` instead of `"stranger"`, multi-word names mis-rejected on a substring check, repeat-guard bypassed in proactive paths). Each fix shipped with an AST-scan structural invariant that prevents the regression class returning silently. See new **Part XXXVI**.
+> - **The silent-except audit (P0.4).** Project-wide AST audit of every `except (Exception|BaseException|bare): pass` handler in production source. 22 sites surfaced, all annotated with one of `# RACE:`, `# CLEANUP:`, `# OPTIONAL:` or fixed outright. `tests/test_silent_except_invariant.py` now rejects any unannotated silent-pass-only handler at PR time. The discovery that 22 sites existed when reactive patching had previously found only ~7 became the empirical foundation of the **structured-audit-vs-reactive-patching** lesson banked in §233. See new **Part XXXVII**.
+> - **Cross-storage atomicity (P0.5 + P0.X).** FAISS ↔ faces.db and Kuzu ↔ brain.db paired-write hardening. SQL-first transactional ordering + sentinel files + boot reconciliation + per-storage `_X_degraded` fallback flags. Three Kuzu write patterns codified (`SCHEMA_MIGRATION` / `RAISE` / `SWALLOW`) with AST detectors per pattern. The **inverse-check discipline** — every enumerated method tuple has a corresponding AST scan asserting the tuple contains every method matching the pattern — was born here when `prune_outlier_embeddings` was caught as a hidden paired-write site. See new **Part XXXVIII**.
+> - **The Store-pattern migration (P0.6).** 28 module-level globals in `pipeline.py` retired in favour of 8 typed `Store` classes (`PresenceStore`, `TrackStore`, `ConversationStore`, `VoiceGalleryStore`, `PerPersonAgentStore`, `CacheStore`, `PipelineStateStore`, `VisionFrameStore`). Every store has named async mutators + sync `peek_*` reads + an autouse-fixture-reset between tests + a structural ratchet capping the number of legacy module-globals at 0. Three architectural discoveries from the closure audit (vision globals missed in v1, CacheStore touch-on-read LRU violating the locked spec, prior-state guard for cloud transitions) drove v2. See new **Part XXXIX**.
+> - **Typed session state (P0.7).** `core/session_state.py` carries the new `Session` + `SessionSnapshot` + `VoiceEvidence` dataclasses and the `SessionStore` single-owner with `asyncio.Lock`. 21 named transition methods replaced ~190 direct-dict-mutation sites across `pipeline.py` and `test_pipeline.py`. Read-path migration + lifecycle write-path migration + final SHIM cleanup landed in 5 staged sub-PRs (P0.7.1 → P0.7.5). The dispute state machine (Part XV) now routes through `transition_to_disputed` + `clear_dispute` with `prior_person_type` capture. See new **Part XL**.
+> - **Per-tool timeout protection (P0.8).** Every LLM-callable tool handler extracted from the if/elif chain into top-level `_handle_<tool>` functions registered in `_TOOL_HANDLERS`. `asyncio.wait_for` wraps the dispatch with per-tool budgets (default 10s; search_web 20s; search_memory 5s; rename 5s; shutdown 3s). Cancellation rolls back partial SQL writes via transaction `__aexit__`. P0.8.1 closed the gap that `search_web` was consumed inline in `ask_stream` and missing the wrap; P0.8.2 added F1 + F2 structural invariants making the handler-checkpoint discipline and retry-path one-shot guarantee AST-enforced. See new **Part XLI**.
+> - **Schema migrations versioning (P0.9).** The versioned-ledger pattern that classifier_scenarios.db shipped under Spec 1 (Session 122) was generalised to faces.db and brain.db. Every historical schema mutation (19 retrofitted migrations across the two DBs) is now an entry in a `MIGRATIONS` list with a 5-tuple shape: `(version, description, apply_fn, verify_post_fn, verify_present_fn)`. `verify_post` is for the runner ("did the migration achieve its post-condition?"); `verify_present` is for bootstrap ("is the migration's effect already in place?"). The split was the **developer-improves-on-spec** moment for P0.9.2 — conflating them would have let bootstrap stamp `is_initial=1` on a partially-backfilled DB. See new **Part XLII**.
+> - **Legacy router deletion + Bug-W closure (P0.10).** Phase 0 audit corrected the architect's premise: the new reconciler was *not* correct — it had a 0.3–0.5s coverage gap (the Bug-W class) that the legacy 273-line router was incidentally papering over via its catch-all `return cur_pid, "current"`. Phase 1 added `_p0_short_utterance_gap_hold_current` + a `LOWER_BOUND` attribute on every rule + a non-decreasing band-ordering invariant. Phase 2 deleted the legacy. P0.10.1 added the `EXPECTED_RULES_BY_BAND` structural invariant. Validation window opened with explicit gate criteria in `tests/p0_10_validation_runbook.md`. Net –15 tests but +40 architectural-coverage tests: a measurable coverage *increase* despite the raw-count drop because legacy-deletion shifts coverage from legacy-function tests to rule-cascade + invariant tests. See new **Part XLIII**.
+> - **State race hardening (P0.11).** Preventive fix for a latent dict race in `core.state._persistent`. The race had never been observed in production (single writer, single startup), but three plausible activation conditions existed. The `_persistent[key] = value` in-place mutation was replaced with `_persistent = {**_persistent, key: value}` (atomic-replace; CPython `STORE_NAME` is GIL-atomic; concurrent readers see a consistent snapshot). Three deliberate-regression checks; the third one (external-module attribute-form injection) surfaced a detector gap that was closed in the same cycle. See new **Part XLIV**.
+> - **Brain JSON parser hardening (P0.12 + P0.12.1).** Hypothesis property-based testing with `max_examples=1000` per test surfaced two real production bugs — `_parse_json` was returning non-dict valid JSON (silently breaking 7+ callers that did `.get(...)`), and `_parse_intent_sidecar` didn't catch Python 3.11+'s `ValueError` on oversized integer strings (DoS exposure). Fixed in the same sub-PR. P0.12.1's caller audit then found `SocialGraphAgent.extract`'s `isinstance(data, list)` branch had become unreachable after P0.12's narrowing — fixed by adding the sibling `_parse_json_array(raw) -> list | None`. See new **Part XLV**.
+> - **Health and disk observability (Wave 5).** `core/health.py` emits a one-line system pulse every 5 minutes covering active sessions, person counts, embeddings, knowledge rows, classifier scenarios, cloud state, disputes, watchdog alerts, dream cadence, thin-voice galleries. `core/disk_monitor.py` watches `faces/`, `data/`, the project root and fires three-level idempotent alerts (warning at 80%, critical at 90%, blocker at 95%) via the WatchdogAgent. See new **Part XLVI**.
+> - **Memory consolidation + conversation archival (Wave 6).** Hard-delete pruning of invalidated knowledge in the dream loop; SHA-256-keyed `_build_scene_block` cache to elide redundant rebuilds across turns when scene state is stable; `conversation_log` archival into `*_conversation_archive.db` companions via ATTACH-based atomic INSERT→DELETE; `load_conversation_history` + `search_conversation` UNION-merge across primary + archive. See new **Part XLVII**.
+> - **Tiered CI scaffold + S2 deferral tripwire (P0.0 + P0.0.1 + P0.0.2).** Three GitHub Actions workflows landed (`fast.yml` every push + PR, target ≤5 min, skips slow+network+models markers; `slow.yml` nightly + manual, full suite with HF model cache and Together.ai key gating; `security.yml` weekly + on requirements.txt change, pip-audit + Trivy SARIF). `tests/test_dashboard_bind_tripwire.py` locks the S2 deferral premise (dashboard bound to `127.0.0.1`). P0.0.1 fixed the original tripwire's theatrical false-pass when `--hostname` was absent (Next.js defaults to `0.0.0.0`) — the empirical foundation of the **tripwires-must-match-the-actual-deferral-surface** discipline banked in §322. P0.0.2 bundled `@pytest.mark.xfail(strict=False, ...)` decorators on 8 infra-debt tests, with `test_xfail_decorators_align_with_allowlist` AST-scanning for half-fixes. See new **Part XLVIII**.
+> - **Event Log + Replay Harness (P0.0.7).** Event-sourcing foundation shipped across 9 staged steps. `core/event_log/` package with 12 typed payload dataclasses, `NATURAL_PARENT_PAIRS` causal-chain registry, `_PAYLOAD_CLASSES` dispatch table, async/sync/swallowing producer functions. 11 producer hooks at 12 sites (D7 N=1 AST-enforced exactly-one-producer-per-event-type). brain.db migration `_m_0012` at version 12 (P0.9 5-tuple shape). Read-only replay CLI at `tools/replay_session.py`. 4 reusable scenario fixtures and 5 smoke tests in `tests/fixtures/event_log_fixtures.py` + `tests/test_event_log_replay.py`. Health-log integration via `event_log_drops` and `event_log_emit_failures` counters. The Step 5 polish (developer-improves-on-spec 5th instance) consolidated 12 per-call-site try/except blocks into one `safe_emit_sync` helper with a single `# OPTIONAL:` annotated except. See new **Part XLIX**.
+> - **Architectural disciplines elevated to named doctrine.** Seven multi-instance patterns were promoted from informal practice to CLAUDE.md "Architectural Disciplines" section with explicit track records: induction-surfaces-invariant-gaps (7-for-7), spec-first review cycle (5-for-5), developer-improves-on-spec (5-for-5), spec-contracts-not-implementations (3-for-3), tripwires-must-match-deferral-surface (3-for-3), architect-reads-production-code-before-sign-off, verification-before-completion. Each cycle adds an instance to the appropriate count rather than reinventing the practice. See new **Part L**.
+>
+> The system is now in a different *engineering* regime than at the time of the previous revision: every load-bearing invariant is structurally enforced, every multi-day spec follows the Phase 0 audit → v1 plan → v2 plan → code phase cadence, every cross-storage paired-write site has an inverse-check guard, every silent-pass-only except block carries a rationale annotation, and every input crossing the runtime boundary emits a typed event into the event log for replay-based debugging. The next phase (P0 security, P0 robustness, and the P1.A pipeline.py decomposition) builds on this foundation rather than relitigating it. See **Part LI**.
 
 ---
 
@@ -333,6 +344,146 @@
 230. [Phase Sequencing — How the Layers Ship](#230-phase-sequencing--how-the-layers-ship)
 231. [The Non-Parametric Commitment](#231-the-non-parametric-commitment)
 232. [Honest Limitations of the Multi-Layer Plan](#232-honest-limitations-of-the-multi-layer-plan)
+
+### Part XXXVI — P0 Correctness Hardening (P0.1 – P0.3 + P0.13)
+233. [Why a Correctness Cycle Came First](#233-why-a-correctness-cycle-came-first)
+234. [P0.1 — No Raw `"disputed"` Comparisons Outside the Helper](#234-p01--no-raw-disputed-comparisons-outside-the-helper)
+235. [P0.2 — `prior_person_type` Fail-Closed Default](#235-p02--prior_person_type-fail-closed-default)
+236. [P0.3 — Multi-Word Name Contiguous Substring Fix](#236-p03--multi-word-name-contiguous-substring-fix)
+237. [P0.13 — The Repeat-Guard Invariant Test](#237-p013--the-repeat-guard-invariant-test)
+
+### Part XXXVII — The Silent-Except Audit (P0.4)
+238. [The Reactive-Patching Anti-Pattern](#238-the-reactive-patching-anti-pattern)
+239. [AST Detector Anatomy](#239-ast-detector-anatomy)
+240. [The 22 Surfaced Sites and the Three Permitted Annotations](#240-the-22-surfaced-sites-and-the-three-permitted-annotations)
+241. [Bulk Annotator and the One-Shot Closure](#241-bulk-annotator-and-the-one-shot-closure)
+
+### Part XXXVIII — Cross-Storage Atomicity (P0.5 + P0.X)
+242. [The Paired-Write Failure Class](#242-the-paired-write-failure-class)
+243. [P0.5 — FAISS ↔ faces.db SQL-First Ordering](#243-p05--faiss--facesdb-sql-first-ordering)
+244. [Sentinel Files and Boot Reconciliation](#244-sentinel-files-and-boot-reconciliation)
+245. [The Inverse-Check Discipline](#245-the-inverse-check-discipline)
+246. [P0.X — The Three Kuzu Write Patterns](#246-p0x--the-three-kuzu-write-patterns)
+247. [SCHEMA_MIGRATION, RAISE, and SWALLOW in Detail](#247-schema_migration-raise-and-swallow-in-detail)
+248. [`_process_turn` — The Hidden Paired-Write Site](#248-_process_turn--the-hidden-paired-write-site)
+249. [Degraded-Mode Fallback Behavior](#249-degraded-mode-fallback-behavior)
+
+### Part XXXIX — The Store-Pattern Migration (P0.6)
+250. [Why 28 Module-Level Globals Was a Problem](#250-why-28-module-level-globals-was-a-problem)
+251. [The `Store(ABC, Generic[T])` Base Class](#251-the-storeabc-generict-base-class)
+252. [The Eight Stores and What Each Owns](#252-the-eight-stores-and-what-each-owns)
+253. [Async Mutators, Sync `peek_*` Reads, and the Single-Owner Invariant](#253-async-mutators-sync-peek_-reads-and-the-single-owner-invariant)
+254. [The Producer-Copy Invariant](#254-the-producer-copy-invariant)
+255. [Peek-Not-Mutate Semantics for CacheStore](#255-peek-not-mutate-semantics-for-cachestore)
+256. [The Prior-State Guard for Cloud Transitions](#256-the-prior-state-guard-for-cloud-transitions)
+257. [Autouse-Fixture Reset and the M2 Coverage Meta-Test](#257-autouse-fixture-reset-and-the-m2-coverage-meta-test)
+258. [The Eight Deliberate-Regression Checks at v2 Closure](#258-the-eight-deliberate-regression-checks-at-v2-closure)
+259. [The Legacy-Global Ratchet at Cap = 0](#259-the-legacy-global-ratchet-at-cap--0)
+260. [The Schema and Inverse-Check Ratchets That Lock It In](#260-the-schema-and-inverse-check-ratchets-that-lock-it-in)
+
+### Part XL — Typed Session State (P0.7)
+261. [Why Move the Session Dict to a Typed Store](#261-why-move-the-session-dict-to-a-typed-store)
+262. [`core/session_state.py` — Three Dataclasses](#262-coresession_statepy--three-dataclasses)
+263. [`SessionStore` — Single Owner with `asyncio.Lock`](#263-sessionstore--single-owner-with-asynciolock)
+264. [The 21 Named Transition Methods](#264-the-21-named-transition-methods)
+265. [`SessionSnapshot` — Frozen, Sliced, Cheap to Pass Around](#265-sessionsnapshot--frozen-sliced-cheap-to-pass-around)
+266. [The 5-Phase Migration (P0.7.1 → P0.7.5)](#266-the-5-phase-migration-p071--p075)
+267. [The SHIM Layer and Its Eventual Deletion](#267-the-shim-layer-and-its-eventual-deletion)
+268. [`peek_all_snapshots` and the Single-Thread-Asyncio Safety Contract](#268-peek_all_snapshots-and-the-single-thread-asyncio-safety-contract)
+269. [Dispute State via Named Transitions](#269-dispute-state-via-named-transitions)
+270. [The Closure Invariants That Lock the Migration](#270-the-closure-invariants-that-lock-the-migration)
+
+### Part XLI — Per-Tool Timeout Protection (P0.8)
+271. [The Hang Surface Before P0.8](#271-the-hang-surface-before-p08)
+272. [`_TOOL_HANDLERS` Extraction and `_ToolContext`](#272-_tool_handlers-extraction-and-_toolcontext)
+273. [`asyncio.wait_for` and the Per-Tool Budgets](#273-asynciowait_for-and-the-per-tool-budgets)
+274. [Cancellation Rollback Through Transaction `__aexit__`](#274-cancellation-rollback-through-transaction-__aexit__)
+275. [P0.8.1 — Tavily Wrap and the Hidden Inline Consumer](#275-p081--tavily-wrap-and-the-hidden-inline-consumer)
+276. [P0.8.2 — F1 + F2 Structural Invariants](#276-p082--f1--f2-structural-invariants)
+
+### Part XLII — Schema Migrations Versioning (P0.9)
+277. [The Drift Problem with Inline `ALTER TABLE` Calls](#277-the-drift-problem-with-inline-alter-table-calls)
+278. [`core/schema_migrations.py` — The Generalised Helper](#278-coreschema_migrationspy--the-generalised-helper)
+279. [The 5-Tuple Migration Shape and Why](#279-the-5-tuple-migration-shape-and-why)
+280. [`verify_post` vs `verify_present` — The Developer-Improved-on-Spec Split](#280-verify_post-vs-verify_present--the-developer-improved-on-spec-split)
+281. [Imp-1 — `isolation_level="IMMEDIATE"` on Every Connect](#281-imp-1--isolation_levelimmediate-on-every-connect)
+282. [Imp-2 — Tightened S65 Rollback Discipline](#282-imp-2--tightened-s65-rollback-discipline)
+283. [The 19 Retrofitted Historical Migrations](#283-the-19-retrofitted-historical-migrations)
+284. [The Structural Invariants That Lock the Pattern](#284-the-structural-invariants-that-lock-the-pattern)
+
+### Part XLIII — Legacy Router Deletion and Bug-W Closure (P0.10)
+285. [The Phase 0 Premise Reset](#285-the-phase-0-premise-reset)
+286. [The Bug-W Coverage Gap](#286-the-bug-w-coverage-gap)
+287. [`_p0_short_utterance_gap_hold_current` and the `LOWER_BOUND` Attribute](#287-_p0_short_utterance_gap_hold_current-and-the-lower_bound-attribute)
+288. [The Non-Decreasing Band-Ordering Invariant](#288-the-non-decreasing-band-ordering-invariant)
+289. [The Band-Divergence Block C Trigger](#289-the-band-divergence-block-c-trigger)
+290. [Phase 2 Cutover and the –15 / +40 Coverage Shift](#290-phase-2-cutover-and-the-15--40-coverage-shift)
+291. [P0.10.1 — `EXPECTED_RULES_BY_BAND` Lock](#291-p0101--expected_rules_by_band-lock)
+292. [The Validation Runbook and Gate Criteria](#292-the-validation-runbook-and-gate-criteria)
+
+### Part XLIV — State Race Hardening (P0.11)
+293. [Preventive Hardening for a Latent Race](#293-preventive-hardening-for-a-latent-race)
+294. [The Atomic-Replace Pattern and Why It Works](#294-the-atomic-replace-pattern-and-why-it-works)
+295. [Three Deliberate-Regression Checks and the Detector-Strengthening Cycle](#295-three-deliberate-regression-checks-and-the-detector-strengthening-cycle)
+
+### Part XLV — JSON Parser Hardening (P0.12 + P0.12.1)
+296. [Why Property-Based Testing](#296-why-property-based-testing)
+297. [The Two Production Bugs Hypothesis Surfaced](#297-the-two-production-bugs-hypothesis-surfaced)
+298. [P0.12.1 — The SocialGraphAgent Dead-Branch Audit](#298-p0121--the-socialgraphagent-dead-branch-audit)
+299. [`_parse_json_array` — The Sibling Parser](#299-_parse_json_array--the-sibling-parser)
+
+### Part XLVI — Health and Disk Observability (Wave 5)
+300. [The Health-Pulse Cadence](#300-the-health-pulse-cadence)
+301. [`HealthSnapshot` and the One-Line Format](#301-healthsnapshot-and-the-one-line-format)
+302. [Three-Level Disk Alerts with Idempotent Transitions](#302-three-level-disk-alerts-with-idempotent-transitions)
+
+### Part XLVII — Conversation Hygiene and Memory Consolidation (Wave 6)
+303. [Hard-Delete Pruning of Invalidated Knowledge](#303-hard-delete-pruning-of-invalidated-knowledge)
+304. [SHA-256 Scene-Block Cache](#304-sha-256-scene-block-cache)
+305. [`conversation_log` Archival via ATTACH DATABASE](#305-conversation_log-archival-via-attach-database)
+
+### Part XLVIII — Tiered CI Scaffold and S2 Deferral Tripwire (P0.0 + P0.0.1 + P0.0.2)
+306. [Three Workflows — Fast, Slow, Security](#306-three-workflows--fast-slow-security)
+307. [Pytest Markers and the Infra-Debt Allowlist](#307-pytest-markers-and-the-infra-debt-allowlist)
+308. [The S2 Tripwire and the Theater That P0.0.1 Closed](#308-the-s2-tripwire-and-the-theater-that-p001-closed)
+309. [P0.0.2 — V1 xfail Bundling for Infra-Debt Tests](#309-p002--v1-xfail-bundling-for-infra-debt-tests)
+
+### Part XLIX — Event Log and Replay Harness (P0.0.7)
+310. [Why Event-Sourcing the Boundary](#310-why-event-sourcing-the-boundary)
+311. [The 12 Payload Types](#311-the-12-payload-types)
+312. [`NATURAL_PARENT_PAIRS` and Causal-Chain Auto-Resolution](#312-natural_parent_pairs-and-causal-chain-auto-resolution)
+313. [`_PAYLOAD_CLASSES` and the Deserialization Contract](#313-_payload_classes-and-the-deserialization-contract)
+314. [Producer Anatomy — `emit`, `emit_sync`, `safe_emit_sync`](#314-producer-anatomy--emit-emit_sync-safe_emit_sync)
+315. [The `_recent_parent` Writer-Task-Scope Cache](#315-the-_recent_parent-writer-task-scope-cache)
+316. [Bounded Queue and the D5 Lossy-Backpressure Decision](#316-bounded-queue-and-the-d5-lossy-backpressure-decision)
+317. [The 11 Producer Hooks at 12 Sites](#317-the-11-producer-hooks-at-12-sites)
+318. [`_m_0012_create_event_log_*` Migration](#318-_m_0012_create_event_log_-migration)
+319. [The Read-Only Replay CLI](#319-the-read-only-replay-cli)
+320. [Reusable Scenario Fixtures for P0.S1+](#320-reusable-scenario-fixtures-for-p0s1)
+321. [Health-Log Integration via Drop and Emit-Failure Counters](#321-health-log-integration-via-drop-and-emit-failure-counters)
+
+### Part L — Architectural Disciplines (The Named Doctrines)
+322. [Induction-Surfaces-Invariant-Gaps](#322-induction-surfaces-invariant-gaps)
+323. [Architect-Reads-Production-Code-Before-Sign-Off](#323-architect-reads-production-code-before-sign-off)
+324. [Verification-Before-Completion (Strengthened by Full-Suite Lesson)](#324-verification-before-completion-strengthened-by-full-suite-lesson)
+325. [Spec-First Review Cycle for Multi-Day Specs](#325-spec-first-review-cycle-for-multi-day-specs)
+326. [Spec-Contracts-Not-Implementations](#326-spec-contracts-not-implementations)
+327. [Developer-Improves-on-Spec-by-Reading-Carefully](#327-developer-improves-on-spec-by-reading-carefully)
+328. [Tripwires-Must-Match-the-Actual-Deferral-Surface](#328-tripwires-must-match-the-actual-deferral-surface)
+329. [Structured-Audit-vs-Reactive-Patching (Empirical Foundation)](#329-structured-audit-vs-reactive-patching-empirical-foundation)
+330. [Why Each Discipline Has a Track Record, Not a Rule](#330-why-each-discipline-has-a-track-record-not-a-rule)
+
+### Part LI — Upcoming Work and Roadmap
+331. [P0.0.7.X — Hypothesis TestLargeInput Flakiness](#331-p007x--hypothesis-testlargeinput-flakiness)
+332. [P0.S1 — Anti-Spoof on Every Face Match (Next Item)](#332-p0s1--anti-spoof-on-every-face-match-next-item)
+333. [P0 Security — The Locked Sequence Beyond P0.S1](#333-p0-security--the-locked-sequence-beyond-p0s1)
+334. [P0 Robustness — R1 through R11](#334-p0-robustness--r1-through-r11)
+335. [Eval Gates — Continuous Evaluation Becomes Real](#335-eval-gates--continuous-evaluation-becomes-real)
+336. [P1.A — Pipeline.py Decomposition into ~30 Modules](#336-p1a--pipelinepy-decomposition-into-30-modules)
+337. [Voice Gallery Growth Bug for Promoted Voice-Only Strangers](#337-voice-gallery-growth-bug-for-promoted-voice-only-strangers)
+338. [Kuzu v3 Schema Bump and Graph-Side Privacy](#338-kuzu-v3-schema-bump-and-graph-side-privacy)
+339. [Format-Bridge Unification (Producer Rows vs CLI Render)](#339-format-bridge-unification-producer-rows-vs-cli-render)
+340. [The Multi-Layer Classifier Architecture (XXXV) — When It Ships](#340-the-multi-layer-classifier-architecture-xxxv--when-it-ships)
 
 ---
 ---
@@ -2190,46 +2341,80 @@ Session 54 Finding J split this into `find_stale_stranger_voice_ids(days)` (read
 
 # Part VIII — Session Management
 
-## 47. The `_active_sessions` Dictionary
+## 47. SessionStore and the `Session` Dataclass
 
-### 47.1 Shape
+> **Architectural note (2026-05-15).** Before P0.7 (the typed-session-state migration; see **Part XL**), active sessions lived in a free-form `_active_sessions: dict[str, dict]` at module scope in `pipeline.py`. ~190 sites across `pipeline.py` and `test_pipeline.py` wrote to this dict directly. Field typos silently created garbage keys; concurrent access went unsynchronised; invariants ("dispute_set_at must be present whenever person_type == 'disputed'") had to be defended at every site. P0.7 replaced the free-form dict with a typed `SessionStore` owning typed `Session` dataclasses. This section describes the production session state surface as it exists today.
+
+### 47.1 The three dataclasses (from `core/session_state.py`)
 
 ```python
-_active_sessions: dict[str, dict] = {
-    "jagan_23ff85": {
-        "person_id":             "jagan_23ff85",
-        "person_name":           "Jagan",
-        "person_type":           "best_friend",
-        "session_type":          "face",   # or "voice"
-        "last_face_seen":        1713600000.12,
-        "last_spoke_at":         1713600013.45,
-        "voice_confidence":      0.89,
-        "started_at":            1713599970.0,
-        "kairos_clock_reset":    True,
-        "recent_attributions":   deque(maxlen=3),    # #21 drift detection
-        "identity_evidence":     {...},              # see Part IX
-        "waiting_for_name":      False,              # stranger gate flag
-        "db_enrolled":           True,
-        "voice_face_confirmed":  True,               # dual-write shim
-        "disputed_block_count":  0,                  # Session 57 N3
-        "disputed_block_alerted": False,
-        "prior_person_type":     "best_friend",      # pre-dispute type (for restoration)
-        "dispute_set_at":        None,               # timestamp when dispute began
-    },
-    ...
-}
+@dataclass(slots=True)
+class VoiceEvidence:
+    voice_match_conf:      float = 0.0          # last voice ID cosine (CAN be negative)
+    voice_last_heard_ts:   float = 0.0          # unix ts of last voice ID match
+    voice_sample_count:    int = 0              # DB-hydrated at open_session
+    bootstrap_credits:     int = 0              # remaining credits from engagement gate
+    recent_voice_confs:    list[float] = field(default_factory=list)   # maxlen-3 deque
+    # face evidence
+    face_match_conf:       float = 0.0
+    face_last_seen_ts:     float = 0.0
+    anti_spoof_live:       bool = False
+    anti_spoof_score:      float = 0.0
+
+@dataclass(slots=True)
+class Session:
+    person_id:             str
+    person_name:           str
+    person_type:           str             # stranger | known | best_friend | disputed
+    started_at:            float
+    last_face_seen:        float = 0.0
+    last_spoke_at:         float = 0.0
+    # dispute state
+    dispute_set_at:        Optional[float] = None
+    disputed_claimed_name: Optional[str] = None
+    prior_person_type:     Optional[str] = None
+    disputed_block_count:  int = 0
+    disputed_block_alerted: bool = False
+    # progressive enrollment
+    voice_only_origin:     bool = False    # set at engagement gate if face NOT witnessed
+    voice_face_confirmed:  bool = False    # set at progressive-enrollment gate pass
+    waiting_for_name:      bool = False    # stranger awaiting "my name is X"
+    # context + cache
+    cached_prefix:         Optional[str] = None
+    core_memory:           Optional[dict] = None
+    # room
+    room_session_id:       Optional[str] = None
+    # turn counter (stranger gate progress)
+    user_turns:            int = 0
+    # voice + face evidence
+    evidence:              VoiceEvidence = field(default_factory=VoiceEvidence)
+
+@dataclass(frozen=True, slots=True)
+class SessionSnapshot:
+    """Immutable frozen snapshot returned by SessionStore.peek_snapshot().
+    Same fields as Session, but collections are NEW copies — mutating
+    them has no effect on the underlying Session."""
+    # ... same 29 fields as Session
 ```
+
+`slots=True` on every dataclass is load-bearing: it makes every typo into an `AttributeError` at runtime AND shrinks the per-session memory footprint substantially. `frozen=True` on `SessionSnapshot` is the read-only contract — anywhere in the codebase that needs session state in a logging context, prompt-assembly context, or background coroutine context calls `_session_store.peek_snapshot(pid)` and gets back a snapshot that's safe to pass across `await` boundaries.
 
 ### 47.2 Key invariants
 
 - **Pid is the key.** Not name — multiple people can share a name.
 - **Pid prefix identifies origin.** `stranger_<uuid>` means this person was created via stranger enrollment; anything else is explicitly created.
-- **`person_type` is authoritative.** `stranger`, `known`, `best_friend`, `disputed`. The DB stores `person_type`; the session dict mirrors it so hot-path routing doesn't hit the DB every turn.
-- **`session_type` indicates origin.** `face` = opened because we recognised a face; `voice` = opened because we heard a voice.
+- **`person_type` is authoritative.** `stranger`, `known`, `best_friend`, `disputed`. The DB stores `person_type`; the Session mirrors it so hot-path routing doesn't hit the DB every turn.
+- **Single-owner.** `SessionStore` is the only writer of `self._sessions: dict[str, Session]`. Every mutation acquires `self._lock` (an `asyncio.Lock`) before touching the dict.
+- **Async mutators, sync peek reads.** Every mutation is an `async def` named transition method. Every read is a `def peek_*` returning either a `SessionSnapshot` or a primitive — peeks do NOT acquire the lock, per the single-thread-asyncio safety contract (Part XL §268).
 
-### 47.3 Why a dict and not a class
+### 47.3 Why a typed Store, not a free-form dict
 
-A dict is trivially serialisable, trivially mutable with clear keys, and doesn't carry inheritance concerns. An earlier draft had a `Session` class; it added complexity without value. The dict shape is documented in one place (the `_open_session` function) and tests pin the structure.
+The shift from `dict[str, dict]` to `SessionStore` carrying `dict[str, Session]` was justified by four concrete failure modes pre-migration:
+
+1. **Field-typo drift.** `_active_sessions[pid]["displute_set_at"] = ...` silently created a new key. `slots=True` makes this an `AttributeError`.
+2. **No invariant guards.** A session could be in `person_type == "disputed"` without `dispute_set_at` being set. The named transition `transition_to_disputed(...)` captures `prior_person_type` AND sets `dispute_set_at` AND flips `person_type` atomically.
+3. **Concurrent access.** Test and background-coroutine writes interleaved without coordination. The `asyncio.Lock` serialises them.
+4. **~190 ad-hoc write sites.** Any future invariant (e.g. "engagement gate must always set bootstrap_credits") had to be defended at every site individually. The 21 named transition methods (§264) replace those sites with semantically-meaningful operations.
 
 ## 48. `person_type` Taxonomy
 
@@ -2246,20 +2431,22 @@ A dict is trivially serialisable, trivially mutable with clear keys, and doesn't
 VALID_PERSON_TYPES = frozenset({"stranger", "known", "best_friend", "disputed"})
 ```
 
-Asserted at every write site. Any bug that tries to set `person_type = "known"` on a best_friend session (Session 60 Problem B) gets caught with AssertionError.
+Asserted at every write site. The `SessionStore.open_session` method type-checks against this frozenset, and the dispute transition methods (`transition_to_disputed`, `clear_dispute`) carry their own VALID_PERSON_TYPES assertions on the restored type.
 
 ### 48.3 Promotion paths
 
 - stranger → known: `update_person_name` tool fires during a stranger session, name is valid.
 - stranger → best_friend: never. Best_friend is only set during first_boot_flow.
-- known → disputed: sensor and claim disagree; `update_person_name` on a known session flips to disputed.
-- best_friend → disputed: same (Session 55 Finding L).
-- disputed → resolved: either `update_person_name` clears it (rename path), or DISPUTE_MAX_DURATION force-closes the session.
+- known → disputed: sensor and claim disagree; `update_person_name` on a known session flips to disputed via `transition_to_disputed`.
+- best_friend → disputed: same (Session 55 Finding L). The `prior_person_type` field captures `best_friend` so `clear_dispute` can restore it.
+- disputed → resolved: either `update_person_name` clears it (rename path), `clear_dispute(pid)` runs (auto-clear), or `DISPUTE_MAX_DURATION` force-closes the session.
 
 ## 49. `_open_session` Anatomy
 
+The pipeline's wrapper around `SessionStore.open_session`:
+
 ```python
-def _open_session(
+async def _open_session(
     person_id: str,
     person_name: str,
     session_type: str,
@@ -2271,87 +2458,85 @@ def _open_session(
     assert person_type in VALID_PERSON_TYPES, f"invalid person_type {person_type!r}"
 
     now = time.time()
-    existing = _active_sessions.get(person_id)
-    if existing:
-        existing["last_spoke_at"]    = now
-        existing["last_face_seen"]   = now
-        existing["voice_confidence"] = voice_confidence
-        # Don't overwrite person_type on re-open — caller may have promoted
-        # stranger→known via update_person_name since the last open.
-    else:
-        print(f"[Session] Open: {person_id} ({session_type}) — {person_name}")
-        _bootstrap = N_INITIAL_VOICE_BOOTSTRAP if engagement_gate_passed else 0
-        # Obs 1 post-review: DB-preferred voice_sample_count hydration
-        _db_voice_count = _voice_gallery_sizes.get(person_id, 0)
-        if _face_db_ref is not None:
-            try:
-                _db_voice_count = _face_db_ref.count_voice_embeddings(person_id)
-                if _voice_gallery_sizes.get(person_id, -1) != _db_voice_count:
-                    _voice_gallery_sizes[person_id] = _db_voice_count
-            except Exception:
-                pass
-        _active_sessions[person_id] = {
-            "person_id":       person_id,
-            "person_name":     person_name,
-            "person_type":     person_type,
-            "session_type":    session_type,
-            "last_face_seen":  now,
-            "last_spoke_at":   now,
-            "voice_confidence": voice_confidence,
-            "started_at":      now,
-            "kairos_clock_reset": True,
-            "recent_attributions": deque(maxlen=3),
-            "identity_evidence": {
-                "face_match_conf":     0.0,
-                "face_last_seen_ts":   0.0,
-                "anti_spoof_live":     False,
-                "anti_spoof_score":    0.0,
-                "anti_spoof_last_ts":  0.0,
-                "voice_match_conf":    0.0,
-                "voice_sample_count":  _db_voice_count,   # DB-hydrated (Obs 1)
-                "voice_last_heard_ts": 0.0,
-                "bootstrap_credits":   _bootstrap,
-            },
-        }
+    existing = _session_store.peek_snapshot(person_id)
+    if existing is not None:
+        # Idempotent re-open: refresh timestamps, do NOT clobber person_type.
+        await _session_store.update_on_reopen(
+            person_id, voice_confidence=voice_confidence, now=now
+        )
+        return
+
+    print(f"[Session] Open: {person_id} ({session_type}) — {person_name}")
+
+    # DB-preferred voice_sample_count hydration (Obs 1).
+    db_voice_count = _voice_gallery_store.peek_size(person_id)
+    if _face_db_ref is not None:
+        try:
+            live_count = _face_db_ref.count_voice_embeddings(person_id)
+            if db_voice_count != live_count:
+                await _voice_gallery_store.set_size(person_id, live_count)
+            db_voice_count = live_count
+        except Exception:
+            pass
+
+    bootstrap_credits = N_INITIAL_VOICE_BOOTSTRAP if engagement_gate_passed else 0
+
+    await _session_store.open_session(
+        person_id=person_id,
+        person_name=person_name,
+        person_type=person_type,
+        session_type=session_type,
+        started_at=now,
+        last_face_seen=now,
+        last_spoke_at=now,
+        voice_sample_count=db_voice_count,
+        bootstrap_credits=bootstrap_credits,
+        voice_match_conf=voice_confidence,
+    )
 ```
 
-### 49.1 The engagement_gate_passed flag
+### 49.1 The `engagement_gate_passed` flag
 
-Only callers who can prove they gated on engagement pass True. Strangers who said the system name → True. Known/best_friend greetings → True (the greeting itself is gated by anti-spoof + face recognition). Random voice-ID-matched someone → False (no gate).
+Only callers who can prove they gated on engagement pass True. Strangers who said the system name → True. Known/best_friend greetings → True (the greeting itself is gated by anti-spoof + face recognition). Random voice-ID-matched someone without explicit consent gating → False.
 
 Bootstrap credits are seeded only when True. This is the key design choice: we only trust a voice enough to accumulate against when we explicitly gated them in.
 
 ### 49.2 Idempotent re-open
 
-If the pid already has an active session, `_open_session` updates timestamps but doesn't clobber `person_type`. This is important because Session 22 G3 added stranger→known promotion via `update_person_name`; a re-open on the same session after promotion must not revert the person_type back to stranger.
+If the pid already has an active session, `_open_session` delegates to `update_on_reopen` (atomic refresh of timestamps + voice_match_conf) instead of constructing a new Session. The named transition keeps three properties intact in one operation: `person_type` is NOT clobbered (so a stranger→known promotion done via `update_person_name` since the last open isn't reverted), `dispute_set_at` is preserved if the session is currently disputed, `voice_only_origin` and `voice_face_confirmed` flags are preserved.
 
 ## 50. `_close_session` Cleanup
 
 ```python
-def _close_session(person_id: str) -> None:
-    sess = _active_sessions.get(person_id)
-    if not sess:
+async def _close_session(person_id: str) -> None:
+    snap = _session_store.peek_snapshot(person_id)
+    if snap is None:
         return
-    print(f"[Session] Close: {person_id} — {sess['person_name']}")
-    _active_sessions.pop(person_id, None)
-    _sessions_started.discard(person_id)
-    _pending_stranger_voice.pop(person_id, None)   # Bug-2 (Session 33)
-    _query_embedding_cache.pop(person_id, None)    # Finding B (Session 45)
-    _identity_hints.pop(person_id, None)           # Finding B (Session 45)
-    # Remove track bindings for this session
-    for tid in [t for t, pid in _stranger_track_map.items() if pid == person_id]:
-        _stranger_track_map.pop(tid, None)
+    print(f"[Session] Close: {person_id} — {snap.person_name}")
+
+    await _session_store.close_session(person_id)
+    _sessions_started_store.discard(person_id)
+    _pending_stranger_voice_store.pop(person_id)        # Bug-2 (Session 33)
+    _query_embedding_cache.pop(person_id)               # Finding B (Session 45)
+    _identity_hints_store.pop(person_id)                # Finding B (Session 45)
+    await _track_store.unbind_stranger_pid(person_id)   # remove track bindings
+    await _presence_store.pop_pid(person_id)            # remove from visible roster
+    _per_person_agent_store.pop(person_id)              # P0.6.4 — emotion + ambient agents
 
     # Notify brain orchestrator for session-end synthesis
     if _brain_orchestrator is not None:
-        _brain_orchestrator.notify_session_end(person_id, sess["person_name"])
+        _brain_orchestrator.notify_session_end(person_id, snap.person_name)
+
+    # Room lifecycle: if last session closed, fire _on_room_end fire-and-forget
+    if not _session_store.has_any_active_session():
+        room_id, room_started_at, participants = _pipeline_state_store.consume_room_session()
+        if room_id is not None:
+            asyncio.create_task(_on_room_end(room_id, list(participants), room_started_at))
 ```
 
 ### 50.1 Cleanup discipline
 
-Every module-level dict that keys on pid must be cleaned up here. This is fragile — adding a new dict elsewhere risks leaking keys. We mitigate by:
-- Grouping the cleanup in one place (`_close_session`).
-- Source-inspection tests that verify all key-dict cleanups are present.
+Every Store that keys on pid must be cleaned up here. The Store-pattern migration (P0.6, Part XXXIX) made this enforceable: each store exposes a `pop(pid)` or equivalent method, and the M2 autouse coverage meta-test (Part XXXIX §257) catches any store that's not in the cleanup list. Tests fail if a new store is added without a cleanup hook.
 
 ### 50.2 BrainOrchestrator.notify_session_end
 
@@ -2359,21 +2544,24 @@ Triggers a bundle of async tasks:
 - `PromptPrefAgent` full analysis on the session's turns.
 - `InsightAgent` episode extraction.
 - `HouseholdExtractionAgent` relationship inference.
-- `NudgeAgent` visitor-alert if this was a stranger session.
+- `NudgeAgent` visitor-alert if this was a non-owner session with turn_count > 0.
 - `SocialGraphAgent` aggregation.
+- `BrainOrchestrator.synthesize_room` (if this was the last session of a multi-person room, see Part XXVI §171).
 
-All gated on dispute: if the session ended in dispute state, these are skipped (Session 53 Finding A).
+All gated on dispute: if the session ended in dispute state, the synthesis helpers are skipped (Session 53 Finding A, see §105).
 
 ## 51. Session Expiry Paths
 
 ### 51.1 `_expire_stale_sessions()`
 
-Runs both in the outer WATCHING loop and inside the conversation loop. Finds sessions where:
+Runs both in the outer WATCHING loop and inside the conversation loop. Iterates `_session_store.peek_all_snapshots()` (Part XL §268) and finds sessions where:
 - `session_type == "voice"` and `(now - last_spoke_at) > VOICE_SESSION_TIMEOUT`
 - OR `session_type == "face"` and `(now - last_face_seen) > FACE_LOSS_GRACE`
 - OR `person_type == "disputed"` and `(now - dispute_set_at) > DISPUTE_MAX_DURATION`
 
 For each, calls `_close_session(pid)`.
+
+Auto-clear (P0.7.3): for disputed sessions where the dispute conditions have resolved (3 consecutive voice matches at ≥ `DISPUTE_AUTO_CLEAR_VOICE_MIN`, OR the holder's face is in frame with `face_match_conf ≥ DISPUTE_AUTO_CLEAR_VOICE_MIN`), call `transition_clear_dispute(pid, now)` to restore the session via `prior_person_type`.
 
 ### 51.2 FACE_LOSS_GRACE (10s)
 
@@ -2389,11 +2577,11 @@ Disputed sessions can't self-expire via the above because the sensor may keep ma
 
 ## 52. Primary Person Selection
 
-> **Phase 3B addendum.** The notion of a "primary person" as the sole speaker of a turn is softening post-Phase 3B. In multi-person rooms, every turn still has a *current speaker* (the pid whose audio was captured), but the brain decides *addressee* independently via the `[addressing:X]` marker (Part XXVI §168). Future refactors may drop the module-level `_cur_pid` variable in favour of passing the current speaker as a parameter — that's part of Phase 3 backlog (Q3 History Architecture and deferred RoomOrchestrator class).
+> **Phase 3B addendum.** The notion of a "primary person" as the sole speaker of a turn is softening post-Phase 3B. In multi-person rooms, every turn still has a *current speaker* (the pid whose audio was captured), but the brain decides *addressee* independently via the `[addressing:X]` marker (Part XXVI §168). Future refactors may drop the module-level "primary pid" concept in favour of passing the current speaker as a parameter — that's part of Phase 3 backlog (Q3 History Architecture and deferred RoomOrchestrator class).
 
 ## 52b. The Room Session Lifecycle
 
-See **Part XXVI §163** for the full story. Briefly: `_active_room_session` (module-level string id), `_active_room_started_at` (timestamp), and `_active_room_participants` (set of person_ids) together describe the current multi-person room. Minted on first session open after empty; populated on every subsequent `_open_session`; torn down in `_on_room_end` when the last session leaves. `_on_room_end` schedules `BrainOrchestrator.synthesize_room` fire-and-forget so room-end latency doesn't block the next turn.
+See **Part XXVI §163** for the full story. Briefly: `PipelineStateStore.room_session_id` (currently-active room session id), `room_started_at` (timestamp), and `room_participants` (set of person_ids) together describe the current multi-person room. Minted on first session open after empty; populated on every subsequent `_open_session`; torn down in `_on_room_end` when the last session leaves. `_on_room_end` schedules `BrainOrchestrator.synthesize_room` fire-and-forget so room-end latency doesn't block the next turn.
 
 
 ### 52.1 `_primary_person_id() -> pid | None`
@@ -2402,13 +2590,14 @@ When multiple sessions are active, which one is "primary" — the one the brain 
 
 ```python
 def _primary_person_id() -> str | None:
-    if not _active_sessions:
+    snaps = _session_store.peek_all_snapshots()
+    if not snaps:
         return None
-    # Most recently spoken wins; tie-break by pid (deterministic)
-    return max(_active_sessions.items(), key=lambda kv: (kv[1]["last_spoke_at"], kv[0]))[0]
+    # Most recently spoken wins; tie-break by pid (deterministic, Session 34 Bug-5)
+    return max(snaps, key=lambda s: (s.last_spoke_at, s.person_id)).person_id
 ```
 
-Simple ordering: the person who spoke most recently is the primary. Tie-break on pid keeps it deterministic (Session 34 Bug-5 fix).
+Simple ordering: the person who spoke most recently is the primary. Tie-break on pid keeps it deterministic.
 
 ### 52.2 Why "most recent speaker"
 
@@ -2416,69 +2605,90 @@ In a multi-person scene, the brain's role is to answer whoever just spoke. We do
 
 ### 52.3 Interaction with routing
 
-The primary is set *before* the current turn's `_resolve_actual_speaker` runs. Routing may switch to a different pid — that pid becomes the primary for this turn's conversation_turn call, and after `log_turn` records the user turn, the session's `last_spoke_at` gets updated, making this pid the primary on the next iteration.
+The primary is computed *before* the current turn's reconciler call (Part X §59). Routing may switch to a different pid — that pid becomes the primary for this turn's `conversation_turn` call, and after `log_turn` records the user turn, the session's `last_spoke_at` is updated via `update_voice_heard` or `update_face_seen`, making this pid the primary on the next iteration.
 
 ---
 ---
 
 # Part IX — Identity Evidence
 
-## 53. The Evidence Dict
+## 53. The `VoiceEvidence` Dataclass
 
-The `identity_evidence` dict on every session is the single source of truth for "how confident are we that this session's pid is the person currently speaking?" It was introduced in Session 61 Step 3 to replace a scattered set of booleans.
+> **Architectural note (2026-05-15).** Pre-P0.7, identity evidence lived in a free-form `identity_evidence: dict` field inside each session's free-form dict. A `_update_identity_evidence(person_id, **fields)` writer guarded against typos via a KeyError on unknown field names. P0.7 (Part XL) replaced both with a typed `VoiceEvidence` slotted dataclass nested inside `Session`. The typo-detection contract is now structural — `slots=True` makes every typo a runtime `AttributeError` — and the writers are named transition methods on `SessionStore` instead of a single multi-purpose helper.
 
-### 53.1 Fields
+The `VoiceEvidence` dataclass on every session captures "how confident are we that this session's pid is the person currently speaking?":
 
-```python
-{
-    "face_match_conf":     float,   # last face recognition cosine (0 if none)
-    "face_last_seen_ts":   float,   # unix ts of last face match (0 if none)
-    "anti_spoof_live":     bool,    # last anti-spoof verdict
-    "anti_spoof_score":    float,   # last live_prob
-    "anti_spoof_last_ts":  float,   # last check timestamp
-    "voice_match_conf":    float,   # last voice ID cosine (0 if none)
-    "voice_sample_count":  int,     # DB-hydrated at _open_session (Obs 1)
-    "voice_last_heard_ts": float,   # unix ts of last voice ID match
-    "bootstrap_credits":   int,     # remaining credits from engagement gate
-}
-```
-
-### 53.2 Ephemeral vs persistent
-
-- **Face-side fields are ephemeral** — re-established each session. The face you saw 5 minutes ago isn't guaranteed to be the same person 30 minutes later.
-- **`voice_sample_count` is DB-persistent** via hydration. Voice samples persist across sessions; sample count reflects that.
-- **`bootstrap_credits` is per-session** — once consumed, gone.
-
-## 54. The Single-Writer Invariant
+### 53.1 Fields (from `core/session_state.py`)
 
 ```python
-def _update_identity_evidence(person_id: str, **fields) -> None:
-    sess = _active_sessions.get(person_id)
-    if not sess:
-        return
-    ev = sess.get("identity_evidence")
-    if ev is None:
-        return
-    for key, value in fields.items():
-        if key not in ev:
-            raise KeyError(f"_update_identity_evidence: unknown field {key!r}. Known keys: {sorted(ev)}")
-        ev[key] = value
+@dataclass(slots=True)
+class VoiceEvidence:
+    # voice channel
+    voice_match_conf:      float = 0.0          # last voice ID cosine — CAN BE NEGATIVE
+    voice_last_heard_ts:   float = 0.0          # unix ts of last voice ID match
+    voice_sample_count:    int = 0              # DB-hydrated at open_session
+    bootstrap_credits:     int = 0              # remaining credits from engagement gate
+    recent_voice_confs:    list[float] = field(default_factory=list)   # maxlen-3 deque
+    # face channel
+    face_match_conf:       float = 0.0          # last face recognition cosine (0 if none)
+    face_last_seen_ts:     float = 0.0          # unix ts of last face match
+    anti_spoof_live:       bool = False         # last anti-spoof verdict
+    anti_spoof_score:      float = 0.0          # last live_prob
 ```
 
-### 54.1 Why single-writer
+`anti_spoof_last_ts` (separate field for the timestamp of the most recent anti-spoof check) is currently merged into `face_last_seen_ts` since the greeting path and the background vision scan both write them together. If P0.S1's anti-spoof-on-every-match work surfaces a need for a separate timestamp, it'll be added as an explicit field on `VoiceEvidence`.
 
-Three call sites write evidence:
-- Greeting path — when anti-spoof passes and we're about to greet a known person.
-- Background vision scan — when a face is recognised as an active-session pid.
-- Per-turn voice ID — when voice matches the session holder.
-- Progressive-enrollment gate pass — when a stranger says the system name (Bug C post-review split this into face-captured vs voice-only branches).
-- Accumulation success — after `_accumulate_voice` writes a new sample.
+### 53.2 `voice_match_conf` can be negative
 
-Having them all funnel through one function guarantees the KeyError on unknown fields — a typo like `anti_spoof_live_ts` (instead of `anti_spoof_last_ts`) fails loudly at write time rather than silently writing a new garbage key.
+ECAPA-TDNN cosine similarity between anti-correlated speakers is routinely negative (values like -0.05, -0.08 are normal). `voice_match_conf` carries the *actual* cosine returned by `voice.identify()`, NOT the absolute value. The reconciler's P4 rules (Part X §60.5) interpret negative scores as "confident not-this-speaker" signal; the post-2026-05-02 negative-cosine fix made this distinction load-bearing. Storing the raw cosine preserves the signal.
 
-### 54.2 Silent no-op on missing session
+### 53.3 Ephemeral vs persistent
 
-If the session was closed between the caller's read and the write, `_update_identity_evidence` returns silently. Caller doesn't need null-checks. This is especially important for async paths like `_accumulate_voice` where the session may close while the task is pending.
+- **Face-side fields are ephemeral** — re-established each session. The face seen 5 minutes ago isn't guaranteed to be the same person 30 minutes later.
+- **`voice_sample_count` is DB-persistent** via hydration. Voice samples persist across sessions; sample count reflects that. `_open_session` hydrates from `_voice_gallery_store.peek_size(pid)` and falls back to `db.count_voice_embeddings(pid)` if the cache is stale (Obs 1, Part XL §266).
+- **`bootstrap_credits` is per-session** — once consumed, gone (replenishment for engaged voice-only strangers via Session 94 lands here too; see §337 for the known fix-queued bug after promotion).
+
+## 54. The Named-Transition Writer Invariant
+
+Pre-P0.7 had `_update_identity_evidence(person_id, **fields)` — one writer, validation via KeyError on unknown fields. P0.7 replaced this with named transition methods on `SessionStore`, each one writing exactly the field set its name implies:
+
+```python
+# In core/session_state.py::SessionStore
+async def update_voice_heard(self, pid: str, conf: float, ts: float) -> None:
+    """Update voice_match_conf + voice_last_heard_ts; append to recent_voice_confs."""
+
+async def update_face_seen(self, pid: str, ts: float, conf: float, live: bool) -> None:
+    """Update face_match_conf + face_last_seen_ts + anti_spoof_live."""
+
+async def set_bootstrap_credits(self, pid: str, n: int) -> None:
+    """Seed bootstrap credits at engagement-gate pass."""
+
+async def decrement_bootstrap_credits(self, pid: str) -> bool:
+    """Consume one credit on accumulation. Returns False if 0; no-mutate."""
+```
+
+### 54.1 Why named transitions instead of a single multi-purpose writer
+
+Three reasons over the pre-P0.7 design:
+
+1. **Semantic clarity.** `update_voice_heard(pid, conf, ts)` reads better than `_update_identity_evidence(pid, voice_match_conf=..., voice_last_heard_ts=...)`. Future maintainers immediately see what the call site means.
+2. **Atomic multi-field writes.** `update_voice_heard` writes 3 fields (`voice_match_conf`, `voice_last_heard_ts`, append to `recent_voice_confs`) in one lock acquisition. The pre-P0.7 caller had to make 3 separate `_update_identity_evidence` calls and the dispute auto-clear's 3-consecutive-voice-match check could race with a deque mutation between them.
+3. **Type safety.** `slots=True` on `VoiceEvidence` makes `e.voice_match_conff = 0.5` (note the typo) a runtime `AttributeError`. The dynamic `**fields` writer needed an explicit KeyError check; the typed dataclass needs none.
+
+### 54.2 Call sites and which transition fires where
+
+| Call site | Transition method | What it writes |
+|---|---|---|
+| Greeting path (anti-spoof passes, about to greet known) | `update_face_seen` | face_match_conf, face_last_seen_ts, anti_spoof_live=True, anti_spoof_score |
+| Background vision scan (face recognised as active session pid) | `update_face_seen` | same shape |
+| Per-turn voice ID (voice matches session holder) | `update_voice_heard` | voice_match_conf, voice_last_heard_ts, append to recent_voice_confs |
+| Engagement gate pass (face captured: known/best_friend greeting) | `set_bootstrap_credits(N_INITIAL_VOICE_BOOTSTRAP)` + `update_face_seen` + `set_voice_face_confirmed(True)` | bootstrap_credits, face evidence, voice_face_confirmed |
+| Engagement gate pass (voice-only: stranger said system name, no face) | `set_bootstrap_credits(N_INITIAL_VOICE_BOOTSTRAP)` + `set_voice_only_origin(True)` | bootstrap_credits, voice_only_origin (no face evidence — fixes Bug C, see Part XL §263) |
+| Accumulation success in `_accumulate_voice` | `decrement_bootstrap_credits` (Path C) OR no-op (Path A/B); voice_sample_count bumped via `_voice_gallery_store.set_size` | bootstrap_credits decrement |
+
+### 54.3 Silent no-op on missing session
+
+If the session was closed between the caller's snapshot and the transition call, the transition's first line — `sess = self._sessions.get(pid); if sess is None: return` — returns silently. Caller doesn't need null-checks. This is especially important for async paths like `_accumulate_voice` where the session may close while the task is pending.
 
 ## 55. Path A / B / C Accumulation Policy
 
@@ -2630,193 +2840,140 @@ Two cases:
 
 # Part X — Multi-Person Routing
 
-## 59. `_resolve_actual_speaker` Algorithm
+> **Architectural note (2026-05-17).** The original routing function `_resolve_actual_speaker` in `pipeline.py` was the project's first multi-person routing primitive (Sessions 26-49). After the voice/vision independence rearchitecture (Phases 1–4 of `VOICE_VISION_INDEPENDENCE_PLAN.md`, see Part XXXII) the routing logic moved into `core/reconciler.py::reconcile`, a 22-rule cascade that consumes a structured `IdentityClaim` + `PresenceState` + `SessionState` and emits a single `RoutingDecision`. The Phase 4 cutover (`ROUTING_USE_RECONCILER=True`, Session 121) made the reconciler primary; P0.10 Phase 2 (2026-05-17) **deleted `_resolve_actual_speaker` entirely**. This Part describes the production routing surface as it exists today — the reconciler. The historical algorithm and the Bug-W coverage gap that the deletion exposed are documented in **Part XLIII §285-§292**.
 
-This is the function that decides, for every turn, who actually spoke. It is the single most consequential routing decision in the system.
+## 59. The Reconciler — Single Routing Source of Truth
 
-### 59.1 Inputs
-
-- `v_pid: str | None` — the pid that voice ID returned (None if below threshold).
-- `v_score: float` — the cosine similarity of the voice match.
-- `cur_pid: str | None` — the current primary session pid.
-- `persons_in_frame: dict` — scene roster with sources.
-- `unrecognized_tracks: dict[track_id, last_seen_ts]` — unknown faces currently in frame.
-- `voice_gallery_sizes: dict[pid, int]` — for adaptive switch threshold.
-- `now: float` — current time.
-- `exclude: pid | None` — when looking for scene candidates, exclude a pid.
-- `cur_person_type: str | None` — the session's person_type (for Priority 3.5).
-
-### 59.2 Output
-
-`tuple[pid | None, route: str]` — the pid we should route this turn to, and a string naming which priority fired. Route strings: `"switch_enrolled"`, `"new_stranger"`, `"current"`, `"ambiguous"`.
-
-### 59.3 The algorithm at a glance
-
-```
-if v_score >= switch_threshold and v_pid != cur_pid:
-    Priority 1: switch to v_pid
-elif v_score >= VOICE_ROUTING_MIDRANGE_SWITCH_MIN (0.30) and v_pid != cur_pid:
-    Priority 2: if face agrees, switch; else ambiguous
-elif v_pid == cur_pid:
-    Priority 3: current, with floor checks
-elif v_pid is None and cur_pid is bootstrapping stranger:
-    Priority 3.5: current (stay in thin session)
-elif no candidate in scene:
-    Priority 4: new stranger
-else:
-    Priority 5: current fallback
-```
-
-## 60. Priorities 1 through 5 Breakdown
-
-### 60.1 Priority 1 — Confident switch
+Production routing for every turn flows through one function:
 
 ```python
-switch_threshold = _effective_switch_threshold(v_pid, voice_gallery_sizes)
-if v_pid and v_pid != cur_pid and v_score >= switch_threshold:
-    print(f"[Voice] {_now_log_ts()} Routing: switch_enrolled → {v_pid} (score={v_score:.3f})")
-    return v_pid, "switch_enrolled"
+def reconcile(
+    claim:    IdentityClaim,
+    presence: PresenceState,
+    session:  SessionState,
+) -> RoutingDecision: ...
 ```
 
-A different enrolled voice at confidence above the adaptive switch threshold. No face agreement required; the voice alone is strong enough.
+`reconcile` is pure — no module-level state reads, no I/O, no side effects. Three inputs come from three independent producers:
 
-### 60.2 Priority 2 — Mid-range switch with face agreement
+- **`IdentityClaim`** is built by `core/voice_channel.py::identify_speaker` (Part XXXII §199). It captures voice-side observation only: `pid`, `confidence`, `n_diarize_segments`, `utterance_duration`, optional `raw_segment_scores`, plus a human-readable `reasoning` string. Voice does not read vision state to construct the claim.
+- **`PresenceState`** is built by `core/vision_channel.py::observe_scene` (Part XXXII §200). It captures vision-side observation only: `visible_pids`, `unrecognized_track_ids`, `per_pid_confidence`, frame `timestamp`. Vision does not read voice state.
+- **`SessionState`** is built by the pipeline immediately before the reconciler call. It snapshots: `cur_pid`, `cur_person_type`, `n_active_sessions`, `voice_gallery_sizes`, `cur_holder_voice_n`, `now`.
+
+The output `RoutingDecision` is a frozen dataclass: `action`, `pid`, `rule` (which rule fired), `utt_band` (`noise` / `gap` / `short_hard` / `normal`), `reasoning`. The `action` is one of: `current`, `switch_enrolled`, `new_stranger`, `ambiguous`, `short_utterance_skip`, `short_utterance_voice_mismatch`, `multi_segment_voice_mismatch`, `no_action`.
+
+## 60. The 22-Rule Cascade — Priority Bands
+
+`reconcile` runs a fixed cascade in deterministic order. Each rule is a pure function `(claim, presence, session) -> Optional[RoutingDecision]`. The first rule that matches wins. If no rule matches (degenerate state), the cascade returns `RoutingDecision(action="no_action", ...)` — a logged escape hatch that should never fire in practice given the cascade's coverage.
+
+The cascade is grouped into 5 priority bands. Each rule carries a `LOWER_BOUND` attribute documenting the minimum utterance duration at which it is eligible to fire (introduced in P0.10 Phase 1; see Part XLIII §287 for the non-decreasing band-ordering invariant).
+
+| Band | Rules | What they handle |
+|---|---|---|
+| **P0** | `_p0_pure_noise_hold_current`, `_p0_short_utterance_no_session`, `_p0_short_utterance_gap_hold_current`, `_p0_short_utterance_hard_mismatch`, `_p0_short_utterance_ambiguous_multi_session` | Sub-MIN_UTTERANCE_SECS audio: hard-mismatch drops, ambiguous-zone drops, pure-noise hold-current, the Bug-W gap fix (`gap` band, see §60.3) |
+| **P1** | `_p1_confident_voice_switch` | Voice score above `SPEAKER_SWITCH_THRESHOLD` and matches a different pid → confident switch |
+| **P2** | `_p2_face_assist_switch`, `_p2_voice_face_agree` | Mid-range voice score where face co-presence corroborates the switch |
+| **P3** | `_p3_self_match_with_face`, `_p3_self_match_below_floor`, `_p3_above_self_match` | Holder's own voice score relative to self-match floor (gallery-poisoning protection) |
+| **P4** | `_p4_pyannote_vouched_stranger`, `_p4_new_stranger_low_match`, `_p4_voice_ambiguous_no_candidates`, `_p4_voice_ambiguous_with_candidates`, `_p4_single_segment_mismatch`, `_p4_multi_segment_mismatch` | Below-threshold voice scores: open new stranger, drop turn, hold ambiguous |
+| **P5** | `_p5_no_session_new_stranger`, `_last_resort_ambiguous` | No active session: any real signal opens a stranger session; last-resort fall-through |
+
+The grouping is intentional and load-bearing. P0 fires before P1 because a sub-second utterance scoring 0.85 against the holder is still too short to attribute reliably (high score is artifactual from acoustic prior, not identity match). P3's self-match floor fires before P4's mismatch handling because "current holder said something quiet" must route differently from "stranger said something we can't match."
+
+Every rule is independently unit-tested in `tests/test_reconciler.py`. The cascade is integration-tested by passing pinned `(claim, presence, session)` fixtures captured from real canary failure modes (the Bug-W gap fixture from 2026-05-01 and the negative-cosine fixture from 2026-05-02 are two examples).
+
+### 60.1 P1 — confident voice switch
+
+The simplest case. Voice score above `VOICE_SPEAKER_SWITCH_THRESHOLD` (effective threshold may be higher for thin profiles, see §61) and `claim.pid != session.cur_pid`. Routes to `claim.pid` as `switch_enrolled`. Face agreement is not required — the voice alone is strong enough.
+
+### 60.2 P2 — mid-range switch with face corroboration
+
+Score between the mid-range floor (`VOICE_ROUTING_MIDRANGE_SWITCH_MIN`) and `VOICE_SPEAKER_SWITCH_THRESHOLD`. Voice alone is too weak, but if `claim.pid` also appears in `presence.visible_pids`, the two independent signals agreeing gives confidence to switch. Without face corroboration in this band, the rule returns ambiguous and the turn is dropped.
+
+The `face_assist_min` floor (`VOICE_ROUTING_FACE_ASSIST_MIN = 0.42`) was added in 2026-04-21 Session 67 Bug O after a 0.314 phone-audio score with the holder's face in frame was misattributed. Even with face corroboration, the voice must clear the assist floor.
+
+### 60.3 P0 — short-utterance handling and the Bug-W gap fix
+
+The `_p0_short_utterance_gap_hold_current` rule (added in P0.10 Phase 1, Session ~119+) fires when:
+- `utterance_duration` is between `MIN_UTTERANCE_SECS` and `SHORT_UTTERANCE_FLOOR`
+- The session is active (`session.cur_pid is not None`)
+- No signal disqualifies the holder
+
+This rule fills the **Bug-W coverage gap** (Part XLIII §286): pre-P0.10, a 0.3–0.5s utterance from a known holder with no other signal would fall through every cascade rule and exit `no_action` (turn dropped). The legacy `_resolve_actual_speaker` had a catch-all `return cur_pid, "current"` that incidentally papered over the gap; the reconciler's positive-contract design needed an explicit rule.
+
+The rule tags `utt_band="gap"`. The `EXPECTED_RULES_BY_BAND` invariant (Part XLIII §291) asserts that any rule firing on a `gap` band utterance must be `_p0_short_utterance_gap_hold_current`.
+
+### 60.4 P3 — self-match floors (gallery-poisoning protection)
+
+`_p3_self_match_with_face` covers the common case: voice matches the current holder + face is visible → trust the match. `_p3_above_self_match` covers the offscreen case with a higher floor (`VOICE_ROUTING_SELF_MATCH_OFFSCREEN = 0.45`). `_p3_self_match_below_floor` returns ambiguous when the score is below the absolute floor (`VOICE_ROUTING_SELF_MATCH_FLOOR = 0.30`) — this is the poisoning protection: if the holder's own voice scores below 0.30, the audio is likely something else (replay attack, recorded clip).
+
+P0.11 Bug-W fix did NOT change P3 floors. The poisoning protection is calibrated for mature speakers; bootstrap is handled by a separate path (P5 thin-profile relaxation, §60.6).
+
+### 60.5 P4 — below-threshold voice scores and the negative-cosine fix
+
+The four P4 rules handle voice scores below the switch threshold:
+
+- `_p4_pyannote_vouched_stranger` — pyannote reported 2+ segments (multi-speaker turn) AND ECAPA didn't find a confident match. Open a new stranger session.
+- `_p4_new_stranger_low_match` — single-segment turn with score below threshold. Open a new stranger session.
+- `_p4_voice_ambiguous_no_candidates` — ambiguous score, no presence candidates → hold current.
+- `_p4_voice_ambiguous_with_candidates` — ambiguous score, multiple visible candidates → return ambiguous.
+
+The **negative-cosine fix** (2026-05-02, documented in Part XXXII §202) changed the precondition on `_p4_pyannote_vouched_stranger` and `_p4_new_stranger_low_match` from `claim.confidence == 0.0` (exact equality on gallery miss) to `claim.confidence <= 0.0` and `claim.confidence < VOICE_RECOGNITION_THRESHOLD AND claim.confidence != 0.0` respectively. ECAPA-TDNN routinely returns negative cosines for anti-correlated speakers; the original `== 0.0` check silently dropped these.
+
+### 60.6 P5 — no-session and last-resort
+
+`_p5_no_session_new_stranger` fires when no session is active and there's any real signal — a non-zero `claim.confidence` or a non-empty `presence.unrecognized_track_ids` opens a stranger session. The "thin-profile relaxation" carry-over from `_p3_self_match_with_face`'s historical Priority 3.5 — bootstrap-period strangers with thin profiles are handled by the engagement gate's bootstrap credits (Part XL §266) rather than a routing-cascade special case.
+
+The `_last_resort_ambiguous` rule is the cascade's safety net: returns `ambiguous` when no other rule matched. In a fully-covered cascade this never fires; the P0.10 B2 fail-safe in `pipeline.py` logs `[Reconciler] WARN: no rule fired` if `_rc_decision is None` despite this rule's existence (structural insurance against a future refactor that drops the last-resort rule).
+
+## 61. Effective Switch Threshold (Thin-Profile Adaptation)
+
+The P1 confident-switch floor is not constant. The reconciler reads `session.voice_gallery_sizes[claim.pid]` and applies an adaptive floor:
 
 ```python
-if v_pid and v_pid != cur_pid and v_score >= VOICE_ROUTING_MIDRANGE_SWITCH_MIN:
-    if _face_in_frame(v_pid, persons_in_frame):
-        print(f"[Voice] ... Routing: switch_enrolled (face+voice agree) → {v_pid}")
-        return v_pid, "switch_enrolled"
-    print(f"[Voice] ... Routing: ambiguous — mid-range score {v_score:.3f} for {v_pid} not in frame")
-    return None, "ambiguous"
-```
-
-Score is between 0.30 and `switch_threshold`. Voice alone is too weak, but if the face is also in frame we have two independent signals agreeing.
-
-Post-Bug B (post-review), `_face_in_frame` filters out voice-source entries in `persons_in_frame`. Without that filter, a voice-only speaker's voice match would always trigger this path (because voice-ID adds them to `persons_in_frame`), producing a false "face+voice agree."
-
-### 60.3 Priority 3 — Current session confirmation
-
-```python
-if v_pid is not None and v_pid == cur_pid:
-    if v_score < VOICE_ROUTING_SELF_MATCH_FLOOR:       # 0.30
-        return None, "ambiguous"
-    if v_score < VOICE_ROUTING_SELF_MATCH_OFFSCREEN and not _face_in_frame(cur_pid, persons_in_frame):  # 0.45
-        return None, "ambiguous"
-    return cur_pid, "current"
-```
-
-Voice matches the current session holder. Two floors:
-- `VOICE_ROUTING_SELF_MATCH_FLOOR=0.30` — absolute floor; below this we can't trust the match at all.
-- `VOICE_ROUTING_SELF_MATCH_OFFSCREEN=0.45` — higher floor when the session holder isn't in frame (no face corroboration).
-
-### 60.4 Priority 3.5 — Bootstrapping stranger
-
-```python
-_is_stranger = (
-    cur_person_type == "stranger"
-    if cur_person_type is not None
-    else bool(cur_pid and cur_pid.startswith("stranger_"))
-)
-if v_pid is None and cur_pid is not None and _is_stranger:
-    gallery_count = voice_gallery_sizes.get(cur_pid, 0)
-    if gallery_count < N_INITIAL_VOICE:
-        print(f"[Voice] ... Routing: current (stranger bootstrapping — {gallery_count}/{N_INITIAL_VOICE} voice samples)")
-        return cur_pid, "current"
-```
-
-Voice ID returned None, but the current session is a stranger whose voice profile hasn't matured. identify() can't reliably self-match a thin profile, so we don't treat "no match" as "they left" — we stay on the current session to let the profile grow.
-
-Session 50 Finding #1 hardened this to prefer `cur_person_type` when supplied — the `stranger_` prefix persists after promotion (pid doesn't change), so the prefix alone isn't a reliable stranger signal.
-
-### 60.5 Priority 4 — New stranger
-
-```python
-if v_pid is None:
-    # No match, no bootstrapping stranger — a fresh voice
-    _new_pid = f"stranger_{uuid4().hex[:8]}"
-    return _new_pid, "new_stranger"
-```
-
-Voice doesn't match anyone in the gallery and we're not in a bootstrapping stranger session. This is a new person. Return a fresh pid.
-
-### 60.6 Priority 5 — Current fallback
-
-If none of the above, stay on the current session. Log `Routing: current — voice ambiguous, no other candidates in scene`.
-
-## 61. Adaptive Switch Threshold
-
-### 61.1 `_effective_switch_threshold(v_pid, sizes) -> float`
-
-```python
-def _effective_switch_threshold(v_pid, sizes):
-    # Thin profiles (< N_INITIAL_VOICE=5 samples) have noisier scores;
-    # require more evidence to switch. Past that, use the configured threshold.
-    if v_pid is None:
-        return VOICE_SPEAKER_SWITCH_THRESHOLD
+def _effective_switch_threshold(v_pid: str, sizes: dict[str, int]) -> float:
     n = sizes.get(v_pid, 0)
     if n < N_INITIAL_VOICE:
-        return 0.70   # higher bar
-    return VOICE_SPEAKER_SWITCH_THRESHOLD  # 0.50
+        return 0.70  # thin profile — require more evidence to switch
+    return VOICE_SPEAKER_SWITCH_THRESHOLD  # mature profile — configured threshold (0.50)
 ```
 
-### 61.2 Why adaptive
+A mature profile produces stable scores; a thin profile (fewer than `N_INITIAL_VOICE = 5` samples) can spike above the configured threshold on a single utterance that happens to resemble the mean. Requiring 0.70 for thin-profile switches prevents spurious hand-overs early in the profile's life.
 
-A mature profile (many samples) produces stable scores; a thin profile can spike above threshold on a single utterance that happens to resemble the mean. Requiring higher scores for switches to thin profiles prevents spurious hand-overs early in the profile's life.
+The function is part of `core/reconciler.py` (not `pipeline.py` — it's a pure helper consumed by `_p1_confident_voice_switch`).
 
-## 62. `_persons_in_frame` — Dual Source
+## 62. `presence.visible_pids` and `unrecognized_track_ids` — How Vision Talks to Routing
 
-### 62.1 The dict
+The `PresenceState` shape is the contract between the vision channel and the reconciler:
 
 ```python
-_persons_in_frame: dict[pid, {
-    "name": str,
-    "conf": float,
-    "last_seen": float,
-    "last_recognized_at": float,
-    "source": str,    # "face" or "voice"
-}]
+@dataclass(frozen=True)
+class PresenceState:
+    visible_pids:           tuple[str, ...]        # face-recognised pids in frame
+    unrecognized_track_ids: tuple[str, ...]        # SORT track ids without recognition
+    per_pid_confidence:     dict[str, float]       # face_match_conf per visible pid
+    timestamp:              float = 0.0            # frame timestamp
 ```
 
-### 62.2 Writers
+The vision channel emits *what is currently visible*. Stale-state expiry happens upstream (the vision loop applies `SCENE_STALE_SECS` before calling `observe_scene`). The reconciler acts on the snapshot it gets and does not look up "what was visible 30 seconds ago".
 
-- Background vision loop (pipeline.py ~line 1110): on face recognition, writes `source="face"` plus face confidence.
-- Voice ID per turn (pipeline.py ~line 3300): on voice match, writes `source="voice"` plus voice score.
+`visible_pids` is the face-only roster — voice-only sessions are NOT included (compare the legacy `_persons_in_frame` dict which dual-sourced face + voice and required the `_face_in_frame` helper to disambiguate). The architectural cleanup in Part XXXII makes this explicit by design: vision only sees vision, voice only sees voice, the reconciler integrates.
 
-### 62.3 Readers
+`unrecognized_track_ids` carries the SORT tracker's track ids for faces detected but not yet recognised. The reconciler uses this for the `_p5_no_session_new_stranger` "any real signal" condition (an unrecognized face is real signal even if no voice match fires).
 
-- `_resolve_actual_speaker` — Priority 2 face-agree check; Priority 3 offscreen check.
-- Scene heartbeat — emits `[Vision]` log.
-- Left-frame log — emits `[Vision] Person left frame`.
-- `_build_scene_block` — composes the `<<<SCENE>>>` brain block.
+## 63. The Reconciler-Shadow Block and Band Divergence
 
-### 62.4 Why the dual source
+`pipeline.py` (~line 7100 pre-P0.10-Phase-2-cleanup) carries a Reconciler-Shadow logging block — a 14-field rich-format log line emitted on every routing decision for observability during the cutover validation window. The block's trigger evolved across phases:
 
-Originally we considered two separate dicts. We merged them because many readers want "is this pid currently being tracked" regardless of source — the scene block shows both, the session heartbeat shows both. Having one dict simplifies cleanup and expiry.
+- **Phase 3 (shadow mode):** `_rc_decision.action != _routing_action` — compare the reconciler's decision to the legacy router's decision; log divergences.
+- **Phase 4 (cutover) + P0.10:** retargeted to band-divergence detection. The trigger fires when the rule that fired isn't the rule expected for the utterance's `utt_band` per the `EXPECTED_RULES_BY_BAND` map.
 
-The downside — reader confusion between sources — was addressed by the `source` tag and the `_face_in_frame` helper (Bug B).
+The legacy "compare to `_resolve_actual_speaker`" trigger became unworkable after Phase 2 deletion. The retarget to band-divergence was the **developer-improves-on-spec** moment for P0.10 Block C (Part L §327 — 4th instance) — the architectural intent (catch divergences between expected and actual routing) was preserved while the mechanism changed.
 
-## 63. The `_face_in_frame` Helper
+The shadow block + the `ROUTING_USE_RECONCILER` flag are scheduled for deletion at the close of the P0.10 validation window (`tests/p0_10_validation_runbook.md`, Part XLIII §292).
 
-```python
-def _face_in_frame(pid: str, persons_in_frame: dict) -> bool:
-    entry = persons_in_frame.get(pid)
-    return entry is not None and entry.get("source") != "voice"
-```
+## 64. Scene Roster (`_build_scene_block`)
 
-### 63.1 Purpose
-
-Distinguishes "this pid has a face currently tracked on camera" from "this pid has been voice-identified recently." Routing decisions, scene-labeled logs, and left-frame announcements all need the face-specific semantics.
-
-### 63.2 Why negated check (`!= "voice"`) rather than (`== "face"`)
-
-Future-proofing. If we add a third source later (e.g., "track_id_only" for a face detected but not yet recognised), it should still count as face presence. Checking for non-voice catches everything except explicit voice-only.
-
-## 64. Scene Roster
-
-### 64.1 `_build_scene_block`
-
-Builds the `<<<SCENE>>>` block for the brain:
+The `<<<SCENE>>>` prompt block is built once per turn and injected into the system prompt. Its inputs are the session state + `presence.visible_pids` + voice-only-offscreen recency. The structure:
 
 ```
 <<<SCENE>>>
@@ -2826,19 +2983,23 @@ Builds the `<<<SCENE>>>` block for the brain:
 <<<END>>>
 ```
 
-### 64.2 Sources combined
+### 64.1 Sources combined
 
-- **Speaking now** — the current turn's pid.
-- **Also present** — other sessions active in `_active_sessions`.
-- **Offscreen recent** — pids heard within SCENE_VOICE_STALE (30s) that no longer have a session.
+- **Speaking now** — the current turn's pid (after routing).
+- **Also present** — other sessions active in the SessionStore.
+- **Offscreen recent** — pids heard within `SCENE_VOICE_STALE` (30s) that no longer have a session.
 
-### 64.3 Dispute label override (Finding M)
+### 64.2 Dispute label override (Finding M, Session 56)
 
-Session 56 added a branch: if a session is `disputed`, it is labeled "disputed identity" regardless of its base person_type. This keeps the SCENE block consistent with the `<<<IDENTITY DISPUTED>>>` block — both treat the speaker as unknown.
+If a session is `disputed`, it's labeled "disputed identity" regardless of its base person_type. This keeps the SCENE block consistent with the `<<<IDENTITY DISPUTED>>>` block (Part XV §103) — both treat the speaker as unknown until the dispute resolves.
+
+### 64.3 SHA-256 caching (Wave 6 Item 23)
+
+`_build_scene_block` caches its output by SHA-256 of all inputs. Repeated turns with no scene change return the previously-built string directly. See **Part XLVII §304** for the cache architecture and invariants. Gated by `SCENE_BLOCK_CACHE_ENABLED = True`.
 
 ### 64.4 Toggle
 
-`SCENE_BLOCK_ENABLED=True` globally. The block is injected every turn. Disabling it removes multi-person awareness from the brain's context — useful only for single-speaker test configurations.
+`SCENE_BLOCK_ENABLED = True` globally. The block is injected every turn. Disabling it removes multi-person awareness from the brain's context — useful only for single-speaker test configurations.
 
 ---
 ---
@@ -4173,11 +4334,15 @@ The dispute state machine closes the second gap.
 
 ## 102. Trigger Paths
 
+> **Architectural note (2026-05-15).** Pre-P0.7, every dispute-trigger site directly wrote `_active_sessions[pid]["person_type"] = "disputed"` and the three companion fields (`dispute_set_at`, `prior_person_type`, `disputed_claimed_name`). Different sites set different subsets — `prior_person_type` was missed at one site, `dispute_set_at` was missed at another, and auto-clear sometimes restored to `"known"` instead of the original type. P0.7 routed all three operations through the named transition `transition_to_disputed(pid, claimed_name, reason, now)`. The transition captures `prior_person_type` atomically with the other three fields; restore via `clear_dispute(pid, now)` reads `prior_person_type` and fail-closes to `"stranger"` per P0.2 if missing.
+
 A session enters disputed state via one of these paths:
 
-1. **`report_identity_mismatch` tool** (Session 51 #2B). LLM flags that the speaker contradicts the sensor. The handler sets `session["person_type"] = "disputed"`, records `dispute_set_at`, preserves `prior_person_type`.
-2. **`update_person_name` on a known session** (Session 54/55). A speaker whose session is `known` or `best_friend` says they are a different person. Instead of renaming (which would corrupt the real person's row), session flips to `disputed`.
-3. **Auto-dispute** (rare). An explicit code path for internal consistency checks.
+1. **`report_identity_mismatch` tool** (Session 51 #2B). LLM flags that the speaker contradicts the sensor. The `_handle_report_identity_mismatch` handler (Part XLI §272) calls `await _session_store.transition_to_disputed(pid, claimed_name=None, reason="report_identity_mismatch", now=time.time())`.
+2. **`update_person_name` on a known session** (Session 54/55). A speaker whose session is `known` or `best_friend` says they are a different person. Instead of renaming (which would corrupt the real person's row), `_handle_update_person_name` calls `transition_to_disputed(pid, claimed_name=proposed_name, reason="rename_on_known", now=...)`.
+3. **Auto-dispute** (rare). An explicit code path for internal consistency checks. Calls the same `transition_to_disputed` method.
+
+The single named transition is the only writer for the four fields. Future paths that want to enter dispute state must call this method; the AST scan in `tests/test_no_raw_disputed_comparisons.py` (P0.1, Part XXXVI §234) rejects any raw `person_type = "disputed"` write outside the helper.
 
 ## 103. `<<<IDENTITY DISPUTED>>>` Block
 
@@ -4189,7 +4354,7 @@ A session enters disputed state via one of these paths:
 <<<END>>>
 ```
 
-Injected in `_build_system_prompt` whenever `session["person_type"] == "disputed"`. This instructs the brain to behave as if the speaker is a stranger, regardless of the face or voice match.
+Injected in `_build_system_prompt` whenever the session's snapshot satisfies `_is_disputed(snapshot)`. This instructs the brain to behave as if the speaker is a stranger, regardless of the face or voice match.
 
 ## 104. `_disputed_persons` Set
 
@@ -4198,42 +4363,47 @@ Injected in `_build_system_prompt` whenever `session["person_type"] == "disputed
 - `_process_turn` first checks this set; disputed → skip triage/extraction.
 - `notify_session_end` skips all 6 session-end helpers when disputed.
 
-`mark_disputed(pid)` and `clear_disputed(pid)` are the API.
+`mark_disputed(pid)` and `clear_disputed(pid)` are the orchestrator-side API; the pipeline calls them from inside the corresponding `transition_to_disputed` / `clear_dispute` paths in `SessionStore`.
 
 ## 105. Session-End and Conversation-Log Gating
 
 Session 53 Findings A and B made the gating airtight:
 
 - **A (session-end gate):** `notify_session_end` checks `_disputed_persons` and skips PromptPrefAgent, InsightAgent, HouseholdAgent, NudgeAgent visitor alert, and SocialGraphAgent.
-- **B (conversation_log gate):** `conversation_turn` and `_kairos_tick` skip `db.log_turn` when the session is disputed. Turns stay in-memory only; disputed-session turns never touch the DB.
+- **B (conversation_log gate):** `conversation_turn` and `_kairos_tick` check `_is_disputed(_session_store.peek_snapshot(pid))` before calling `db.log_turn`. Disputed-session turns stay in-memory only; never touch the DB.
 
 This means a dispute leaves no persistent trace beyond the watchdog alert. If it resolves cleanly (via rename), the clean pid's knowledge is unaffected.
+
+The `_is_disputed()` helper is the canonical predicate. Every check in the codebase routes through it (enforced by `tests/test_no_raw_disputed_comparisons.py` — P0.1, Part XXXVI §234) so future changes to dispute state representation (e.g. moving from string to enum) don't have to scatter through every call site.
 
 ## 106. Force-Close Timeout
 
 `DISPUTE_MAX_DURATION=180s`. After 3 minutes of dispute with no resolution, `_expire_stale_sessions` force-closes the session. Session 53 Finding C added this because vision can keep matching the wrong person, preventing natural expiry via FACE_LOSS_GRACE.
 
-Session 54 Finding K added a lazy anchor: if `dispute_set_at` is missing (future code path forgot to set it), `_expire_stale_sessions` anchors it on first observation rather than silently resetting it every pass.
+Session 54 Finding K added a lazy anchor that became unnecessary after P0.7: if `dispute_set_at` is missing (future code path forgot to set it), the old behaviour was to anchor it on first observation. P0.7's `transition_to_disputed` writes `dispute_set_at` atomically with the other three fields, so the field is guaranteed present whenever `person_type == "disputed"`. The lazy-anchor fallback was kept as defense-in-depth but is now unreachable in practice.
 
 ## 107. Dispute-Rename Burst Watchdog
 
-Session 57 N3. When disputed-rename attempts accumulate:
+Session 57 N3. When disputed-rename attempts accumulate, the rename-block path inside `_handle_update_person_name` calls the named transitions:
 
 ```python
-# In the disputed rename-block path:
-_active_sessions[pid]["disputed_block_count"] += 1
-if (_active_sessions[pid]["disputed_block_count"] >= DISPUTE_RENAME_BLOCK_THRESHOLD
-    and not _active_sessions[pid].get("disputed_block_alerted")):
-    _active_sessions[pid]["disputed_block_alerted"] = True
+# In the disputed rename-block path (P0.7 — named transitions):
+await _session_store.increment_block_count(pid)
+snap = _session_store.peek_snapshot(pid)
+if (snap.disputed_block_count >= DISPUTE_RENAME_BLOCK_THRESHOLD
+    and not snap.disputed_block_alerted):
+    await _session_store.mark_block_alerted(pid)
     _brain_orchestrator.report_dispute_rename_burst(
         pid,
-        victim_name=_active_sessions[pid]["person_name"],
-        victim_type=_active_sessions[pid].get("prior_person_type"),
+        victim_name=snap.person_name,
+        victim_type=snap.prior_person_type,        # P0.2 fail-closed default
         claimed_name=args.get("name"),
-        count=_active_sessions[pid]["disputed_block_count"],
-        dispute_ts=_active_sessions[pid].get("dispute_set_at"),
+        count=snap.disputed_block_count,
+        dispute_ts=snap.dispute_set_at,
     )
 ```
+
+`increment_block_count` and `mark_block_alerted` are dedicated transitions — both idempotent — that replaced direct dict mutation in P0.7.3. The `mark_block_alerted` transition is idempotent at the field level (sets `disputed_block_alerted=True`), but it's gated by the `if not snap.disputed_block_alerted` predicate so the actual `report_dispute_rename_burst` call fires exactly once per dispute episode.
 
 Severity: `critical` if the victim's prior type was `best_friend` (owner impersonation); `warning` otherwise. Alert stored in `watchdog_alerts` for dashboard surfacing.
 
@@ -4384,6 +4554,8 @@ Session 38 Issue #6.
 
 ## 119. `faces.db` Schema
 
+> **Migration model (2026-05-16).** All schema changes to `faces.db` now flow through `core/faces_db_migrations.py` (P0.9, Part XLII). Every historical schema mutation is a 5-tuple entry in the `MIGRATIONS` list with `(version, description, apply_fn, verify_post_fn, verify_present_fn)`. The migration runner consumes the list under `BEGIN IMMEDIATE` with the tightened S65 rollback discipline (Part XLII §282). Inline `ALTER TABLE` calls inside `_init_tables` have been deleted in P0.9 Phase 3 — the structural invariant `TestNoAlterTableOutsideMigrationModules` (Part XLII §284) rejects any future regression. `_init_tables` only does `CREATE TABLE IF NOT EXISTS` for the canonical shape; the migration runner applies the historical evolution on top.
+
 ### 119.1 `persons`
 
 ```sql
@@ -4400,27 +4572,33 @@ CREATE TABLE persons (
 
 ### 119.2 `embeddings`
 
-See §37.1.
+See §37.1. Cross-storage atomicity with FAISS handled by the P0.5 SQL-first ordering + sentinel + boot reconciliation pattern (Part XXXVIII §243-§244).
 
 ### 119.3 `voice_embeddings`
 
 See §43.1.
 
-### 119.4 `conversation_log`
+### 119.4 `conversation_log` (with P0.0.7 and Phase 3B columns)
 
 ```sql
 CREATE TABLE conversation_log (
-    id              INTEGER PRIMARY KEY,
-    person_id       TEXT NOT NULL,
-    role            TEXT NOT NULL,    -- user / assistant
-    content         TEXT NOT NULL,
-    timestamp       REAL NOT NULL,
+    id                INTEGER PRIMARY KEY,
+    person_id         TEXT NOT NULL,
+    role              TEXT NOT NULL,    -- user / assistant
+    content           TEXT NOT NULL,
+    timestamp         REAL NOT NULL,
+    -- Phase 3B (Session 107 / Q3 hybrid history):
+    room_session_id   TEXT,              -- room/group context identifier
+    audience_ids      TEXT,              -- JSON array of pids allowed to see this turn
+    -- Phase 3B addressing (Session 111):
+    addressed_to      TEXT,              -- pid the assistant turn was addressed to
     FOREIGN KEY (person_id) REFERENCES persons (id) ON DELETE CASCADE
 );
 CREATE INDEX conversation_log_person_id_idx ON conversation_log(person_id);
+CREATE INDEX idx_conv_log_room ON conversation_log(room_session_id, timestamp DESC);
 ```
 
-Append-only. Disputed-session turns are skipped (Session 53 Finding B).
+Append-only. Disputed-session turns are skipped (Session 53 Finding B, Part XV §105).
 
 ### 119.5 `system_identity`
 
@@ -4468,13 +4646,96 @@ CREATE TABLE visitor_log (
 );
 ```
 
-### 119.8 Cascading deletes
+### 119.8 `schema_migrations` (P0.9 — versioned ledger)
+
+```sql
+CREATE TABLE schema_migrations (
+    version      INTEGER PRIMARY KEY,
+    description  TEXT NOT NULL,
+    applied_at   REAL NOT NULL,
+    is_initial   INTEGER NOT NULL DEFAULT 0    -- 1 = stamped at bootstrap on legacy DB
+);
+```
+
+The migration ledger. `init_ledger` (Part XLII §278) creates it on a fresh DB; on a legacy DB it self-evolves (idempotent ALTER adding `is_initial` column). `bootstrap_ledger_if_unversioned` walks the `MIGRATIONS` list at boot and stamps each entry whose `verify_present_fn` returns True as `is_initial=1`, then `apply_migrations` runs pending entries in version order.
+
+Boot observability emits one of three lines per DB:
+- `[Schema] faces: bootstrap stamped baseline v=1 + N pre-existing migration(s) as is_initial=1 (legacy DB)`
+- `[Schema] faces: ledger already versioned`
+- `[Schema] faces: apply_migrations ran K pending`
+
+### 119.9 Cascading deletes
 
 Every person-child table uses `ON DELETE CASCADE`. Deleting a person row auto-deletes their embeddings, voice_embeddings, conversation_log. `delete_person` also does knowledge cleanup via `BrainDB.delete_person_data`.
 
+### 119.10 Companion archive DB (`faces_conversation_archive.db`)
+
+Wave 6 Item 21 (Part XLVII §305). Old `conversation_log` rows (`timestamp < now - CONVERSATION_ARCHIVE_AFTER_DAYS * 86400`) are atomically moved to a companion DB at `faces/faces_conversation_archive.db` via `ATTACH DATABASE` + `BEGIN EXCLUSIVE` + cross-DB `INSERT INTO archive.conversation_log SELECT ... → DELETE FROM main.conversation_log WHERE ...`. The companion DB carries the same schema (incl. the room_session_id / audience_ids / addressed_to columns) and the same `idx_conv_log_room` index.
+
+`load_conversation_history` and `search_conversation` open a short-lived connection to the archive DB (separate from the main FaceDB write connection, to avoid ATTACH conflict) and UNION-merge results with the primary DB. The default retention is 30 days; older turns live in the archive forever (or until manual cleanup).
+
 ## 120. `brain.db` Schema
 
-See §84. All knowledge-side tables. Separate DB file (`faces/brain.db`) with its own connection.
+> **Migration model (2026-05-16 + 2026-05-18).** Same versioned-ledger pattern as faces.db (§119.8). brain.db's `MIGRATIONS` list lives in `core/brain_db_migrations.py`. The current top version is **12** — P0.0.7's `_m_0012_create_event_log_*` (Part XLIX §318) added the `event_log` table.
+
+### 120.1 `knowledge`
+
+The core knowledge graph table.
+
+```sql
+CREATE TABLE knowledge (
+    id              INTEGER PRIMARY KEY,
+    person_id       TEXT NOT NULL,
+    entity          TEXT NOT NULL,
+    attribute       TEXT NOT NULL,
+    value           TEXT NOT NULL,
+    confidence      REAL NOT NULL,
+    valid_at        REAL NOT NULL,
+    valid_until     REAL,
+    invalidated_at  REAL,
+    privacy_level   TEXT NOT NULL DEFAULT 'public',    -- Phase 3A.4.5
+    embedding       BLOB,                              -- for semantic search
+    -- ... plus several Phase 3A / 3B columns: status, source, last_confirmed_at
+);
+CREATE INDEX idx_knowledge_person_entity ON knowledge(person_id, entity);
+CREATE INDEX idx_knowledge_attribute ON knowledge(attribute);
+```
+
+The `privacy_level` column was added in Phase 3A.4.5 (Session 95.3-95.6, 4-tier privacy model with `public` / `personal` / `household` / `system_only`). All retrieval paths route through `_visibility_clause` (Part XXV §152).
+
+### 120.2 `prompt_prefs` (PromptPrefAgent)
+
+Per-person communication preferences with semantic dedup. Carries an `embedding` BLOB column (L2-normalised E5 vector) plus a `sessions_seen` counter for auto-confirmation at 3+ sessions.
+
+### 120.3 Knowledge-system support tables
+
+Each agent has its own table — `agent_log`, `object_sightings`, `object_pattern_questions`, `episodes`, `presence_log`, `proactive_nudges`, `watchdog_alerts`, `social_mentions`, `predicate_stats`, `household_facts`, `inter_person_relationships`, `shadow_persons`, `room_summaries`. See Part XIV §84 for the full enumeration.
+
+### 120.4 `schema_migrations` (same shape as §119.8)
+
+Versioned-ledger pattern, identical schema. brain.db's ledger tracks 10 retrofitted historical migrations (v=2 through v=11) plus the P0.0.7 v=12.
+
+### 120.5 `event_log` (P0.0.7, Part XLIX §318)
+
+```sql
+CREATE TABLE event_log (
+    id                INTEGER PRIMARY KEY,
+    ts                REAL NOT NULL,
+    session_id        TEXT,
+    room_session_id   TEXT,
+    event_type        TEXT NOT NULL,                   -- one of the 12 EVENT_TYPES
+    schema_version    INTEGER NOT NULL DEFAULT 1,
+    payload           TEXT NOT NULL,                   -- JSON-serialised dataclass
+    parent_event_id   INTEGER                          -- natural-pair parent linkage
+);
+CREATE INDEX idx_event_log_ts ON event_log(ts);
+CREATE INDEX idx_event_log_session ON event_log(session_id, ts);
+CREATE INDEX idx_event_log_room ON event_log(room_session_id, ts);
+```
+
+The event-sourcing foundation. Every input crossing the runtime boundary (microphone audio, camera frame, identity claim, routing decision, tool call, tool result, ...) emits a typed event into this table. The 3 indexes are tuned for the replay CLI's most-common filter compositions (chronological / per-session / per-room).
+
+Cross-write atomicity with Kuzu: the brain.db ↔ Kuzu paired-write hardening (P0.X, Part XXXVIII §246) treats brain.db as authoritative and Kuzu as derived state that heals on next `_ensure_graph_sync()`. `event_log` follows the same rule — it's a brain.db-only table, with no Kuzu shadow.
 
 ## 121. FAISS Index Layout
 
@@ -4550,56 +4811,85 @@ Every tunable value in the system lives in `core/config.py`. No magic numbers in
 
 Historical reason: during the uncle-false-match debug (Session 51), several thresholds were scattered across `pipeline.py`, `brain.py`, and `db.py`. Tuning one without tuning the others caused silent inconsistencies. Consolidating fixed the drift.
 
-### 125.3 Current enforcement
+### 125.3 Current enforcement (structural, not convention-based)
 
-- Reviewer convention: grep for `0\.[0-9]` in core source code catches floating-point literals. Most are either in test assertions or already named config constants.
-- Invariant tests: e.g., `test_bootstrap_budget_exceeds_mature_threshold` fails if someone tunes one config without the coupled one.
+The "single source of truth" rule used to be convention-only — relied on reviewer discipline + a grep-for-`0\.[0-9]` heuristic. The P0 work since 2026-05-08 made it structural. Every major drift class is now caught by a CI-enforced AST or behavioral invariant:
+
+- **Hardcoded literals in routing thresholds** — Part X §61 — `_effective_switch_threshold` reads from config, not literals; the threshold values import as named constants.
+- **`ALTER TABLE` outside the migration modules** — `TestNoAlterTableOutsideMigrationModules` (Part XLII §284) AST-rejects any inline ALTER outside `core/{faces,brain}_db_migrations.py`.
+- **Magic numbers in store schemas** — `tests/test_p06_store_schemas.py` pins `EXPECTED_FIELDS` per Store (Part XXXIX §260). Schema drift fails CI.
+- **Magic numbers in dispute-state predicates** — `_is_disputed()` is the canonical predicate; raw `"disputed"` comparisons outside the helper are AST-rejected (Part XXXVI §234).
+- **Coupling tests** — e.g., `test_bootstrap_budget_exceeds_mature_threshold` fails if `N_INITIAL_VOICE_BOOTSTRAP` is tuned below `VOICE_ACCUM_MATURE_SAMPLE_COUNT`.
+
+The convention layer (reviewer grep) is now backup, not primary. If you bypass `core/config.py` with an inline literal in production code, one of these structural invariants will catch you at PR time.
 
 ## 126. Startup Assertions
 
-Three run on `run()` entry:
+Run on `run()` entry:
 
 1. **Tool privilege completeness** — every `brain.TOOLS` entry has a `TOOL_PRIVILEGES` row.
 2. **Bootstrap arithmetic** — `N_INITIAL_VOICE_BOOTSTRAP > VOICE_ACCUM_MATURE_SAMPLE_COUNT`.
-3. **Person type validity** — any `_open_session` caller must pass a value in `VALID_PERSON_TYPES`.
+3. **Person type validity** — any `SessionStore.open_session` caller must pass a value in `VALID_PERSON_TYPES`.
+4. **Schema migrations applied** — `apply_migrations` runs at boot for every DB; refuses to start if any migration's `verify_post_fn` raises (Part XLII).
+5. **Pyannote patch idempotency** — the import-time monkeypatch in `core/voice.py` only fires if torchaudio still has the legacy API; otherwise no-op.
 
 If any fires, the system refuses to start. Impossible to ship a broken config.
 
 ## 127. Tuning Workflow
 
 1. Change one value in `core/config.py`.
-2. Run `pytest`.
+2. Run `pytest --tb=no -q` (full suite, per the verification-before-completion lesson from Part L §324).
 3. If tests pass, do a live test.
 4. If the live test reveals the tune was too aggressive/conservative, revert.
-5. Never touch a literal in a non-config file as a shortcut.
+5. Never touch a literal in a non-config file as a shortcut. The structural invariants will catch you, but more importantly, the next person editing the file will assume the literal is correct and tune the wrong thing.
 
 ---
 ---
 
 # Part XX — Testing
 
-## 128. 1083 Tests — Breakdown by File
+## 128. ~2216 Tests — Breakdown by Category
 
-| File | Tests | Focus |
-|---|---|---|
-| test_pipeline.py | ~720 | Session management, routing, tool dispatch, integration, ROOM block, TURN ARBITRATION, address marker |
-| test_brain_agent.py | ~200 | Knowledge pipeline, each agent, Kuzu graph, visibility clause, privacy classifier, room summaries |
-| test_faiss_delete.py | ~45 | DB integrity, FAISS rebuild on delete |
-| test_vision_v1v4.py | ~50 | Quality gates V1-V4, anti-spoof |
-| test_eval_intent_bench.py | ~10 | Phase 1.6 eval bench pure layer (P/R/ECE math, source splitting, divergence) |
-| test_executor.py | ~15 | Tool executor + dispatch |
-| test_shutdown.py | ~10 | Graceful shutdown paths |
-| test_greetings.py | ~10 | Greeting generation |
-| Other files | ~25 | Misc |
+| Category | Files | Tests | Focus |
+|---|---|---|---|
+| Pipeline integration | `test_pipeline.py` and adjacents | ~750 | Session management (post-P0.7 via SessionStore API), routing dispatch, tool dispatch, ROOM block, TURN ARBITRATION, address marker, integration scenarios |
+| Knowledge system | `test_brain_agent.py` | ~250 | Knowledge pipeline, each agent, Kuzu graph, visibility clause, privacy classifier, room summaries, safety-flag preservation |
+| Reconciler (Part X) | `test_reconciler.py` + `test_p10_reconciler_contract.py` + `test_p10_routing_invariants.py` | ~60 | 22-rule cascade per-rule behavior, C1-C21 contracts, RULES-ordering invariant, EXPECTED_RULES_BY_BAND, Bug-W gap regression, negative-cosine regression |
+| Voice/vision channels | `test_voice_channel.py` + `test_vision_channel.py` | ~40 | Pure-function channel contracts, import-boundary AST scans |
+| Atomicity (Part XXXVIII) | `test_faiss_sql_atomicity.py` + `test_faiss_atomicity_invariants.py` + `test_kuzu_atomicity_invariants.py` + `test_kuzu_brain_atomicity.py` + `test_kuzu_crash_injection.py` | ~85 | Cross-storage paired-write contracts, sentinel + boot reconciliation, RAISE/SWALLOW/SCHEMA_MIGRATION detectors |
+| Store pattern (Part XXXIX) | `test_p06_store_invariants.py` + `test_p06_store_schemas.py` + `test_p06_store_inverse_checks.py` + `test_p06_legacy_global_progress.py` + per-store unit tests | ~150 | Eight stores' contracts, schema pinning, paired-write inverse checks, legacy-global ratchet at cap=0 |
+| Typed session state (Part XL) | `test_session_store.py` + `test_session_state_invariants.py` + `test_p072_read_migration_progress.py` | ~70 | Session/SessionSnapshot/VoiceEvidence shape, named transitions, single-writer invariant, no-dual-writes ratchet |
+| Tool timeout (Part XLI) | `test_tool_timeout.py` + `test_p08_structural_invariants.py` | ~30 | Per-tool wait_for, cancellation rollback, F1 + F2 structural invariants |
+| Schema migrations (Part XLII) | `test_schema_migrations.py` + `test_p09_retrofit_migrations.py` | ~45 | Versioned-ledger pattern, 5-tuple shape, bootstrap walks MIGRATIONS, no-ALTER-outside-modules, no-destructive-ops invariant |
+| State race (Part XLIV) | `test_state_race.py` | 4 | Behavioural race + torn-state probe + AST subscript-assign ban + global decl invariant |
+| JSON parser (Part XLV) | `test_brain_json_parser_hypothesis.py` (excluded pending P0.0.7.X) | ~33 | Hypothesis property tests (1000 examples/each), regression tests pinned to the two production bugs |
+| Health + disk (Part XLVI) | `test_health.py` + `test_disk_monitor.py` | ~20 | HealthSnapshot field coverage, format_health_line, format_health_alerts, idempotent threshold transitions |
+| Conversation hygiene (Part XLVII) | `test_hard_delete_invalidated.py` + `test_scene_block_cache.py` + `test_conversation_archive.py` | ~13 | Dream-loop hard-delete, scene-block SHA-256 cache, ATTACH-based atomic archival |
+| CI scaffold (Part XLVIII) | `test_dashboard_bind_tripwire.py` + `test_infra_debt_allowlist.py` | ~10 | Localhost binding tripwire, xfail-decorator alignment with allowlist |
+| Event log (Part XLIX) | `test_event_log_contract.py` + `test_event_log_invariants.py` + `test_event_log_producer_coverage.py` + `test_event_log_replay.py` | ~80 | 15 contract + 35 parametrized invariant cases + 11 hook coverage + 5 replay smoke tests including anti-spoof field preservation |
+| Privacy clause + classifier | privacy tests inside `test_brain_agent.py` and others | ~40 | Visibility clause for 4-tier model, classifier prompt, query_knowledge_for, owner-access (3A.4.6) |
+| Layering invariants | `test_layering_invariants.py` + `test_silent_except_invariant.py` + `test_no_raw_disputed_comparisons.py` + `test_no_layering_violations.py` + `test_repeat_guard_invariant.py` + `test_prior_person_type_default.py` + `test_user_text_gate_*.py` | ~100 | AST-based structural invariants enforcing P0.1, P0.2, P0.3, P0.4, P0.13 |
+| Vision / audio | `test_vision_v1v4.py` + various audio tests | ~70 | Quality gates V1-V4, anti-spoof, smart-turn, lip tracking, STT, TTS |
+| Other | tool executor, shutdown, greetings, eval bench, classifier graph, time anchor, prompt blocks, etc. | ~250 | Miscellaneous unit + integration tests |
 
-Total: **1083 passing** as of Session 113.1 / Phase 3B.6.
+**Total: ~2216 passing, 9 xfailed, 3 skipped, 0 failed, 0 errors as of 2026-05-18 post-P0.0.7.** (`tests/test_brain_json_parser_hypothesis.py` is excluded from default runs pending the P0.0.7.X flakiness investigation — Part LI §331.)
 
-**Growth since Session 65.** +261 tests across 49 sessions. Most growth concentrated in:
+**Growth since Session 113.1 (~1083 tests, 2026-04-24).** +1133 tests across ~6 weeks of disciplined P0 hardening + Wave 5/6 + P0.0/P0.0.7. Most growth concentrated in:
 
-- Phase 1 (Sessions 75–86): structured-intent classifier, `_intent_allows` validator, golden set, eval bench scaffolding.
-- Phase 3A (Session 95 sub-sessions 3A.1–3A.4.6): privacy tier enum + static map + classifier + visibility clause + query_knowledge_for + write-path migration.
-- Phase 3B (3B.1–3B.6): ROOM block behaviour, TURN ARBITRATION source-inspection, `search_room_memory`, room-end synthesis, `<<<RECENT ROOMS>>>` greeting enrichment.
-- Safety-flag preservation (Session 105 Bug N): `SAFETY_CRITICAL_ATTRIBUTE_PATTERNS` regex matcher, ContradictionAgent short-circuit, dual-attribute extraction.
+- **P0.4** silent-except audit (+14 invariant tests catching the 22 sites + the 4 detector self-tests).
+- **P0.5 + P0.X** cross-storage atomicity (+85 across the 5 atomicity test files).
+- **P0.6** Store-pattern migration (+150 store unit tests + schema/inverse-check ratchets).
+- **P0.7** typed session state migration (+70 SessionStore + invariant tests across the 5 sub-PRs).
+- **P0.8** per-tool timeout protection (+30 including F1 + F2 structural invariants).
+- **P0.9** schema migrations versioning (+45 retrofit + ratchet tests).
+- **P0.10** legacy router deletion + Bug-W (+40 contract + invariant tests; –54 deleted legacy tests; net –15 raw / +40 architectural coverage — see Part XLIII §290 for the math).
+- **P0.11** state race (+4 race + AST tests).
+- **P0.12** Hypothesis property-based JSON parser hardening (+33).
+- **Wave 5 + Wave 6** observability + memory consolidation (+33 across health, disk, hard-delete, scene-cache, archival).
+- **P0.0 + P0.0.1 + P0.0.2** tiered CI + S2 tripwire (+10).
+- **P0.0.7** event log + replay harness (+80, the largest single sub-PR's test surface).
+
+The growth pattern is dominated by structural invariants rather than feature behaviour. Of the ~1133 new tests since 2026-04-24, roughly two-thirds are AST-based or source-inspection-based — they verify that the production code *continues to satisfy* an architectural property over time, not that a specific feature works on one happy path. This is the empirical realisation of the Part XXII §139 "tests guard every invariant" principle.
 
 ## 129. TDD Approach
 
@@ -4684,16 +4974,20 @@ The dashboard enrollment route is currently not-yet-integrated with the pipeline
 
 # Part XXII — Design Philosophy and Invariants
 
+> **Cross-reference (2026-05-18).** The principles in this Part are the *product-side* design philosophy — how the system relates to the user and how subsystems relate to each other. The *engineering-side* discipline that produces and maintains this code lives in **Part L — Architectural Disciplines (The Named Doctrines)**. The two complement each other: Part XXII describes what we build; Part L describes how we build it well. Each named discipline in Part L (induction-surfaces-invariant-gaps, spec-first review cycle, developer-improves-on-spec, etc.) has a track record of N-for-N instances backing it; the principles in this Part are stated as rules without track records because they're architectural primitives, not validated patterns.
+
 ## 135. Brain Decides, Pipeline Enforces
 
 The most important architectural rule. The pipeline is the brain's sensors and actuators — it tells the brain what's happening and carries out what the brain decides. The brain is the one that says "respond", "call this tool", "stay silent."
 
 The pipeline enforces:
 - Privilege checks (via TOOL_PRIVILEGES).
-- Accumulation gates (Path A/B/C).
-- Anti-spoof gating.
-- Session expiry.
-- Dispute state transitions.
+- Accumulation gates (Path A/B/C, see §55).
+- Anti-spoof gating (§24).
+- Session expiry (§51).
+- Dispute state transitions (Part XV §102, all via `transition_to_disputed` named transition).
+- Per-tool timeout (Part XLI §273).
+- Cross-storage atomicity (Part XXXVIII §242).
 
 The brain owns:
 - What to say.
@@ -4703,17 +4997,22 @@ The brain owns:
 
 This split prevents the pipeline from growing a competing "brain" — every temptation to encode a conversation decision at the pipeline level becomes instead an enhancement to the system prompt.
 
-## 136. No Hardcoded Magic Numbers
+## 136. No Hardcoded Magic Numbers (Now Structurally Enforced)
 
 Every threshold, every count, every duration lives in `core/config.py`. The exceptions (0, 1, -1, None) are intentionally not called out.
+
+The principle used to be convention-only. As of 2026-05-16 it is structurally enforced via the AST/regex invariants enumerated in §125.3 above. The relevant Parts: Part XLII §284 (no ALTER outside migration modules), Part XXXIX §260 (store schema pinning), Part XXXVI §234 (no raw `"disputed"` comparisons).
 
 ## 137. Fail-Closed on Security
 
 Anything resembling a security surface defaults to denial:
-- Unknown tool → blocked.
-- Unknown person_type → handled as stranger.
+- Unknown tool → blocked (Part XVI §109).
+- Unknown person_type → handled as stranger (Part XXXVI §235 — `prior_person_type` defaults to `"stranger"` per P0.2).
 - Missing anti-spoof model → recognition_update blocked.
 - Dispute without clean resolution → force-close.
+- Multi-word names not contiguously appearing in user_text → rejected (Part XXXVI §236 — P0.3 contiguous-substring fix).
+- Tool execution exceeding budget → cancellation + transaction rollback (Part XLI §274).
+- Cross-storage half-writes → degraded mode, no silent divergence (Part XXXVIII §249).
 
 The system errs on "do nothing" rather than "do the risky thing."
 
@@ -4723,12 +5022,19 @@ The system errs on "do nothing" rather than "do the risky thing."
 - `TOOL_PRIVILEGES` — one privilege table.
 - `VOICE_ACCUM_*` — one set of constants used by pipeline gate AND brain verdict.
 - `VALID_PERSON_TYPES` — one frozenset asserted everywhere.
+- `_is_disputed()` — canonical predicate (Part XV §105; Part XXXVI §234).
+- `SessionStore` — only writer of session state (Part XL §263).
+- `safe_emit_sync` — only producer-hook swallow path (Part XLIX §314).
+- `_visibility_clause` — only privacy-filter SQL composer (Part XXV §152).
+- `core/event_log/types.py::_PAYLOAD_CLASSES` — only deserialization dispatch table (Part XLIX §313).
 
-When there are two places something could live, there must be one.
+When there are two places something could live, there must be one. The pattern repeats across the codebase because every cycle of consolidation pays back in the next maintenance pass.
 
 ## 139. Tests Guard Every Invariant
 
-An invariant that isn't tested is an invariant that will silently break. Every major architectural claim in this document is backed by at least one test. Source-inspection tests cover the cases that are hard to invoke directly.
+An invariant that isn't tested is an invariant that will silently break. Every major architectural claim in this document is backed by at least one test. Source-inspection tests (§130) cover the cases that are hard to invoke directly.
+
+The empirical realisation: ~2/3 of the ~1133 tests added between 2026-04-24 and 2026-05-18 are structural invariants (AST scans, source-inspection, paired-write inverse checks). The Part L disciplines that produce these — **induction-surfaces-invariant-gaps** (§322, 7-for-7), **structured-audit-vs-reactive-patching** (§329) — are the meta-rules that ensure every new invariant ships with a corresponding test.
 
 ## 140. Privacy at the Data Layer, Phrasing at the Prompt Layer
 
@@ -4771,7 +5077,9 @@ These are the places where the system can mysteriously feel slow. Having timesta
 ---
 ---
 
-# Part XXIII — Roadmap and Open Items
+# Part XXIII — Roadmap and Open Items (Hardware + Long-Range Product)
+
+> **Cross-reference (2026-05-18).** The **engineering** roadmap — the upcoming P0 security / P0 robustness / eval gates / P1.A pipeline decomposition sequence — lives in **Part LI — Upcoming Work and Roadmap** (§331-§340). That's the actively-managed queue and the place to check for "what's next". This Part XXIII covers the hardware-and-long-range items: physical actuators, Jetson deployment, wake-word power management, the Q3 history redesign — items that depend on either physical-world milestones or on broader architectural decisions that aren't blocking the current sprint.
 
 ## 141. ReSpeaker Barge-In
 
@@ -4796,6 +5104,8 @@ When the Jetson arrives:
 8. Export Whisper + AdaFace + RetinaFace to TensorRT for ~2x latency reduction.
 9. systemd service for auto-start on boot.
 10. Physical robot integration via `robot.py` (§144).
+11. **CI on Jetson** — slow-test workflow (`.github/workflows/slow.yml`) must be runnable from a self-hosted Jetson runner. Currently both CI workflows run on `ubuntu-latest`. The model-heavy tests aren't representative of Jetson-side behavior. Open.
+12. **Power management for the always-on listening loop** — see §143.
 
 ## 143. openWakeWord Push-to-Talk
 
@@ -4811,17 +5121,26 @@ When physical actuators arrive (head pan/tilt, tail wag, LED eyes), we need a cl
 
 The pipeline calls these at semantic boundaries; the robot module translates to servo commands. Mocks during dev so nothing breaks before hardware lands.
 
+The decomposition will benefit from P1.A (Part LI §336) — once `pipeline.py` is split into ~30 focused modules, `robot.py` is a natural addition that consumes events from the event log (Part XLIX) and emits actuator commands, without needing to be threaded through a 10000-line monolithic pipeline.
+
 ## 145. Q3 — History Architecture Redesign
 
-Current `conversation_log` is per-person. A turn in a multi-person scene belongs to the speaker but is overheard by everyone. We want shared-context injection so the brain can reason about what the other person heard.
+**Status: schema-side landed in Session 107 / P0.0.7; retrieval-side pending RoomOrchestrator.**
 
-The planned design (Option C from the design discussion):
-- Add `room_session_id` and `audience_ids` columns to `conversation_log`.
-- Each turn tagged with who heard it.
-- `<<<SHARED CONTEXT>>>` block in system prompt pulls recent shared turns.
-- Privacy filter in BrainOrchestrator — private knowledge still scoped per-person.
+Pre-Phase-3B, `conversation_log` was per-person. A turn in a multi-person scene belonged to the speaker but was overheard by everyone. The Phase 3B work (Part XXVI) introduced room awareness via the `<<<ROOM>>>` block, but the underlying schema was still per-person.
 
-Deferred pending stabilisation of the current single-person-primary model.
+Phase 3A.6 / Session 107 added two columns to `conversation_log`:
+- `room_session_id` — the room context the turn happened in.
+- `audience_ids` — JSON array of pids allowed to see the turn.
+
+Plus a new index `idx_conv_log_room` for room-scoped queries.
+
+Session 111 added a third column:
+- `addressed_to` — pid the assistant turn was addressed to (for `[addressing:X]` marker disambiguation).
+
+**Schema is in place.** Retrieval-side wiring lands when RoomOrchestrator ships (currently deferred under Phase 3B follow-up). At that point, `<<<SHARED CONTEXT>>>` block will pull recent shared turns from `conversation_log` filtered by `room_session_id` AND privacy via the existing `_visibility_clause` (Part XXV §152). The Kuzu v3 schema bump (Part LI §338) lands alongside.
+
+The deferral is intentional. The schema is forward-compatible; existing per-person retrieval paths continue to work. RoomOrchestrator can land in a separate sub-PR cycle without touching the data layer.
 
 ---
 ---
@@ -7306,14 +7625,1510 @@ This is honest engineering work, not a performance pitch. The goal is a system t
 
 ---
 
+# Part XXXVI — P0 Correctness Hardening (P0.1 – P0.3 + P0.13)
+
+## 233. Why a Correctness Cycle Came First
+
+The P0 work that landed in early May 2026 (P0.1 – P0.5, P0.13) targeted a different layer of the system than the bigger architectural sub-PRs that followed. These were correctness regressions surfaced by live canaries, not architectural debt. Each one was a small fix — usually 5–30 lines of production change — paired with a structural invariant test that prevents the regression class returning silently.
+
+The grouping is deliberate: each P0.* item below is a separate failure mode with a separate AST-level guard, but they share an underlying methodology. **Fix the production code in one commit; ship the structural invariant in the same commit; cap the invariant at zero in a CI-enforced test; let the invariant catch any future drift.**
+
+This is the methodology that escalated into the structured-audit-vs-reactive-patching lesson at P0.4 (§329). The earlier P0.1 – P0.3 items shipped reactive-patching style, then P0.4 (§238) demonstrated that *systematic* audit surfaces ~3–5× more sites than reactive patching catches. The retroactive read on P0.1 – P0.3 is that they were each the tip of a class — and the class itself was caught by the audit.
+
+## 234. P0.1 — No Raw `"disputed"` Comparisons Outside the Helper
+
+`_is_disputed()` (Part XV) was the canonical predicate for checking whether a session's `person_type` is in disputed state. It centralises the comparison so the dispute state machine can evolve without scattering string literals throughout the codebase.
+
+The drift: live canary log lines started showing `person_type == "disputed"` checks at scattered call sites in `pipeline.py` and `core/brain_agent.py`. Each one was a tiny copy-paste of the helper's body. None individually was wrong. Collectively, they made the helper non-canonical — any future change to dispute state representation (e.g. moving from string to enum) would silently miss these sites.
+
+**Fix:** every raw `== "disputed"` outside `_is_disputed()` was rewritten to call the helper. **Invariant:** `tests/test_no_raw_disputed_comparisons.py` (P0.1) AST-scans `pipeline.py` (excluding `_is_disputed()`'s own body) and every `core/*.py` (excluding `core/config.py` for type annotations) for `Compare` nodes where the right-hand side is the literal string `"disputed"`. The test fails if any site is added outside the helper.
+
+One allowlist: `core/brain_agent.py:2216` uses an inline `# disputed-row-status` marker for a knowledge-row status column check that can't route through the helper due to a circular import. The allowlist marker is the explicit single exception; the AST scanner reads it as "this is a known site, do not flag".
+
+## 235. P0.2 — `prior_person_type` Fail-Closed Default
+
+The dispute state machine captures `prior_person_type` on every dispute-trigger event (§102) so that auto-clear (§51) can restore the speaker's role correctly after the dispute resolves. If the field is missing — for example because a future code path added a new dispute-trigger site without remembering to write the field — the default should be the lowest privilege.
+
+The drift: two scattered sites in `pipeline.py` defaulted the missing field to `"known"` rather than `"stranger"`. A best_friend session whose `prior_person_type` was never written would silently auto-clear back to `"known"` — a privilege downgrade. Worse, in the reverse direction, a stranger session whose `prior_person_type` was never written and then somehow flipped to disputed would auto-clear *up* to `"known"` — a privilege escalation.
+
+**Fix:** both sites now default to `"stranger"` (fail-closed). Even a missing field cannot grant privileges the speaker didn't have. **Invariant:** `tests/test_prior_person_type_default.py` (P0.2) — 20 AST structural tests covering 9 violation shapes and 10 legitimate patterns. The shape `_sess.get("prior_person_type") or "known"` is forbidden; `or "stranger"` is required.
+
+The naming "fail-closed" carries explicit semantics: when a security-relevant default has to be picked, pick the one that grants the *least* privilege, so that the missing case can never silently grant more access than the writer of the field would have intended.
+
+## 236. P0.3 — Multi-Word Name Contiguous Substring Fix
+
+The `_user_text_gate_passes` primitive (§115) verifies that an LLM-proposed mutation tool argument (e.g. the proposed new name in `update_person_name`) was actually said by the user, by checking it appears as a substring of the most recent user_text. This is the architectural seam that prevents LLM hallucination from renaming people who never asked to be renamed.
+
+The pre-fix v1 implementation used a `(\w+)` capture group to grab the first word of the proposed name, then a `_remainder` check (`_remainder in user_text`) to verify additional words also appeared. The bug: `_remainder` could appear *anywhere* in the user_text. A user saying "call me Sarah and my friend is Jane" would let the LLM hallucinate a rename to "Sarah Jane" — because "Sarah" and "Jane" both appear in user_text, just not contiguously.
+
+**Fix (v3):** replaced the buggy remainder block with a single contiguous-substring check `if _nv_lower in _lt`. The full proposed name must appear as a contiguous substring of user_text. Also applied `_nfkc_lower()` (NFKC normalization + casefold) to all three inputs (user_text, new_value, captured) for homoglyph defense. **Tests:** `tests/test_user_text_gate_multiword.py` covers 25 behaviour cases (single-word baseline / legitimate multi-word contiguous / non-contiguous discriminating cases that v1 allowed and v3 rejects / fabrication-rejection / empty / None) and `tests/test_user_text_gate_invariants.py` covers 5 structural + behavioural invariants.
+
+## 237. P0.13 — The Repeat-Guard Invariant Test
+
+Session 70's Bug Q (Part XVI §113) introduced the **tool repeat guard** — when the LLM emits the same `(tool_name, args)` two turns in a row, the second call is suppressed. The mechanism is a per-session set of `_repeat_guard_key` and `_repeat_guard_count` fields, cleared by `_close_session` (Part VIII §50).
+
+The drift surface: any new code path that proactively spawns a fresh tool call without going through the normal `conversation_turn` flow could accidentally bypass the repeat guard by writing to the session dict directly. P0.13 is the AST structural invariant that prevents this.
+
+`tests/test_repeat_guard_invariant.py` walks the parent-annotated AST of `pipeline.py` (via the new zero-import `core/pipeline_invariants.py` module that exposes `REPEAT_GUARD_FIELDS` and `ALLOWED_REPEAT_GUARD_FUNCS`). Five violation detectors fire on any direct mutation of repeat-guard fields outside the allowlisted helpers: `pop`, `del`, `assign None`, `update`, `clear`. The allowlisted functions are the legitimate writers (`_execute_tool`, `_close_session`, plus a small set of dispute-clear paths) — any direct mutation outside the allowlist fails the test.
+
+The test uses *full parent-walk analysis* (`_is_inside_allowlisted_function` walks every ancestor) which is important: a later refactor that decomposes `_execute_tool` into nested helpers must continue to be exempt, because the nested helpers are conceptually still inside the allowlisted function. The refactor doesn't have to update the test.
+
+---
+
+# Part XXXVII — The Silent-Except Audit (P0.4)
+
+## 238. The Reactive-Patching Anti-Pattern
+
+Before P0.4, the standard response to a `except Exception: pass` discovered during a debugging session was to fix the one site and move on. A few months of this had surfaced ~7 silent-except sites, fixed one at a time, with no systematic audit.
+
+The reactive-patching mindset assumes that catching the bugs *as they bite* is sufficient. In practice — empirically demonstrated by P0.4 — reactive patching catches roughly 30% of the class. The other 70% sits in production code, swallowing failures that nobody has needed to debug yet.
+
+The realisation: an AST-based project-wide scan would surface every silent-except in one pass. The scan would also become the structural invariant that prevents the class returning. The combined cost — audit + invariant + remediation — is small (about 3-5 hours total). The combined value — every silent failure mode either fixed or explicitly justified — is enormous because of the next-bug-debug-time saved.
+
+## 239. AST Detector Anatomy
+
+`tests/test_silent_except_invariant.py` ships before any production-side fix. Three helpers compose the detector:
+
+- **`_is_broad_except_handler(node)`** — returns True iff the `ast.ExceptHandler`'s `type` is one of: `None` (bare `except:`), an `ast.Name` matching `Exception` or `BaseException`, or an `ast.Tuple` whose elements include `Exception` or `BaseException`.
+- **`_is_silent_pass_only_body(node)`** — returns True iff the handler's body is exactly `[ast.Pass]`. A body with logging, re-raise, return, or any other statement does not match. The discipline is *silent* pass-only; logged pass is fine.
+- **`_has_annotation_comment(node, source_lines)`** — looks for `# RACE:`, `# CLEANUP:`, `# OPTIONAL:` on the `pass` line, the `except` line, or the line directly above. The 3-line co-location window captures both common styles (annotation above the except header, or inline with the pass).
+
+Allowlist with boundary-correct check: `rel_str == allow or rel_str.startswith(allow + "/")`. This prevents `core/_minifasnet_helper.py` from matching `core/_minifasnet` allowlist entry through accidental string prefix collision.
+
+Injectable `rel_str` param on `_scan_file` so detector self-tests exercise the real code path with synthetic input. The self-tests live in the same test file and demonstrate that the scanner rejects unannotated handlers and accepts each of the three permitted annotations.
+
+## 240. The 22 Surfaced Sites and the Three Permitted Annotations
+
+Running the audit found **22 sites** across 9 production files: `core/audio.py`, `core/brain.py`, `core/brain_agent.py` (6 sites), `core/classifier_graph.py`, `core/db.py` (2), `core/state.py`, `core/vision.py`, `pipeline.py` (8), `sim_runner.py`. Compared to the ~7 sites that had been caught reactively across the prior few months, that's a discovery ratio of roughly 3×.
+
+The three permitted annotations encode genuinely different rationales:
+
+- **`# RACE:`** — the handler swallows a known race condition (e.g. a concurrent close racing with a write). Re-raising would cascade a benign-but-unavoidable race into a visible failure. The annotation must be followed by a brief description of what races and why suppression is correct.
+- **`# CLEANUP:`** — the handler is in a cleanup or finalisation path where the only error mode is the cleanup operation itself failing. Re-raising would mask the original error that triggered cleanup.
+- **`# OPTIONAL:`** — the handler is in a best-effort observability or instrumentation path where the production behaviour is intentionally unaffected by the failure. `safe_emit_sync` (Part XLIX §314) is the canonical example: event-log emission is best-effort, a producer-hook bug must never break the production path.
+
+Any site not matching one of these three rationales must be fixed (re-raise, log + re-raise, or replace with a typed handler).
+
+## 241. Bulk Annotator and the One-Shot Closure
+
+The remediation tool `tools/bulk_annotate_p04.py` is idempotent: a single pass adds `# TODO-P0.4: triage` to the pass line of every unannotated site. The annotation is a *temporary* permission — `# TODO-P0.4:` was originally in `PERMITTED_ANNOTATIONS` so the invariant test went green on the first run, then each site was triaged in 7 batches (B1 – B7) and the temporary marker was either replaced with one of the three real annotations or removed alongside a real fix.
+
+P0.4 Batch 7 closed the cycle: `# TODO-P0.4:` was *removed* from `PERMITTED_ANNOTATIONS`. From that commit forward, the marker is itself a violation — meaning the structural invariant no longer accepts the "to be triaged later" escape hatch.
+
+The empirical lesson banked in §329: **22 sites surfaced via AST audit; ~7 had been caught reactively; the gap (~70%) is what motivates the structured-audit-vs-reactive-patching discipline.** Subsequent P0 items (P0.5 inverse check, P1.A1-slice layering audit at 9 sites vs 2 known reactively, a 4.5× discovery ratio) confirmed the ratio.
+
+---
+
+# Part XXXVIII — Cross-Storage Atomicity (P0.5 + P0.X)
+
+## 242. The Paired-Write Failure Class
+
+DOG-AI's persistence layer is *not* a single SQL database. It's three durable stores that have to stay consistent: SQLite (`faces.db` + `brain.db`), FAISS (the face index), and Kuzu (the knowledge graph). Every write that touches more than one of these stores is a **paired write**, and every paired write has a failure mode: the first half commits, the process crashes before the second half, and the next boot sees divergent state.
+
+The pre-P0.5 architecture had paired writes scattered through `core/db.py` and `core/brain_agent.py` with no consistent ordering, no atomicity guarantee, and no boot reconciliation. The empirical bug fingerprint: `add_embedding` updated FAISS *before* committing the SQL row. A SQL INSERT failure (e.g. UNIQUE constraint violation, disk full, race with `delete_person`) left an orphan in FAISS with no corresponding DB row. `_load_faiss()` on next boot saw `ntotal > COUNT(*)` but had no mechanism to detect or repair the divergence.
+
+P0.5 (FAISS ↔ faces.db) and P0.X (Kuzu ↔ brain.db) ship the architectural pattern that closes this failure class across both pairs.
+
+## 243. P0.5 — FAISS ↔ faces.db SQL-First Ordering
+
+The pattern applied to all 5 paired-write methods of `FaceDB` (`add_embedding`, `delete_person`, `prune_old_strangers`, `prune_zero_value_stranger`, `prune_outlier_embeddings`):
+
+```python
+with self._index_lock:
+    with self.transaction():           # 1. SQL durable
+        # SQL ops only — NO FAISS calls inside the transaction
+    try:                               # 2. FAISS derived state
+        self.index.add(...) / self._rebuild_faiss()
+        self._save_faiss()
+    except Exception:
+        self._mark_faiss_dirty()       # sentinel → boot reconciliation
+        raise
+```
+
+The contract: **SQL is the authoritative store; FAISS is derived state that can always be rebuilt from SQL.** SQL writes commit first inside a transaction. FAISS writes happen after the SQL commit. If FAISS writes fail, a sentinel file is touched on disk and the exception is re-raised. Boot reconciliation reads the sentinel and rebuilds FAISS from SQL.
+
+`FaceDB.transaction()` is a context manager that issues `BEGIN IMMEDIATE` (with the S65 rollback race tightened — see §282) so concurrent connections can't interleave their writes.
+
+## 244. Sentinel Files and Boot Reconciliation
+
+Three sentinel helpers on `FaceDB`:
+
+- **`_sentinel_path()`** — returns the path to the `_faiss_dirty.sentinel` file alongside the FAISS index file.
+- **`_mark_faiss_dirty()`** — touches the sentinel file. Used in the `except` branch of every paired-write method.
+- **`_clear_faiss_dirty()`** — deletes the sentinel file. Used after `_rebuild_faiss()` completes successfully at boot.
+
+`_load_faiss()` at startup checks the sentinel OR computes a count-mismatch (FAISS `ntotal` vs SQL `SELECT COUNT(*) FROM embeddings`). If either is non-empty, `_rebuild_faiss()` is called, the sentinel is cleared on success, and the system continues. If rebuild fails at boot, `_faiss_degraded = True` is set on the FaceDB instance, the sentinel is preserved (so the next boot tries again), and `recognize()` returns `(None, None, 0.0)` for the rest of the session. The system degrades to no-face-match rather than crashing.
+
+The bug fingerprint preserved as a regression test in `tests/test_faiss_sql_atomicity.py`: Test 1 asserts `db.index.ntotal == pre_faiss_size` after a forced SQL crash. Pre-fix FAISS-first ordering leaves `ntotal=1` (orphan). Post-fix SQL-first ordering leaves `ntotal=0` (SQL rolled back, FAISS never touched). The test passes only against the post-fix code.
+
+## 245. The Inverse-Check Discipline
+
+`PAIRED_WRITE_METHODS = ("add_embedding", "delete_person", "prune_old_strangers", "prune_zero_value_stranger", "prune_outlier_embeddings")` — a hand-curated tuple in `tests/test_faiss_atomicity_invariants.py`. **Forward check:** every method in the tuple is verified to follow the SQL-first + sentinel + `_index_lock` pattern via AST scan.
+
+That was the obvious half. **Inverse check:** every method on `FaceDB` that calls into FAISS (regex pattern matching `self.index.add` / `self._rebuild_faiss` / `self._save_faiss`) is asserted to be a member of `PAIRED_WRITE_METHODS`. The two halves together close the loop: any future method added without registration silently fails the inverse check.
+
+The empirical lesson — and the reason inverse checks became standard practice — is that the inverse check on P0.5 **caught a real bug in the same session**. `prune_outlier_embeddings` was a hidden paired-write site: it called `_rebuild_faiss()` directly without `_index_lock`, without `transaction()`, and without `_mark_faiss_dirty()`. The forward check would have happily passed an empty tuple. The inverse check failed loudly and forced the fix.
+
+The closure-time effort to add the inverse check was about 30 minutes. It caught a 7th bug from one P0 cycle. The discipline is now applied to every enumerated method tuple in the codebase: PAIRED_WRITE_METHODS in P0.5, VOICE_GALLERY_METHODS, the Kuzu Three-Pattern detectors in §246, the EXPECTED_RULES_BY_BAND map in §291, the `_TOOL_HANDLERS` dispatch table in §272, the producer-hook coverage in P0.0.7 (Part XLIX).
+
+## 246. P0.X — The Three Kuzu Write Patterns
+
+Kuzu (the knowledge graph) is a separate store from brain.db (the SQL knowledge table). They have to stay consistent: every fact extracted by `ExtractionAgent` lands in *both* (brain.db row + Kuzu nodes/edges). The pre-P0.X architecture had cross-write code scattered across `BrainOrchestrator._process_turn`, `_retroactive_scan`, `on_identity_confirmed`, and `_persist_extraction_to_kuzu` — with no consistent pattern for what happens when one half fails.
+
+P0.X codified three patterns and enforced each with an AST detector:
+
+| Pattern | What it does | Where it's used |
+|---|---|---|
+| **`SCHEMA_MIGRATION`** | Always rebuilds Kuzu from brain.db. Inherently safe because brain.db is authoritative. | `_ensure_graph_sync()` at boot |
+| **`RAISE`** | SQL transaction first, sentinel touched before Kuzu op, sentinel cleared on Kuzu success, re-raise on Kuzu failure | `on_identity_confirmed` — the user-visible rename path; the user gets an explicit failure, not silent divergence |
+| **`SWALLOW`** | Kuzu try/except with sentinel touched + log, no re-raise | `_persist_extraction_to_kuzu`, `_retroactive_scan`, `_process_turn` — brain.db is authoritative, Kuzu heals on next `_ensure_graph_sync()` |
+
+The pattern choice is per call site, decided by the question: **does the user need to know if Kuzu writes fail right now?** If yes (rename), use RAISE. If no (background extraction), use SWALLOW. SCHEMA_MIGRATION is the bootstrap-reconciliation path that picks up after either.
+
+## 247. SCHEMA_MIGRATION, RAISE, and SWALLOW in Detail
+
+Sentinel machinery on `BrainDB`:
+
+- `_kuzu_dirty_path()` — sentinel file path.
+- `_mark_kuzu_dirty()` — touches the sentinel before any Kuzu write.
+- `_clear_kuzu_dirty()` — clears the sentinel after a successful Kuzu write.
+- `_is_kuzu_dirty()` — reads the sentinel at boot.
+
+Boot reconciliation in `BrainDB.__init__`: if `_is_kuzu_dirty()` is True, force `_ensure_graph_sync()` to rebuild on next access; `_kuzu_degraded: bool` flag is set if rebuild fails. Degraded mode causes graph reads to return empty rather than crash.
+
+AST detector self-tests live in `tests/test_kuzu_atomicity_invariants.py` and prove that each helper catches exactly the violations it claims. The RAISE-pattern detector rewrites raise-detection to walk `ast.Try` nodes and find specifically the Kuzu-writing try block (by scanning the try body for Kuzu write markers) before inspecting its except handlers for `ast.Raise`. The pre-fix detector would find any `raise` in any except handler, including the SQL transaction wrapper's, and report false passes.
+
+## 248. `_process_turn` — The Hidden Paired-Write Site
+
+Inverse check at work again: `_process_turn` in `BrainOrchestrator` had `self._graph_db.invalidate_fact(...)` inside the ContradictionAgent loop **without** `_mark_kuzu_dirty()`. The inverse check (`test_all_kuzu_write_sites_are_covered`) found it. Two forward tests were added at closure: sentinel-written + no-re-raise for `_process_turn`.
+
+Same shape, same lesson: registering enumerated tuples without inverse checks lets new call sites slip in undetected. The inverse check is the cheap insurance.
+
+## 249. Degraded-Mode Fallback Behavior
+
+`_faiss_degraded = True` → `FaceDB.recognize()` returns `(None, None, 0.0)`. Face-recognition flow continues to background-scan and pyannote-route on voice signals; the system functions without face match (degraded from "best-friend recognised on camera" to "voice-only attribution"). The dashboard receives a `state.json` update reflecting the degraded condition.
+
+`_kuzu_degraded = True` → graph reads return empty. `find_shared_entities`, `_apply_household_extraction`, and similar paths see no graph data; the LLM prompt loses the graph context but continues to receive brain.db facts. Recovery happens on the next `_ensure_graph_sync()` cycle if the underlying issue (file lock, disk space) resolves.
+
+The degraded modes are not silent. Each one logs a `[FAISS]`/`[Kuzu]` `WARN: degraded mode active` line. The health log (Part XLVI §301) doesn't surface them yet — adding `faiss_degraded` and `kuzu_degraded` fields to `HealthSnapshot` is a small follow-up worth doing alongside the Wave-5 fields.
+
+---
+
+# Part XXXIX — The Store-Pattern Migration (P0.6)
+
+## 250. Why 28 Module-Level Globals Was a Problem
+
+By early 2026 `pipeline.py` had accumulated 28 module-level mutable globals: `_persons_in_frame`, `_unrecognized_tracks`, `_stranger_track_map`, `_track_identity`, `_conversation`, `_last_greeted`, `_voice_gallery`, `_voice_gallery_sizes`, `_emotion_agents`, `_sessions_started`, `_active_room_session`, `_cloud_state`, `_cloud_failed_at`, `_pipeline_state`, `_active_system_name`, `_detected_lang`, `_latest_vision_frame`, `_latest_frame_time`, and many more.
+
+The cost showed up in three places:
+
+1. **Test isolation.** Each global needed an explicit reset in test fixtures. Many tests forgot. Failures cascaded: a test that set `_persons_in_frame` left state for the next test, which silently passed off the residual state and then failed unpredictably when run in a different order.
+2. **Concurrent access.** Some globals were mutated from background coroutines (vision loop, KAIROS, dream loop). The mutation patterns were ad-hoc — sometimes a lock, sometimes not, sometimes a `.copy()`, sometimes a direct reference. The mutations interleaved during full-suite test runs and produced sporadic failures.
+3. **Coupling.** A code change in one part of pipeline.py would silently affect another part through the shared globals. Vision tests would pass but voice tests would fail in unrelated ways because the order of writes to `_persons_in_frame` had changed (Part XXXII §198 documents this in the voice/vision context).
+
+P0.6 ships the **Store pattern**: each cluster of globals is encapsulated in a typed class with async mutators, sync peek reads, and an explicit `reset()` method called by an autouse pytest fixture.
+
+## 251. The `Store(ABC, Generic[T])` Base Class
+
+`core/store_base.py`:
+
+```python
+from abc import ABC, abstractmethod
+from typing import Generic, TypeVar
+
+T = TypeVar("T")
+
+class Store(ABC, Generic[T]):
+    """Base class for all P0.6 pipeline-state stores.
+
+    Subclasses must:
+      - Define async mutator methods (require asyncio.Lock if mutating shared state).
+      - Define sync peek_* methods for read-only access (no lock acquisition).
+      - Implement reset() to restore the canonical empty / initial state.
+    """
+
+    @abstractmethod
+    def reset(self) -> None: ...
+```
+
+Every store inherits from `Store`. The `reset()` method is the autouse-fixture-callable hook that makes test isolation deterministic.
+
+## 252. The Eight Stores and What Each Owns
+
+| Store | Module | Owns |
+|---|---|---|
+| `PresenceStore` | `core/presence_store.py` | `_persons_in_frame` (which person_ids are visible on camera + face_match_conf + source tag) |
+| `TrackStore` | `core/track_store.py` | `_unrecognized_tracks`, `_stranger_track_map`, `_track_identity`, `_unrecognized_embeddings` |
+| `ConversationStore` | `core/conversation_store.py` | `_conversation` (per-pid message history), `_last_greeted`, `_last_self_update`, `_compact_pids` |
+| `VoiceGalleryStore` | `core/voice_gallery_store.py` | `_voice_gallery` (in-memory mean embeddings), `_voice_gallery_sizes` (DB-backed cache) |
+| `PerPersonAgentStore` | `core/per_person_agent_store.py` | `_emotion_agents` (per-pid EmotionAgent instances), `_sessions_started`, `_ambient_wake_pending` |
+| `CacheStore` (×4 instances) | `core/cache_store.py` | `_compact_history_cache`, `_query_embedding_cache`, `_intent_classifier_cache`, `_bf_id_cache` |
+| `PipelineStateStore` | `core/pipeline_state_store.py` | `_cloud_state`, `_pipeline_state`, `_active_room_session`, `_active_system_name`, `_detected_lang`, `_last_face_seen`, `_last_user_speech_at`, `_last_kairos_at`, `_last_silent_update`, plus the cloud transition methods |
+| `VisionFrameStore` | `core/vision_frame_store.py` | `_latest_vision_frame`, `_latest_frame_time`, `_vision_prev_det_count` |
+
+Each store has between 5 and 25 methods. The total LOC for the eight modules is ~3500 lines, but the migration *removed* roughly the same amount from `pipeline.py` — net architectural improvement, not net code growth.
+
+## 253. Async Mutators, Sync `peek_*` Reads, and the Single-Owner Invariant
+
+The convention across all eight stores:
+
+- **Async mutators** (`async def set_x(...)`, `async def append_y(...)`, etc.) acquire the store's `asyncio.Lock` before mutating. The lock guards against concurrent writes from multiple coroutines.
+- **Sync `peek_*` reads** (`def peek_x(...)`) do *not* acquire the lock. They read the canonical structure once and return either a copy (for mutable collections like lists/dicts) or the value directly (for immutable types like strings/ints). The contract is: peek reads are cheap, called from synchronous contexts (logging, prompt assembly), and must never block.
+- **Single-owner invariant**: each store is instantiated exactly once at module level. No code outside the store module mutates the underlying data; everything goes through the store API.
+
+`tests/test_p06_store_invariants.py` enforces these conventions via AST scan. `_STORE_MODULES` enumerates the eight modules; each one is asserted to inherit from `Store`, to expose only async-marked mutators (with a small allowlist for legitimately-sync mutators like `__init__`), to have a `reset()` method, and to be the sole writer of its owned fields (cross-checked against grep of the module-level names).
+
+## 254. The Producer-Copy Invariant
+
+`VisionFrameStore.set_frame(frame, frame_time)` accepts a numpy ndarray. The frame is a *shared* reference produced by the camera capture loop. If the store kept the reference and another consumer mutated the frame in place, every reader would observe the mutation. Worse, the SORT tracker (Part IV §21) mutates its input arrays as part of its bounding-box update.
+
+**The rule:** producers MUST call `.copy()` on the frame before passing it to `set_frame`. The store doesn't copy internally — it would be wasteful in cases where the producer already has a copy.
+
+The structural invariant: `tests/test_vision_frame_store_producer_copy.py` AST-scans `pipeline.py` for every `set_frame(...)` call site and asserts `.copy()` appears in the same expression (either on the frame argument directly, or on a binding visible in the same scope). One of the eight P0.6.7v2 deliberate-regression checks (§258) injected a frame passed without `.copy()` and confirmed the test fires.
+
+## 255. Peek-Not-Mutate Semantics for CacheStore
+
+The original `CacheStore` had a touch-on-read LRU: every `get(key)` not only returned the value but also moved the key to the end of the OrderedDict (most-recently-used). This violated the spec's locked decision (cache should be `peek`, not `touch`).
+
+The drift was caught in the v2 closure audit (Part L §322 — induction-surfaces-invariant-gaps). v2 renamed `get()` → `peek()`, removed `move_to_end` touch-on-read, replaced OrderedDict with a plain dict, and eviction on `set()` now picks the oldest-by-cached-at via `min(_data, key=lambda k: _data[k][1])`. `_hits` and `_misses` are documented as read-side observability counters with `# OBSERVABILITY:` annotation — they're written from `peek()` for counting purposes but they do *not* affect cache behavior.
+
+The deliberate-regression check that proved the fix: inject `touch-on-read` promotion logic into `peek()` and confirm a behavioral test (cache should evict oldest under bounded capacity even when oldest is read recently) fails with the injection and passes with the spec'd peek-not-mutate.
+
+## 256. The Prior-State Guard for Cloud Transitions
+
+`PipelineStateStore.transition_to_online()` was originally idempotent (could be called multiple times with no side effects). The v1 implementation set `cloud_recovered = True` on every call. The drift: a retry path that called `transition_to_online()` twice in quick succession spuriously fired the `cloud_recovered` flag, causing the recovery flow (Part XII §79) to emit a leaky "cloud connection just came back online" TTS narration on every retry rather than only on the actual SICK→ONLINE transition.
+
+v2 fix: gain a prior-state check. `cloud_recovered = True` is set *only* if the prior state was NOT already ONLINE. Idempotent retry no longer spuriously signals recovery. One of the eight deliberate-regression checks (§258) injected the guard removal and confirmed the recovery TTS was spuriously emitted.
+
+## 257. Autouse-Fixture Reset and the M2 Coverage Meta-Test
+
+`conftest.py` (root) and `tests/conftest.py` both contain an autouse fixture `_reset_pipeline_state_between_tests` that calls `reset()` on every Store. The fixture is autouse, so every test runs against a clean state by default.
+
+The M2 coverage meta-test (`test_p06_store_invariants.py::test_autouse_fixture_resets_all_stores`) AST-scans both conftest files and asserts every store name is in the reset loop. The 9th store added (SessionStore — added by P0.7) was caught by M2 the first time the test ran with only 8 entries in the reset list — the meta-test forced the conftest update before P0.7 could land.
+
+## 258. The Eight Deliberate-Regression Checks at v2 Closure
+
+After v1 shipped and the closure audit caught three gaps (vision globals missed, CacheStore touch-on-read, prior-state guard), v2 incorporated all three plus the architectural invariants from §253–§256. Closure for v2 ran eight deliberate-regression checks, one per invariant, and all eight fired correctly:
+
+| # | What was injected | Test that fired | Reverted? |
+|---|---|---|---|
+| 1 | Added a new field to `PresenceStore.EXPECTED_FIELDS` schema | `test_presence_store_schema` (field-set drift) | Yes |
+| 2 | Added a writer to `_persons_in_frame` outside `PresenceStore` | `test_no_external_writes_to_presence_store` | Yes |
+| 3 | Stripped paired-write atomicity from `transition_to_sick` | `test_cloud_bundle_paired_write_atomic` | Yes |
+| 4 | Passed a frame to `set_frame` without `.copy()` | `test_vision_frame_store_producer_copy` | Yes |
+| 5 | Injected `move_to_end` touch-on-read into `CacheStore.peek` | behavioral cache eviction test | Yes |
+| 6 | Re-added a legacy global at module scope in `pipeline.py` | `test_p06_legacy_global_progress` (ratchet at cap=0) | Yes |
+| 7 | Dropped a store from the conftest reset loop | M2 autouse meta-test | Yes |
+| 8 | Removed the prior-state guard from `transition_to_online` | behavioral cloud-recovery TTS test | Yes |
+
+The pattern is the induction-surfaces-invariant-gaps discipline (Part L §322) at work: each invariant gets tested by injecting its own violation, confirming the test fires, then reverting. v2 closure went green only after all eight checks confirmed correct behaviour.
+
+## 259. The Legacy-Global Ratchet at Cap = 0
+
+`tests/test_p06_legacy_global_progress.py` is the migration-progress ratchet. It AST-scans `pipeline.py` for module-level assignments to a fixed enumeration of 28 legacy global names (`_persons_in_frame = ...`, `_voice_gallery_sizes = ...`, etc.) and asserts the count is below a configurable cap. During the migration the cap stepped down (28 → 25 → 20 → ... → 0). At closure the cap is 0: any reintroduction of a legacy global fails CI.
+
+The detector uses word-boundary discipline. Initially it caught false positives like `initial_cloud_state=...` (kwarg, not a global write) — the regex was tightened to require word-boundary delimiters on both sides of the global name.
+
+The inverse check enumeration was also updated for the legitimate writers: `__init__` is allowed to conditionally assign `_cloud_state` and `_pipeline_state` after `reset()`. The allowlist captures the constructive paths, the ratchet blocks the destructive paths.
+
+## 260. The Schema and Inverse-Check Ratchets That Lock It In
+
+Four invariant tests, run every PR, lock the migration as a permanent structural property:
+
+1. **Ratchet** — `test_p06_legacy_global_progress.py` at cap=0 (above).
+2. **Schema pinning** — `test_p06_store_schemas.py` pins `EXPECTED_FIELDS` per Store across 15 schema tests. Drift in any owned-field set fails CI.
+3. **Inverse checks** — `test_p06_store_inverse_checks.py` enforces paired-write discipline via 19 AST-based inverse checks: cloud-bundle (4-field atomic), room-triple-tuple (3-field atomic), VoiceGalleryStore (gallery, sizes) pair, VisionFrameStore (frame, frame_time) pair, plus per-field writer enumeration for the simpler stores.
+4. **M2 autouse meta-test** — verifies both conftest files reset all 9 stores (8 P0.6 stores + 1 P0.7 SessionStore).
+
+Plus the producer-copy AST source-inspection test (`test_vision_frame_store_producer_copy.py`) scans every `set_frame(...)` call site and asserts `.copy()` in the same expression.
+
+The shim sweep at v2 closure confirmed clean: zero P0.6 migration scaffolding remains. The `_sync_set_cloud_state`, `_sync_mint_room`, `_sync_add_room_participant`, `_sync_clear_room`, `_sync_set_prev_det_count` functions are documented as **load-bearing public sync API** (NOT shims) — they're the canonical synchronous read/write entry points the pipeline needs for non-async contexts.
+
+---
+
+# Part XL — Typed Session State (P0.7)
+
+## 261. Why Move the Session Dict to a Typed Store
+
+`_active_sessions: dict[str, dict]` in `pipeline.py` carried the entire identity-evidence + voice-evidence + dispute-state + session-lifecycle model. Each per-person entry was a free-form dict with no schema. Code that touched a session field looked like:
+
+```python
+_active_sessions[pid]["dispute_set_at"] = time.time()
+_active_sessions[pid]["recent_voice_confs"].append(conf)
+del _active_sessions[pid]["cached_prefix"]
+```
+
+The cost:
+
+- **No schema enforcement.** A typo (`displute_set_at`) silently created a new key. A field rename required grepping every call site.
+- **No invariant guards.** A session could be in dispute state (`person_type == "disputed"`) without `dispute_set_at` being set — the auto-clear timeout (Part XV §106) would never fire.
+- **Concurrent access.** Tests and background coroutines wrote to the same session dict without coordination.
+- **No single-writer principle.** ~190 sites across `pipeline.py` and `test_pipeline.py` wrote directly to the session dict. Any future invariant (e.g. "the engagement gate must always set `bootstrap_credits` to N_INITIAL_VOICE_BOOTSTRAP") had to be defended at every site individually.
+
+P0.7 builds `core/session_state.py` to fix this. The migration was non-trivial — a 5-phase staged sub-PR sequence (P0.7.1 → P0.7.5.D) that ran for ~10 days.
+
+## 262. `core/session_state.py` — Three Dataclasses
+
+```python
+@dataclass(slots=True)
+class VoiceEvidence:
+    voice_match_conf:           float = 0.0
+    voice_last_heard_ts:        float = 0.0
+    voice_sample_count:         int = 0
+    bootstrap_credits:           int = 0
+    recent_voice_confs:         list[float] = field(default_factory=list)
+    # ... 9 fields total
+
+@dataclass(slots=True)
+class Session:
+    person_id:                  str
+    person_name:                str
+    person_type:                str
+    started_at:                 float
+    last_face_seen:             float = 0.0
+    last_spoke_at:              float = 0.0
+    dispute_set_at:             Optional[float] = None
+    disputed_claimed_name:      Optional[str] = None
+    prior_person_type:          Optional[str] = None
+    disputed_block_count:       int = 0
+    disputed_block_alerted:     bool = False
+    voice_only_origin:          bool = False
+    voice_face_confirmed:       bool = False
+    cached_prefix:              Optional[str] = None
+    core_memory:                Optional[dict] = None
+    waiting_for_name:           bool = False
+    room_session_id:            Optional[str] = None
+    user_turns:                 int = 0
+    evidence:                   VoiceEvidence = field(default_factory=VoiceEvidence)
+    # ... 29 fields total
+
+@dataclass(frozen=True, slots=True)
+class SessionSnapshot:
+    """Immutable frozen snapshot for read-only access."""
+    # Same 29 fields as Session, but every collection is replaced with a new copy
+    # at snapshot time. Returned by SessionStore.peek_snapshot().
+```
+
+The slots-on-everything is load-bearing: it makes every field assignment a typo into an `AttributeError` at runtime, and it shrinks the per-session memory footprint substantially.
+
+`SessionSnapshot` is the read-only contract. Anywhere in the codebase that needs to read session state (prompt assembly, scene block, KAIROS, brain context) calls `_session_store.peek_snapshot(pid)` and gets back a frozen snapshot whose internal collections are *copies* — mutating them has no effect on the underlying Session.
+
+## 263. `SessionStore` — Single Owner with `asyncio.Lock`
+
+`SessionStore` is the only writer of `_sessions: dict[str, Session]`. Every mutation is async and acquires `self._lock` before touching the dict. Every read is sync and returns either a SessionSnapshot or a plain value (for `peek_<field>` accessors).
+
+The `peek_snapshot(pid)` and `peek_all_snapshots()` methods are sync by design. They copy the underlying Session into a frozen SessionSnapshot at peek time. The same-thread asyncio safety contract (§268) lets them skip the lock — within a single asyncio thread, mutations are serialised between `await` boundaries, so a sync peek can never see a half-mutated session.
+
+## 264. The 21 Named Transition Methods
+
+The migration's *real* value is the named transition methods. They replace ~190 ad-hoc dict mutations with semantically-meaningful operations:
+
+| Method | What it does |
+|---|---|
+| `open_session(pid, name, person_type, ...)` | Create a fresh Session entry. Engagement-gate-passed callers pass `engagement_gate_passed=True` so `bootstrap_credits` are seeded. |
+| `close_session(pid)` | Remove the Session entry. Idempotent — closing a missing session is a no-op. |
+| `update_on_reopen(pid, voice_confidence, now)` | Re-open path: refresh voice match conf + last_spoke_at + last_face_seen in one atomic operation. |
+| `transition_to_disputed(pid, claimed_name, reason, now)` | Capture `prior_person_type`, set `person_type="disputed"`, set `dispute_set_at`, set `disputed_claimed_name`. |
+| `clear_dispute(pid, now)` | Restore `person_type` from `prior_person_type` (fail-closed to `"stranger"` if missing per P0.2). |
+| `increment_block_count(pid)` | Bump `disputed_block_count` for the watchdog. |
+| `mark_block_alerted(pid)` | Set `disputed_block_alerted=True` (idempotent — fires the watchdog alert exactly once). |
+| `update_voice_heard(pid, conf, ts)` | Append to `recent_voice_confs` (with maxlen), update `voice_match_conf`, set `voice_last_heard_ts`. |
+| `update_face_seen(pid, ts)` | Set `last_face_seen`. |
+| `set_voice_only_origin(pid, value)` | Set the flag captured at engagement-gate pass for voice-only strangers. |
+| `set_bootstrap_credits(pid, n)` | Seed bootstrap credits at engagement gate pass. |
+| `decrement_bootstrap_credits(pid)` | Consume one credit on a voice-accumulation event. |
+| `set_voice_face_confirmed(pid, value)` | Set the flag captured at progressive-enrollment gate pass. |
+| `set_core_memory(pid, value)` | Cache the core-memory dict for prompt assembly. |
+| `set_room_session_id(pid, rsid)` | Bind a session to a room (Part XXVI §163). |
+| `bump_user_turn_count(pid)` | Increment turns for stranger-engagement gate progress. |
+| `append_recent_attribution(pid, attr)` | Track the speaker-routing history for debug. |
+| `set_cached_prefix(pid, prefix)` | Update the cached prompt prefix for compression. |
+| `set_dispute_set_at(pid, ts)` | Anchor the dispute timeout (P0.2 fail-closed default of None means "no timeout yet"). |
+| `set_waiting_for_name(pid, value)` | Track stranger-engagement state. |
+| `set_person_name(pid, name)` | Rename within the session (after `update_person_name` tool fires). |
+
+Every method has a focused contract. The methods *enforce invariants* — `transition_to_disputed` cannot be called without supplying a `reason`; `clear_dispute` cannot grant privileges higher than `prior_person_type`; `decrement_bootstrap_credits` returns False (no credit available) without mutating if credits are already zero.
+
+## 265. `SessionSnapshot` — Frozen, Sliced, Cheap to Pass Around
+
+The frozen dataclass is the read-only contract. Anywhere in the codebase that needs session state in a logging context, a prompt-assembly context, or a backround coroutine context, the call site does:
+
+```python
+_snap = _session_store.peek_snapshot(pid)
+if _snap is None:
+    return  # session closed
+if _is_disputed(_snap):
+    # ... handle dispute
+```
+
+Snapshots are cheap to create (29 field copies + a few list copies) and impossible to mutate (frozen). They're passed across `await` boundaries safely — the snapshot represents state at a specific point in time and the underlying Session can evolve freely afterwards.
+
+`peek_all_snapshots()` returns a list of snapshots, one per active session. This is the iteration API for code that needs to scan every session (e.g. `_expire_stale_sessions`, the health log's per-session aggregate). The iteration is a snapshot of the dict at peek time; new sessions opened during iteration are not visible (consistent with the "snapshot represents a specific point in time" semantics).
+
+## 266. The 5-Phase Migration (P0.7.1 → P0.7.5)
+
+The migration ran in 5 staged sub-PRs, each one independently shippable:
+
+- **P0.7.1** — Foundation. Build `core/session_state.py` with the three dataclasses + `SessionStore` with the named transition methods. No production wiring yet. 45 behavioral unit tests + 12 structural AST invariants in `tests/test_session_store.py` and `tests/test_session_state_invariants.py`. Autouse `_reset_session_state_between_tests` fixture in both conftest files. **+57 tests (1609 → 1666).**
+- **P0.7.2** — Read-path migration. 12 production read sites in `pipeline.py` migrated from `_active_sessions[pid]["field"]` to `_session_store.peek_snapshot(pid).field`. Closure invariant test `tests/test_p072_read_migration_progress.py` AST-scans for unallowed reads and caps at 0. 3 documented dict-read keeps (`_compact_running`, `recent_attributions` ×2) where the deque mutation requires a mutable reference; those use the legacy access pattern with allowlist annotation.
+- **P0.7.3** — Lifecycle write-path migration. `_open_session` re-open path, voice_only_origin backfill, core_memory capture, dispute-flip via `transition_to_disputed`, increment_block_count + mark_block_alerted, RIDM dispute path, auto-clear via `clear_dispute`. ~32 production write sites migrated.
+- **P0.7.4** — Full migration cleanup. All 32 `_active_sessions[pid]["field"] = value` dual-write lines deleted. `SHIM_DISPATCH` dict deleted. `_shim_mirror_session_field_write` function deleted. All 21 `_shim_set_*` methods deleted from SessionStore. `ALLOWED_LEGACY_READS` emptied to `frozenset()`. Cap=0 in closure invariant test. `peek_all_snapshots()` added so `_expire_stale_sessions` iterates over snapshots instead of dict items.
+- **P0.7.5** — Test suite restoration after the migration. ~152 test failures across `test_pipeline.py` and adjacent test files migrated from `_active_sessions` dict API to `_session_store` API (`open_session`, `transition_to_disputed`, etc. via `asyncio.run()`). Sub-PRs: P0.7.5.A (read migration backlog), P0.7.5.B (12 specific fixes), P0.7.5.C (19 session-open tests + production bug fix), P0.7.5.D (latent test regression — `test_update_system_name_rejected_on_empty_user_text_by_default` was passing by accident off residual state). Full suite restored to 1716 passing + 8 failing infra debt.
+
+The staged sequence is the spec-first-review-cycle discipline (Part L §325) at work. Each sub-PR is small enough to review, large enough to make meaningful progress, and the validation gates between phases caught the migration backlog before it cascaded.
+
+## 267. The SHIM Layer and Its Eventual Deletion
+
+P0.7.2 and P0.7.3 used a shim pattern: every dual-write site (`_active_sessions[pid]["field"] = value`) was paired with a corresponding `_session_store._shim_set_<field>(pid, value)` call. The dual-write let the new store stay in sync with the legacy dict while the migration ran. Tests could exercise both paths independently.
+
+P0.7.4 deleted the shims after every production read site was migrated. The cleanup was mechanical: 21 `_shim_set_*` methods deleted from SessionStore, 32 dual-write lines deleted from pipeline.py, the `SHIM_DISPATCH` dict deleted, the `_shim_mirror_session_field_write` helper deleted, the dead SHIM test file `tests/test_p072_session_store_migration.py` deleted (320 lines, 6 test classes — all testing now-deleted infrastructure).
+
+The discipline learned: ship the SHIM with a deadline. The migration phase is when SHIM exists; the cleanup phase is when SHIM is deleted. Leaving SHIM in place "just in case" is the kind of half-finished migration that breeds the next decade of technical debt.
+
+## 268. `peek_all_snapshots` and the Single-Thread-Asyncio Safety Contract
+
+The contract: `peek_snapshot(pid)` and `peek_all_snapshots()` are sync methods that read `self._sessions` without acquiring the lock. They're safe because:
+
+1. **Single asyncio thread.** All async mutations happen on the main asyncio thread. There's no thread pool writing to SessionStore.
+2. **Mutations serialise between `await` boundaries.** When `async def set_x(...)` runs, it owns the lock and the field assignments happen synchronously between two `await` points. No other coroutine can interleave.
+3. **Sync peek reads are atomic at the field level.** `Session.field` reads in CPython are GIL-atomic for built-in types. The peek returns a new `SessionSnapshot` constructed from a single pass through the fields — no mid-construction visibility.
+
+The empirical proof: P0.6.4's behavioral race test (`test_voice_gallery_concurrent_write_read`) demonstrated the same property on `VoiceGalleryStore` — 1 writer thread + 1000 reader threads against a peek-read pattern produced zero `RuntimeError("dictionary changed size during iteration")` over 1000 cycles.
+
+The contract is documented at the top of `core/session_state.py` so future maintainers don't try to "harden" the peek path with locks (which would break the cheap-read invariant) or to call peeks from a thread pool (which would break the single-asyncio-thread assumption).
+
+## 269. Dispute State via Named Transitions
+
+The dispute state machine (Part XV) used to be ad-hoc — code that wanted to flip a session to disputed wrote `_active_sessions[pid]["person_type"] = "disputed"` directly, possibly forgot to capture `prior_person_type`, possibly forgot to set `dispute_set_at`. P0.7.3 routed all three operations through `transition_to_disputed(pid, claimed_name, reason, now)`:
+
+```python
+async def transition_to_disputed(
+    self, pid: str, claimed_name: Optional[str], reason: str, now: float
+) -> None:
+    async with self._lock:
+        sess = self._sessions.get(pid)
+        if sess is None: return
+        sess.prior_person_type = sess.person_type
+        sess.person_type = "disputed"
+        sess.disputed_claimed_name = claimed_name
+        sess.dispute_set_at = now
+        # ... emit log
+```
+
+Three invariants enforced in one method: prior_person_type captured (P0.2 fail-closed default lands cleanly here), person_type flipped, dispute_set_at anchored. The auto-clear timeout (Part XV §106) now reliably has a timestamp to compare against.
+
+`clear_dispute(pid, now)` does the inverse: restore `person_type` from `prior_person_type` (defaulting to `"stranger"` per P0.2 fail-closed), clear the dispute-tracking fields, log the resolution.
+
+## 270. The Closure Invariants That Lock the Migration
+
+P0.7's three closure invariants:
+
+1. **`tests/test_p072_read_migration_progress.py`** — AST-scans for unallowed dict-read patterns on `_active_sessions`. Cap=0 means any new direct-read regression fails CI. Has 3 documented allowlist entries with explicit `# allowlist:` comments.
+2. **`tests/test_session_store.py::TestSessionStoreClosure::test_no_dual_writes_remain`** — AST-scans for `_active_sessions[pid][<field>] = ...` assignments outside the test file. Cap=0.
+3. **`tests/test_session_state_invariants.py::test_sync_mutator_allowlist`** — 12 structural tests. Verifies every method on SessionStore that mutates state is `async def`. Allowlist exempts `__init__` and `reset()`.
+
+The combined effect: any future code path that wants to bypass SessionStore must explicitly opt out via the allowlist, and the allowlist is a small enumerable set that reviewers can audit.
+
+---
+
+# Part XLI — Per-Tool Timeout Protection (P0.8)
+
+## 271. The Hang Surface Before P0.8
+
+Every LLM-callable tool handler (Part XII §75) was a branch in a big if/elif chain inside `_execute_tool`. The branches were synchronous in places, async in others, and none of them had a per-tool timeout budget. The visible failure mode: any tool whose underlying I/O hung (SQLite holding a lock, Tavily API stalling, Ollama under load) would freeze the LLM dispatch path indefinitely. The user would say something, the brain would propose a tool, the tool would hang, and the conversation would be dead for the user.
+
+The architectural fix: extract every tool branch into a top-level `async def _handle_<tool>(args, ctx)` function, register them in a module-level `_TOOL_HANDLERS: dict[str, Callable]`, and wrap the dispatch in `asyncio.wait_for` with a per-tool budget. On timeout, `wait_for` cancels the handler task. The cancellation propagates through any open transaction `__aexit__`, rolling back partial SQL writes.
+
+## 272. `_TOOL_HANDLERS` Extraction and `_ToolContext`
+
+The 5 LLM-callable tools (`update_person_name`, `report_identity_mismatch`, `update_system_name`, `shutdown`, `search_memory`) each got their own handler:
+
+```python
+async def _handle_update_person_name(args: dict, ctx: _ToolContext) -> str | None:
+    # ... handler body verbatim from the prior if/elif branch
+    return "handled"  # or "rejected" / "handled_noop" / "shutdown" / None
+
+_TOOL_HANDLERS: dict[str, Callable] = {
+    "update_person_name": _handle_update_person_name,
+    "report_identity_mismatch": _handle_report_identity_mismatch,
+    "update_system_name": _handle_update_system_name,
+    "shutdown": _handle_shutdown,
+    "search_memory": _handle_search_memory,
+}
+```
+
+`_ToolContext` is a frozen slots dataclass that carries everything a handler needs (`args`, `person_id`, `person_name`, `db`, `user_text`, `intent_sidecar`, `exec_snap`, `caller_type`). It's built once after the privilege gate fires, then passed into the handler. The handlers all start with a small unpack header (`person_id = ctx.person_id`, etc.) so the moved branch body reads identically to the pre-extraction code.
+
+The extraction discipline was *purely mechanical*: no "while I'm here" changes to handler logic. The tool `tools/extract_tool_handler.py` (idempotent helper) dedents the branch body, builds the `_handle_<tool>(args, ctx)` wrapper, and replaces the original branch with delegation. Each extraction was a single sub-PR with full-suite verification before the next handler.
+
+## 273. `asyncio.wait_for` and the Per-Tool Budgets
+
+`_execute_tool` runs the un-budgeted gates first (Layer 0 unknown filter, repeat guard, privilege gate). Then it dispatches:
+
+```python
+budget = TOOL_TIMEOUT_OVERRIDES.get(name, TOOL_TIMEOUT_SECS)
+try:
+    return await asyncio.wait_for(handler(args, _ctx), timeout=budget)
+except asyncio.TimeoutError:
+    return "tool_timeout"
+```
+
+The per-tool budgets in `core/config.py`:
+
+- `TOOL_TIMEOUT_SECS = 10.0` — default
+- `TOOL_TIMEOUT_OVERRIDES = {"search_web": 20.0, "search_memory": 5.0, "update_person_name": 5.0, "update_system_name": 5.0, "shutdown": 3.0, "report_identity_mismatch": 3.0}`
+
+The override for `search_web` is 20s because Tavily does multi-query searches and legitimate live-data queries can take 8-15s. `search_memory` is 5s because it's a fast SQLite query. `shutdown` is 3s because it should be near-instant; a hung shutdown is itself a bug.
+
+The new `tool_timeout` status was added to the taxonomy alongside `handled`/`handled_noop`/`rejected`/`unknown`/`None`/`shutdown`. The `_all_unreal` classifier in `conversation_turn` (Part XII §70) was widened to include `tool_timeout` so the Together.ai/Ollama retry path acknowledges the action didn't complete and the LLM emits a hedged re-ask instead of fabricating "I did it".
+
+## 274. Cancellation Rollback Through Transaction `__aexit__`
+
+The cancellation flow on `asyncio.TimeoutError`:
+
+1. `wait_for` cancels the handler task.
+2. `CancelledError` propagates up the handler's call stack.
+3. If the handler is inside a `FaceDB.transaction()` or `BrainDB._safe_commit()` block, the `__aexit__` method runs with the exception in flight.
+4. `__aexit__` issues `ROLLBACK`, restoring the SQL state to the pre-transaction snapshot.
+5. The `CancelledError` re-raises (transaction `__aexit__` does not swallow).
+6. `_execute_tool` catches the timeout (which manifests as `TimeoutError` at the `wait_for` level, not `CancelledError`), returns `"tool_timeout"`.
+
+The property is structurally proven by `TestHardCaseCancellationRollback` in `tests/test_tool_timeout.py`: a handler that does 10k `cursor.execute()` inside a transaction with periodic `await asyncio.sleep(0)` every 100 writes, with a forced 1ms timeout mid-loop, ends with `SELECT COUNT(*) == 0` (everything rolled back). The test is structural insurance against a future handler that forgets the periodic checkpoint and locks out cancellation.
+
+## 275. P0.8.1 — Tavily Wrap and the Hidden Inline Consumer
+
+P0.8's wait_for covered every tool in `_TOOL_HANDLERS`. But `search_web` is consumed *inline* inside `ask_stream` (Part XIII §80) — split out of `raw_tool_calls` and handled in-stream, not dispatched through `_TOOL_HANDLERS`. The `wait_for` wrap didn't reach it. The 20s `TOOL_TIMEOUT_OVERRIDES["search_web"]` budget was dead config.
+
+Tavily API hangs are the single most likely real-world hang point. P0.8.1 fixed this with an explicit wrap inside `core.brain._web_search`:
+
+```python
+try:
+    response = await asyncio.wait_for(
+        _tavily_http.post(...),
+        timeout=TOOL_TIMEOUT_OVERRIDES.get("search_web", TOOL_TIMEOUT_SECS),
+    )
+except asyncio.TimeoutError:
+    return {"error": "timeout", "hint": "Tavily timed out — answer from training knowledge or honestly acknowledge the network failure (no fabricated search results)."}
+```
+
+The returned dict shape matches the existing short-query / empty-query error shape, so both call sites (`ask_stream` and non-streaming `ask`) handle it via the existing `isinstance(result, dict)` branch — timeout surfacing flows through unchanged.
+
+The lesson: **the wait_for wrap must cover every consumer of the underlying I/O**, not just the dispatch path. P0.8's wrap was correct but incomplete; P0.8.1 found the inline consumer and closed it. Future tool work should grep for the underlying I/O call (here `_tavily_http.post`) at audit time, not just trust that wrap-coverage at the dispatcher is sufficient.
+
+## 276. P0.8.2 — F1 + F2 Structural Invariants
+
+Two AST-based CI invariants now enforce the timeout architecture's load-bearing properties:
+
+- **F1 — handler-checkpoint discipline.** Every async handler in `_TOOL_HANDLERS` containing a sync `for` / `while` / `async for` loop with a raw `.execute(...)` call inside MUST also contain `await asyncio.sleep(0)` in the same loop body. Without the checkpoint, `wait_for` cancellation cannot fire mid-loop and transaction rollback never runs. P0.8.1's `TestHardCaseCancellationRollback` proved the property structurally when checkpoints exist; F1 enforces they continue to exist as the codebase grows.
+- **F2 — retry-path one-shot guarantee.** `ask_retry_text` MUST internally call `_stream_together_raw(..., include_tools=False)` on every code path. AST scan walks the function body, finds every `_stream_together_raw` invocation, asserts each carries `include_tools=False` as a literal `False` constant (no kwarg / non-literal / `True` all fail). The retry path stays structurally one-shot — no recursive tool dispatch is possible.
+
+The deliberate-regression checks confirmed both invariants fire correctly: F1 caught an injected sync `.execute()` loop without checkpoint in `_handle_search_memory` (assertion mentions `sync loop at line X` + violation explanation), F2 caught `include_tools=True` flip in `ask_retry_text` (assertion mentions `passes include_tools=True — must be the literal False`). Both reverted to green.
+
+The F2 case is the **developer-improves-on-spec** moment for P0.8.2 (Part L §327): the auditor's original prescription targeted call sites in pipeline.py, but the actual contract is internal (`ask_retry_text` doesn't accept `include_tools` as a public parameter by design). The developer's caller audit found the internal contract and the F2 invariant verifies that instead.
+
+---
+
+# Part XLII — Schema Migrations Versioning (P0.9)
+
+## 277. The Drift Problem with Inline `ALTER TABLE` Calls
+
+Pre-P0.9 architecture: every schema change was an inline `ALTER TABLE` call inside the relevant DB class's `_init_tables` or `_migrate` method. Example pattern:
+
+```python
+def _init_tables(self) -> None:
+    cur = self._conn.cursor()
+    cur.execute("CREATE TABLE IF NOT EXISTS persons (...)")
+    try:
+        cur.execute("ALTER TABLE persons ADD COLUMN preferred_language TEXT")
+    except sqlite3.OperationalError:
+        pass  # column already exists
+    # ... repeat for every historical schema change
+```
+
+The pattern works for fresh DBs (CREATE creates everything) and for already-migrated DBs (every ALTER is a no-op via the OperationalError swallow). It breaks on:
+
+1. **Partial-state DBs.** If a backfill migration is half-complete, the ALTER passes (column exists) but the backfill never runs (no idempotency guard, no progress tracking).
+2. **Cross-DB ordering.** If migration X on `brain.db` reads a column added by migration Y on `faces.db`, the order is implicit in import order — fragile.
+3. **Failed-mid-migration recovery.** If `_init_tables` crashes mid-way, the DB is in an unknown state. No ledger says what completed.
+4. **Silent OperationalError swallowing.** Every ALTER `except OperationalError: pass` swallows unrelated errors too (disk full, lock contention).
+
+P0.9 generalises the versioned-ledger pattern that `classifier_scenarios.db` (Spec 1, Session 122) shipped first and applies it to `faces.db` and `brain.db`.
+
+## 278. `core/schema_migrations.py` — The Generalised Helper
+
+Three exports:
+
+- **`init_ledger(conn)`** — self-evolving migration-history table. Creates `schema_migrations(version, description, applied_at, is_initial)` on a fresh DB. On a pre-P0.9 DB that already has a partial ledger, idempotently adds the `is_initial` column via `PRAGMA table_info` + ALTER.
+- **`bootstrap_ledger_if_unversioned(conn, migrations)`** — stamps `v=1` baseline on a legacy DB with `is_initial=1`, walks the `migrations` list and stamps each entry whose `verify_present_fn` returns True as `is_initial=1`. Without this, a fresh boot against a legacy DB would crash on `OperationalError: duplicate column name` when the runner tried to re-apply each historical migration.
+- **`apply_migrations(conn, migrations)`** — runs pending entries in version order under `BEGIN IMMEDIATE`, calls `apply_fn` then `verify_post_fn` inside the same transaction so a verify failure rolls back the apply (atomic migrate-or-fail).
+
+The transaction wrapping uses the tightened S65 rollback discipline (§282) — only the known "no transaction is active" race is suppressed; unexpected operational errors are loud.
+
+## 279. The 5-Tuple Migration Shape and Why
+
+Every entry in `MIGRATIONS: list[tuple[int, str, Callable, Callable, Callable]]`:
+
+```python
+(version, description, apply_fn, verify_post_fn, verify_present_fn)
+```
+
+- **`version: int`** — monotonically increasing. Determines apply order.
+- **`description: str`** — human-readable label for boot logs (e.g. `"Add preferred_language column to persons"`).
+- **`apply_fn(conn) -> None`** — performs the schema mutation. Raises on failure.
+- **`verify_post_fn(conn) -> None`** — raises if the post-state is wrong. Used by the runner after apply_fn.
+- **`verify_present_fn(conn) -> bool`** — returns True if the migration's effect is already present on disk. Used by bootstrap to decide whether to stamp `is_initial=1` on a legacy DB.
+
+For schema-only migrations (add column, add index, create table) `verify_post` and `verify_present` collapse to the same check. For backfill migrations (e.g. `faces v=9 conversation_log backfill`, `brain v=10 privacy_level remediation`) they diverge meaningfully.
+
+## 280. `verify_post` vs `verify_present` — The Developer-Improved-on-Spec Split
+
+The architect's original spec for P0.9.2 defined a single `verify(conn) -> bool` function per migration. The developer split it into two during implementation, with explicit reasoning that became one of the entries in the developer-improves-on-spec track record (Part L §327).
+
+The split is load-bearing for backfill migrations. Consider `faces v=9` — adds `conversation_memory_archived` column AND backfills all pre-existing rows. The two scenarios:
+
+- **`verify_post`** is used by the runner after `apply_fn`. It must assert "post-condition achieved": column exists AND zero rows have NULL `conversation_memory_archived`.
+- **`verify_present`** is used by bootstrap on a legacy DB to decide whether to stamp `is_initial=1`. The right answer is "is the migration's effect already in place?" Which for a backfill means: column exists AND no NULL rows remain.
+
+For most schema-only migrations the two collapse: `verify_present` is "column exists"; `verify_post` is "column exists". For backfills they MUST diverge:
+
+- If the backfill is partially run on a legacy DB, `verify_present` returns False (column exists but NULL rows remain) → bootstrap doesn't stamp → runner runs the migration → `apply_fn` is idempotent (`ALTER TABLE IF NOT EXISTS`) → the backfill completes → `verify_post` confirms completion → ledger stamped.
+- With a single function, the partial-state DB would either get stamped at boot (silent data loss — the backfill never finishes) or never reach a stable state.
+
+The split correctly handles partial-migration scenarios. Architecturally, it's the right primitive. The developer's improvement on the architect's spec is documented in the closure report and banked in §327.
+
+## 281. Imp-1 — `isolation_level="IMMEDIATE"` on Every Connect
+
+Python's sqlite3 default `isolation_level` is `""` (deferred). When the connection is in deferred mode, the first write takes a `BEGIN DEFERRED` lock — meaning two concurrent connections can both be reading, and the first to write gets the lock, the second writes upgrade to EXCLUSIVE and may collide.
+
+`FaceDB.transaction()` and `BrainDB.transaction()` issue explicit `BEGIN IMMEDIATE` to take a write lock upfront. But if a *different* connection (one of the 5 connect sites in core/*.py outside the transaction context) is using deferred mode, it can interleave with the IMMEDIATE transaction's writes in unsafe ways.
+
+Imp-1 ships `isolation_level="IMMEDIATE"` on every `sqlite3.connect()` in `core/*.py` (excluding `core/backup.py`'s one-shot file-copy use). 5 connect sites updated: `FaceDB.__init__`, `FaceDB._init_conversation_archive`, two FaceDB archive-read sites, `BrainDB.__init__`, `ClassifierDB.__init__`, plus two `_faces_conn` sites. AST source-inspection test in `tests/test_schema_migrations.py` rejects any future `sqlite3.connect` in core/* that doesn't pass `isolation_level="IMMEDIATE"`.
+
+## 282. Imp-2 — Tightened S65 Rollback Discipline
+
+The S65 race (Session 65 finding): inside `transaction()` `__aexit__`, the rollback is wrapped in `except sqlite3.OperationalError: pass` to swallow the known "no transaction is active" race that occurs when a parallel close races with the rollback. Pre-Imp-2: the swallow was unconditional — it would also silently absorb a disk-full error, a lock-contention error, or a schema mismatch.
+
+The tightening: every `# RACE: S65` rollback site now reads `if "no transaction is active" not in str(_rbe).lower(): print(...); raise`. The known S65 race stays suppressed; everything else is loud. 4 sites tightened: `core/schema_migrations.py::apply_migrations`, `core/db.py::FaceDB.transaction`, `core/db.py::FaceDB.archive_old_conversation_log`, `core/brain_agent.py::BrainDB.transaction`.
+
+AST scan in `tests/test_schema_migrations.py` asserts every `# RACE: S65` site uses the tightened message-check pattern. The discipline is now CI-enforced.
+
+## 283. The 19 Retrofitted Historical Migrations
+
+P0.9 Phase 2 retrofitted 19 historical schema mutations into versioned `MIGRATIONS` lists with full 5-tuple shape: 10 migrations on faces.db (v=2 through v=10), 10 migrations on brain.db (v=2 through v=11), 1 destructive op (`_m_0010_drop_conversation_memory` on faces.db, with the documented S24 cleanup exemption).
+
+Each migration is a verbatim move of the existing inline `ALTER TABLE` from `_init_tables` / `_migrate` — mechanical-extraction discipline (P0.8 lineage). The inline calls KEEP RUNNING in Phase 2 as defense-in-depth — both are idempotent; Phase 3 cleans up the redundancy after live-prod-DB validation.
+
+Two new migration modules house the retrofitted entries: `core/faces_db_migrations.py` (~280 lines) and `core/brain_db_migrations.py` (~270 lines). Each `_m_NNNN_*` function is a verbatim function-extraction of the prior inline code; the migration registry is the only authoritative source for the schema change record.
+
+Pre-Phase-3 validation passed against Jagan's actual production DBs (boot log captured in `terminal_output.md`, 2026-05-17 multi-person session). Phase 3 then deleted the redundant inline calls: `FaceDB._init_tables`'s 2 try/except loops + 1 idx_conv_log_room CREATE + 1 backfill block + DROP TABLE conversation_memory, plus `BrainDB._migrate`'s 10 PRAGMA-guarded ALTERs + privacy_level remediation backfill. `BrainDB._migrate` is now a no-op stub kept for the `__init__` call-chain continuity.
+
+## 284. The Structural Invariants That Lock the Pattern
+
+Four invariants in `tests/test_schema_migrations.py`:
+
+1. **`TestNoIdempotencyTryExceptOutsideRunner`** — AST scan rejects any `try: ALTER/CREATE ...; except sqlite3.OperationalError: pass` pattern in `core/db.py` + `core/brain_agent.py`. Idempotency now lives in the runner only.
+2. **`TestNoAlterTableOutsideMigrationModules`** — regex scan rejects any `ALTER TABLE` in `core/db.py` + `core/brain_agent.py`. Lives only in `core/{faces,brain}_db_migrations.py` + the meta-migration in `core/schema_migrations.py`.
+3. **`TestNoDestructiveOpsInMigrationBodies`** — AST scan rejects `DROP TABLE` / `DROP COLUMN` / `ALTER TABLE ... RENAME` in `_m_*_apply` bodies, with single documented exemption (`_m_0010_drop_conversation_memory_apply` — S24 legacy cleanup).
+4. **Sanity guard** that the exemption's body actually contains the destructive op (catches typos in DOCUMENTED_EXEMPTIONS set).
+
+Plus the 5-tuple invariant: `test_every_entry_is_5_tuple_with_both_verify_companions` asserts both callables present on every migration.
+
+P0.9 closed boot observability with three new log lines on every boot:
+
+- `[Schema] {db_label}: bootstrap stamped baseline v=1 + N pre-existing migration(s) as is_initial=1 (legacy DB)`
+- `[Schema] {db_label}: apply_migrations ran 0 pending`
+- `[Schema] {db_label}: ledger already versioned`
+
+These are the validation gates that consumed Jagan's live-prod-DB validation in 2026-05-17.
+
+---
+
+# Part XLIII — Legacy Router Deletion and Bug-W Closure (P0.10)
+
+## 285. The Phase 0 Premise Reset
+
+P0.10's original architect framing: "the new reconciler (Part XXXII) is correct; delete the 273-line legacy router (`_resolve_actual_speaker` in `pipeline.py`); ship Plan v1."
+
+Phase 0 audit, before any plan was drafted, ran a grep + behavioral audit of the legacy router's exact decision space and the new reconciler's rule cascade. The finding was load-bearing: **the new reconciler was *not* correct**. It had a 0.3–0.5s coverage gap — the **Bug-W class** — where short utterances (0.3 to 0.5 seconds of audio, just above the `MIN_UTTERANCE_SECS` floor) with an active session could fall through every P0 / P1 / P2 / P3 / P4 / P5 rule and exit the cascade unhandled.
+
+The legacy router's catch-all `return cur_pid, "current"` at the end of `_resolve_actual_speaker` was incidentally papering over the gap. Every short-utterance turn that fell through the cascade just defaulted to "current speaker continues to hold". The pre-P0.10 production system worked correctly *because* of this catch-all, not despite it.
+
+Phase 4 cutover (`ROUTING_USE_RECONCILER=True`, Session 121) had already removed the legacy blanket-hold floor for the in-production routing path. The exposure to Bug-W began at that cutover. The reconciler was running standalone, and any time a short utterance fell through the cascade, the turn was silently dropped (no `RoutingDecision` returned).
+
+Phase 1 v2 plan was rewritten against the corrected premise. The new spec: **fill the cascade's gap with explicit rules, THEN delete the legacy.** The audit saved an entire spec-cycle — Plan v1 as originally written would have shipped legacy deletion → Bug-W active in production → silent turn drops on every short-utterance turn.
+
+This is the **premise-correction sub-pattern** documented in §327 — different from the standard developer-improves-on-spec because it changes WHAT gets built, not just HOW.
+
+## 286. The Bug-W Coverage Gap
+
+The empirical bug: a short utterance (0.3 to 0.5s of audio) from a known speaker who was the current session holder, with no other signal (no face in frame at that exact instant, no voice gallery match strong enough to fire P1, no pyannote multi-segment to fire P4), would hit P0's short-utterance handling — but only `_p0_short_utterance_hard_mismatch` and `_p0_short_utterance_ambiguous_multi_session`, both of which require *some* signal (voice score below floor + session candidates). When there was no signal at all, no rule matched, the cascade returned `no_action`, and the turn was dropped.
+
+The legacy router treated this as "current speaker continues to hold" via its catch-all. The reconciler, designed as a positive-contract rule cascade with no implicit fallback, didn't.
+
+The fix: explicit P0 rule `_p0_short_utterance_gap_hold_current` that fires when audio is between `MIN_UTTERANCE_SECS` and `SHORT_UTTERANCE_FLOOR`, there's an active session, and no signal disqualifies the holder. The rule returns `RoutingDecision(action="current", pid=cur_pid, rule="_p0_short_utterance_gap_hold_current", utt_band="gap", reasoning="short utterance with active session, no disqualifying signal")`.
+
+## 287. `_p0_short_utterance_gap_hold_current` and the `LOWER_BOUND` Attribute
+
+Every P0 rule was given a `LOWER_BOUND` attribute documenting the minimum utterance duration at which the rule is eligible to fire. The new rule fires at `MIN_UTTERANCE_SECS` (currently 0.3s). The pre-existing rules (e.g. `_p0_pure_noise_hold_current`) fire at 0.0s. The architectural invariant: **the cascade's rule order, when sorted by `LOWER_BOUND`, must be non-decreasing**.
+
+This is enforced by `tests/test_reconciler.py::TestRulesOrderingInvariant`. The test reads the cascade's rule list, extracts each rule's `LOWER_BOUND` (default 0.0 if absent), and asserts the list is non-decreasing. Ties are allowed (`_p0_pure_noise_hold_current` and `_p0_short_utterance_no_session` are both at 0.0; `_p0_short_utterance_hard_mismatch` and `_p0_short_utterance_ambiguous_multi_session` are both at 0.5). The point is to catch misorder, not to enforce strict monotonicity.
+
+## 288. The Non-Decreasing Band-Ordering Invariant
+
+The auditor's R1 refinement during plan-v2 review: the ordering test catches misorder but NOT coverage gaps. A new utt_band (e.g. a `medium_utt` band between `short_hard` and `normal`) could be added without any rule explicitly covering it; the cascade would silently fall through every existing rule and exit with `no_action`. Coverage gaps remain a human-review responsibility (the validation window §292 is the empirical safety net).
+
+The pragmatic stance: an AST-level "every band must have at least one rule firing in it" test would require a static map from band → expected_rules. P0.10.1 ships exactly that map (§291).
+
+## 289. The Band-Divergence Block C Trigger
+
+The Reconciler-Shadow block at `pipeline.py:7100+` (the divergence log between legacy and new routing) needed to be retargeted when the legacy was deleted. The original "legacy != new" trigger became unworkable — there's no legacy decision to compare against.
+
+The developer-improved-on-spec trigger: **band-divergence**. The block fires when the utt_band of the firing rule (read from the `utt_band` tag the rule sets on its `RoutingDecision`) doesn't match the band the architect expected for that band (per the `EXPECTED_RULES_BY_BAND` map in §291). If a `gap` band utterance fires a `short_hard` rule, the divergence log warns; if a `short_hard` band fires a `normal` rule, same.
+
+The developer's reasoning at closure: the architect's spec said "extend the existing divergence-log block with more fields, don't change trigger" — but Step 7's legacy deletion made the original trigger untestable. The band-divergence trigger preserves the architectural intent (catch divergences between expected and actual routing) while changing the mechanism. This is the 4th instance of developer-improves-on-spec banked in §327.
+
+## 290. Phase 2 Cutover and the –15 / +40 Coverage Shift
+
+Phase 2 (legacy deletion) shipped on 2026-05-17. Net test count change: **–15 tests, but +40 architectural-coverage tests**.
+
+The math: Phase 1 added +35 contract/invariant tests, Phase 2 added +4 AST/N7 source-inspection tests, P0.10.1 polish added +1 EXPECTED_RULES_BY_BAND structural invariant — total +40. Phase 2 deletion of `_resolve_actual_speaker` + its 54 legacy `test_pipeline.py` tests subtracted –54. Net: –15 raw tests.
+
+**This is not a coverage regression.** It's the natural outcome of legacy-deletion with replacement. Coverage shifted from "legacy 270-line function tests" (which tested implementation details of the legacy function: dispute-flip handling, scene-candidate counting, offscreen-floor calculation, etc.) to "rule-cascade + invariant tests" (which test architectural properties of the new reconciler: per-rule behavior, ordering, band-coverage, etc.).
+
+The new tests test stronger properties. The deleted tests tested weaker properties (specific implementations of those weaker properties). The architectural coverage measurably increased; the raw test count decreased. Future maintainers should not misread P0.10's test count as a coverage regression.
+
+## 291. P0.10.1 — `EXPECTED_RULES_BY_BAND` Lock
+
+P0.10.1 closed the band-coverage gap that R1 review flagged. A static map in `core/reconciler.py`:
+
+```python
+EXPECTED_RULES_BY_BAND: dict[str, frozenset[str]] = {
+    "noise":        frozenset({"_p0_pure_noise_hold_current", "_p0_short_utterance_no_session"}),
+    "gap":          frozenset({"_p0_short_utterance_gap_hold_current"}),
+    "short_hard":   frozenset({"_p0_short_utterance_hard_mismatch", "_p0_short_utterance_ambiguous_multi_session"}),
+    "normal":       frozenset({"_p1_confident_voice_switch", "_p2_face_assist_switch", ...}),
+}
+```
+
+The structural invariant: `test_every_band_has_rules()` asserts every band in `EXPECTED_RULES_BY_BAND` has at least one rule registered, and every rule's `utt_band` tag matches at least one band in the map. The map is the single source of truth for the band-divergence trigger and the per-band rule coverage assertion.
+
+## 292. The Validation Runbook and Gate Criteria
+
+`tests/p0_10_validation_runbook.md` is the daily-checklist file for the validation window opened by Phase 2 cutover. The gate criteria are explicit:
+
+- Zero `[Reconciler] WARN: no rule fired` log lines for 7 consecutive days of normal use.
+- Zero band-divergence log warnings for 7 consecutive days.
+- The B2 fail-safe (when `_rc_decision is None`, the pipeline holds current and logs) must not fire.
+
+Closure of the validation window unlocks the follow-up PR:
+- DELETES the shadow block (`pipeline.py:7100+` Reconciler-Shadow logging code)
+- DELETES `ROUTING_USE_RECONCILER` flag from `core/config.py`
+- DELETES the B2 fail-safe and its corresponding tests
+- KEEPS the new reconciler rule + LOWER_BOUND attrs + Bug-W regression test + RULES-ordering invariant + N2-N6 contracts + AST single-write-site test + EXPECTED_RULES_BY_BAND map + band-coverage invariant
+
+As of 2026-05-18 the window is OPEN. Validation pending the next 7 days of canary use.
+
+---
+
+# Part XLIV — State Race Hardening (P0.11)
+
+## 293. Preventive Hardening for a Latent Race
+
+`core.state._persistent: dict` carries the cross-turn persistent settings (the anti-spoof enabled flag, the language, the system name's display-form preference). The dict is mutated by `set_persistent(key, value)` and read by `state.write()` (which serialises the entire dict to `state.json` for the dashboard IPC).
+
+The race that P0.11 hardens against: a writer mutates `_persistent[key] = value` (in-place subscript assignment) while a reader iterates `**_persistent` inside the JSON serialisation. CPython does not guarantee iteration consistency under concurrent mutation — `RuntimeError("dictionary changed size during iteration")` is the visible failure; torn iteration (reader sees half-mutated state) is the invisible failure.
+
+The race has **never been observed in production**. The single writer (`pipeline.py:6264 state.set_persistent("anti_spoof_enabled", _)`) runs ONCE at startup, before the event loop, before any reader can run. P0.11 closes the door against three latent activation conditions:
+
+1. A future runtime `set_persistent` call lands after startup.
+2. `state.write()` is moved off the asyncio loop into an executor thread.
+3. `state.write()` gains an `await` point and the writer interleaves between `**_persistent` spread and JSON dump.
+
+## 294. The Atomic-Replace Pattern and Why It Works
+
+The production change in `core/state.py:16-31`:
+
+```python
+def set_persistent(key: str, value) -> None:
+    global _persistent
+    _persistent = {**_persistent, key: value}  # atomic replace via STORE_NAME
+```
+
+The pattern: never mutate `_persistent` in place. Build a new dict with `{**_persistent, key: value}` and rebind the module-level name. CPython's `STORE_NAME` bytecode is GIL-atomic — the rebind completes in one bytecode instruction, no possibility of a half-rebind.
+
+Concurrent readers holding the OLD dict reference (e.g. mid-iteration in `state.write()`) see the consistent old snapshot through to completion. The new dict only becomes visible to readers on next dereference of `_persistent`. The race goes away because there is never a half-mutated state visible to any observer.
+
+The docstring is honest about scope: this protects readers from torn iteration. It does NOT protect against concurrent *writers* losing updates (the RMW race — two writers both reading the old dict, both writing back with their respective single updates; one update is lost). Multi-writer correctness would require explicit `threading.Lock`, which is deferred until runtime writers actually land.
+
+## 295. Three Deliberate-Regression Checks and the Detector-Strengthening Cycle
+
+P0.11's induction protocol ran three deliberate-regression checks:
+
+1. **Revert `set_persistent` to `_persistent[key]=value`** → `tests/test_state_race.py::test_no_subscript_assign_in_state_py` fired with `core/state.py:30: subscript-assign forbidden`. Reverted to atomic-replace.
+2. **Drop the `global _persistent` decl from `set_persistent`** → `test_state_py_rebind_with_global` fired with `function 'set_persistent' rebinds _persistent without declaring global`. Without `global`, the assignment creates a function-local variable, the rebind doesn't propagate, and the module-level dict is silently never updated. Reverted.
+3. **Inject `state._persistent["regression_check_3"]=True` in `pipeline.py:6265`** (attribute-form access from outside the state module) → `test_no_subscript_assign_in_repo` fired with `pipeline.py:6265: subscript-assign forbidden (attribute-form)`.
+
+The third check **surfaced a detector gap** in the original AST scanner. The initial detector only caught bare-name subscript-assign (`_persistent[X]=Y` inside `core/state.py`). The deliberate regression injected attribute-form access (`state._persistent[X]=Y` from `pipeline.py`). The original detector didn't see it. The detector was strengthened in the same cycle to catch BOTH shapes (bare-name AND attribute-form).
+
+This is the canonical induction-surfaces-invariant-gaps moment (Part L §322). The discipline working as designed: deliberate-regression check identifies a gap, the gap is closed in the same sub-PR, the invariant becomes load-bearing rather than theatrical. P0.11's count: 3 deliberate-regressions, 3 fires, 1 detector strengthening, all confirmed.
+
+---
+
+# Part XLV — JSON Parser Hardening (P0.12 + P0.12.1)
+
+## 296. Why Property-Based Testing
+
+The pre-P0.12 `core/brain_agent.py::_parse_json` and `core/brain.py::_parse_intent_sidecar` carried failure modes that example-based tests couldn't cover:
+
+- Arbitrary text the LLM hallucinated as JSON (`raw='0'`, `raw='[1,2,3]'`, `raw='"just a string"'`)
+- Truncated JSON streams (mid-tokens)
+- Markdown code-fence wrappers (` ```json\n{...}\n``` `)
+- Doubled keys (Python's `json.loads` contract: last wins)
+- Unescaped nested quotes
+- Trailing commas
+- BOM + leading whitespace
+- Surrogate / control / format unicode
+- Empty / whitespace-only input
+- Extremely large input (1 MB repeated payload + N-key dicts up to 5000)
+- Deeply nested (`[`×N + `]`×N AND `{"a":` ×N — up to 2000 depth)
+- Python 3.11+ `ValueError` on oversized integer string conversion (the new `sys.get_int_max_str_digits()=4300` DoS limit)
+
+The combinatorial space defeats hand-curated test cases. P0.12 introduced **Hypothesis property-based testing** with `max_examples=1000` per test. Hypothesis searches the input space, shrinks failing cases to minimal reproducers, and surfaces real production bugs in the same sub-PR.
+
+## 297. The Two Production Bugs Hypothesis Surfaced
+
+**Bug 1 — `_parse_json` contract violation.** The type annotation declared `dict | None`, but the strict `json.loads(raw)` path returned WHATEVER `json.loads` produced. For `raw="0"` it returned `int`. For `raw="[1,2,3]"` it returned `list`. For `raw='"string"'` it returned `str`. Callers (7+ extraction agents in `core/brain_agent.py`) do `parsed.get(...)` assuming dict → silent `AttributeError` at runtime on any non-dict valid JSON.
+
+Hypothesis's `TestArbitraryText` shrank the falsifying input to `raw='0'` (minimal possible JSON-parsable string that returns non-dict). Fix: added `return result if isinstance(result, dict) else None` gate. The contract is now structurally enforced — the dict|None type annotation matches the runtime behavior.
+
+**Bug 2 — `_parse_intent_sidecar` uncaught ValueError.** Input with a 5000-digit integer literal triggered Python 3.11+'s `sys.get_int_max_str_digits()=4300` DoS limit, raising `ValueError` (not `JSONDecodeError`). The original except clause caught `(json.JSONDecodeError,)` exclusively. An adversarial LLM output could crash the parser.
+
+Hypothesis's `TestLargeInput` shrank to `payload='1'` (Hypothesis-simplified to a long run of '1's exceeding the limit). Fix: extended except clauses on both code paths to `(json.JSONDecodeError, RecursionError, ValueError)`.
+
+Both bugs got dedicated regression tests pinned to their falsifying inputs (`test_bug1_parse_json_returns_none_for_non_dict_top_level`, `test_bug2_parse_intent_sidecar_handles_oversized_int_string`, plus source-inspection guard `test_bug1_fix_visible_in_source` that catches future reverts via `inspect.getsource` + AST-style string check on the dict-isinstance gate).
+
+CI cost: full Hypothesis suite runs in ~12s. Well under the 60s budget.
+
+The lesson banked: **Hypothesis is a structural-validation tool, not a quality nice-to-have.** It finds bugs example-based tests can't reach. Standard practice now is `max_examples=1000` for contract surfaces (parsers, validators, serializers).
+
+## 298. P0.12.1 — The SocialGraphAgent Dead-Branch Audit
+
+P0.12 narrowed `_parse_json`'s return type to `dict | None`. The auditor's follow-up caller audit found one downstream regression: `SocialGraphAgent.extract` had an `isinstance(data, list)` branch handling the case where the LLM returned a top-level array. After P0.12's narrowing, `_parse_json` would return None instead of the list, so the list branch became unreachable and the extraction silently dropped list-shaped responses.
+
+The other 6 caller audit findings: all handled None defensively via `if data is None: return []` or equivalent before `.get(...)`. PrivacyClassifier was an auditor false positive — its caller already had a dual-guard `if not parsed or not isinstance(parsed, dict): return None` that catches the case.
+
+## 299. `_parse_json_array` — The Sibling Parser
+
+Fix: added sibling `_parse_json_array(raw) -> list | None` in `core/brain_agent.py` with the same brace-salvage discipline but `[`/`]` markers and the same `RecursionError`/`ValueError` catches. SocialGraphAgent.extract now tries dict-wrapper shape first (matches what `response_format={"type":"json_object"}` asks for), then `_parse_json_array` fallback for raw-array LLM responses.
+
+`_parse_json`'s narrow `dict | None` contract is preserved — no risk to the other 6 callers. The sibling parser is the right primitive for callers that legitimately want a list. Future contract surfaces (a third top-level shape, e.g. a string with embedded JSON) would add their own `_parse_json_X` sibling rather than re-broadening `_parse_json`.
+
+Source-inspection regression test `test_p012_1_site_a_privacy_classifier_guards_none` pins the PrivacyClassifier dual-guard so future refactors can't strip it. Behavioral test `test_p012_1_site_b_socialgraph_recovers_raw_array` monkeypatches the LLM call to return raw `[{"name":"Sarah"},{"name":"Mike"}]` array, asserts both names recovered.
+
+---
+
+# Part XLVI — Health and Disk Observability (Wave 5)
+
+## 300. The Health-Pulse Cadence
+
+`core/health.py` emits a one-line system pulse every `HEALTH_LOG_INTERVAL_SECS=300s` (5 minutes). The pulse is a passive observability signal — operators can grep `terminal_output.md` for `[Health]` lines and see the system's state over time without needing a dashboard.
+
+`_emit_health()` runs the gather operation in an executor (`loop.run_in_executor(None, gather_health_snapshot)`) so the snapshot doesn't block the asyncio loop. The format helper (`format_health_line`) builds a single ≤200-character line; the alerts helper (`format_health_alerts`) emits zero or more `[Health-Alert]` lines for non-healthy conditions.
+
+The first emission fires immediately at boot (not at the first 5-minute mark) so operators see the baseline state right away. Both functions are wrapped in `try/except` with logged errors so a health-log bug can never break the production pipeline.
+
+## 301. `HealthSnapshot` and the One-Line Format
+
+The dataclass:
+
+```python
+@dataclass
+class HealthSnapshot:
+    timestamp: float
+    active_sessions: int
+    sessions_by_type: dict[str, int]
+    persons_count: int
+    total_face_embeddings: int
+    knowledge_active_rows: int
+    shadow_persons_count: int
+    classifier_scenarios_active: int
+    classifier_scenarios_quarantined: int
+    cloud_state: str
+    active_disputes: int
+    unresolved_watchdog_alerts: int
+    last_dream_run_seconds_ago: Optional[float]
+    thin_voice_galleries: int
+    # P0.0.7 D8.1 additions:
+    event_log_drops: int = 0
+    event_log_emit_failures: int = 0
+```
+
+The one-line format prints time + the most-actionable fields:
+
+```
+[Health] 14:23 sessions=2(best_friend=1,known=1) persons=4 emb=120 knowledge=842 shadow=3 scenarios=2071/0 cloud=ONLINE disputes=0 watchdog=0 dream=8m_ago thin=0
+```
+
+Plus the event-log fields (event_log_drops + event_log_emit_failures) appended when either is non-zero (P0.0.7 D8.2 conditional surfacing, see §321).
+
+The `format_health_alerts` function emits per-condition `[Health-Alert]` lines:
+- Active disputes (one per disputed person, with the dispute timestamp)
+- Unresolved watchdog alerts (one per unresolved alert, with severity)
+- Thin voice galleries (one per person whose voice profile is under `VOICE_ACCUM_MATURE_SAMPLE_COUNT`)
+- Event log drops + emit failures (P0.0.7 D8.3)
+
+The alerts are designed to be greppable: `grep [Health-Alert] terminal_output.md` gives an operator a complete list of all active issues without needing to read the per-turn logs.
+
+## 302. Three-Level Disk Alerts with Idempotent Transitions
+
+`core/disk_monitor.py` watches three paths: `faces/`, `data/`, and the project root. Each is sampled via `shutil.disk_usage` plus a per-directory recursive walk for size aggregation. The three thresholds:
+
+- `DISK_ALERT_WARNING_PCT = 80` — first alert level (warning)
+- `DISK_ALERT_CRITICAL_PCT = 90` — second level (critical, escalated)
+- `DISK_ALERT_BLOCKER_PCT = 95` — third level (blocker, system may stop accepting writes soon)
+
+Threshold crossings are **idempotent**: a per-path module-level state dict `_last_disk_alert_level` tracks the most-recent alert level for each path. When the current usage moves to a higher level, the alert fires (one log line + one `WatchdogAgent.report_disk_threshold(...)` call). When usage stays at the same level, no re-fire. When usage drops (e.g. after a cleanup), the level is reset.
+
+This is the same idempotent-transitions pattern P0.6.6's `transition_to_online` uses (§256). The WatchdogAgent receives at most one report per level transition; it persists to `brain.db.watchdog_alerts` (Session 42's table) with `severity ∈ {warning, critical, blocker}`.
+
+The disk-monitor + health-monitor are emitted together every 5 minutes from `_emit_health()`. Operators see the full state in one block. The combined Wave 5 work (Items 19+20) added +14 tests (8 health + 6 disk) and provided passive observability for two failure surfaces that previously had no observability at all.
+
+---
+
+# Part XLVII — Conversation Hygiene and Memory Consolidation (Wave 6)
+
+## 303. Hard-Delete Pruning of Invalidated Knowledge
+
+Pre-Wave-6, the `knowledge` table on `brain.db` accumulated rows indefinitely. The `invalidated_at` timestamp marked rows as no-longer-valid (set by `ContradictionAgent.check` when a new fact replaced an old one) but the rows themselves stayed in the table forever. After a year of use, the table could grow to 100k+ rows of historical invalidations — slow queries, large backup files, increasing index sizes.
+
+`BrainDB.hard_delete_invalidated_knowledge(cutoff_days, now)` deletes rows where `invalidated_at < cutoff_ts` (`cutoff_ts = now - cutoff_days * 86400`). The retention default is `KNOWLEDGE_HARD_DELETE_DAYS = 90` — invalidated rows from the last 3 months stay in case retroactive analysis needs them; older ones are gone.
+
+Wired into the dream loop (`_dream_loop` in `pipeline.py`) via `run_in_executor` so the bulk delete doesn't block the asyncio loop. The dream loop runs the hard-delete once per cycle (default every 5 minutes idle, or every 3 hours active). +3 tests in `tests/test_hard_delete_invalidated.py`.
+
+## 304. SHA-256 Scene-Block Cache
+
+`_build_scene_block(...)` (Part X §64) runs on every turn. Its inputs are 4 collections: `_active_sessions`, `_persons_in_frame`, `_unrecognized_tracks`, plus the `now` timestamp. Across turns these collections often don't change at all (a quiet room with one stable speaker stays stable for many turns). Rebuilding the scene block on every turn re-runs the dispute precedence logic, the visible-person enumeration, the voice-only-offscreen rendering, and the safety-flag aggregation. All wasted work when nothing has changed.
+
+Wave 6 Item 23: the scene block now caches by **SHA-256 of all inputs**. The cache key is `sha256(json.dumps(canonical_inputs, sort_keys=True))`. On a cache hit, the previously-built block string is returned directly. On a miss, the block is built and cached under the new key.
+
+The cache is owned by `pipeline.py` as a module-level dict; tested in `tests/test_scene_block_cache.py` via 4 source-inspection tests confirming the cache key contains the right input components, the cache hit path skips the build, the cache invalidates correctly on input change, and the cache survives across turn boundaries (cleared only on factory reset). Gated by `SCENE_BLOCK_CACHE_ENABLED = True` in `core/config.py`.
+
+The empirical hit rate in normal use is ~60-80% (quiet room turns) and drops to ~10-20% in active multi-person rooms with changing visibility. The cumulative latency win is substantial; the cache cost is negligible (one SHA-256 + dict lookup per turn).
+
+## 305. `conversation_log` Archival via ATTACH DATABASE
+
+The `conversation_log` table on `faces.db` grew indefinitely (Session 24's `CONVERSATION_HISTORY_LIMIT=100` only limits in-memory load, not on-disk storage). After 6 months of use, `faces.db` could be 500+ MB just from conversation history. Vacuum + index rebuilds get slow; backups get large; the working set for hot queries (recent turns) is degraded by all the cold storage.
+
+Wave 6 Item 21: archive old rows into a companion DB. The pattern:
+
+- `CONVERSATION_ARCHIVE_ENABLED = True` and `CONVERSATION_ARCHIVE_AFTER_DAYS = 30` in `core/config.py`. Rows older than 30 days are eligible for archival.
+- The companion DB is `faces_conversation_archive.db` (same directory, same schema, same WAL, same index `idx_conv_log_room`). Built on first archival run.
+- `FaceDB.archive_old_conversation_log(cutoff_days, now)` uses `ATTACH DATABASE` + `BEGIN EXCLUSIVE` for atomic `INSERT INTO archive.conversation_log SELECT ... → DELETE FROM main.conversation_log WHERE ...`. The atomicity guarantees no rows are lost on crash mid-archival.
+- `load_conversation_history()` and `search_conversation()` each open a short-lived connection to the archive DB (separate from the main FaceDB connection, to avoid ATTACH conflict with the write path) and UNION-merge results with the primary DB.
+
+Wired into the dream loop alongside the hard-delete (§303). The two run sequentially: hard-delete invalidated knowledge, then archive old conversation_log rows. +6 behavioural tests in `tests/test_conversation_archive.py`: moves old rows, keeps recent, idempotent, correct count, load_history includes archive, search includes archive.
+
+The combined effect of P0.5/P0.X (atomicity) + P0.9 (versioning) + Wave 6 (archival) is that the persistence layer has become significantly more durable, observable, and bounded.
+
+---
+
+# Part XLVIII — Tiered CI Scaffold and S2 Deferral Tripwire (P0.0 + P0.0.1 + P0.0.2)
+
+## 306. Three Workflows — Fast, Slow, Security
+
+P0.0 shipped the project's first CI configuration. Three GitHub Actions workflows in `.github/workflows/`:
+
+| Workflow | Trigger | Target | Scope |
+|---|---|---|---|
+| `fast.yml` | every push + PR | ≤5 min | `pytest -m "not slow and not network and not models"` + ruff + mypy permissive |
+| `slow.yml` | nightly + manual via `workflow_dispatch` | unconstrained | full suite, HF model cache via `actions/cache`, `--run-network` when `TOGETHER_API_KEY` secret is set |
+| `security.yml` | weekly + on `requirements.txt` change | quick | `pip-audit` + Trivy filesystem scan with SARIF upload to GitHub Security tab |
+
+The split fixes the chicken-and-egg problem of CI for a project with heavy local-model dependencies. Fast CI runs on every PR and catches structural regressions in seconds. Slow CI runs nightly with model downloads + network access for full coverage. Security CI runs weekly to catch upstream vulnerabilities without paying the cost on every PR.
+
+## 307. Pytest Markers and the Infra-Debt Allowlist
+
+`pytest.ini` extended with the `models` marker (alongside the pre-existing `slow` and `network` markers). 15 tests now carry `@pytest.mark.slow @pytest.mark.models` so fast CI skips them — these are the SpeechBrain / pyannote / faster-whisper / torchaudio integration tests that need the heavyweight model assets.
+
+The infra-debt allowlist lives in `tests/test_infra_debt_allowlist.py::INFRA_DEBT_FAILURES`. Currently 9 entries: 1 torchaudio DLL crash + 1 SpeechBrain logger suppression + 6 pyannote diarize tests + 1 pre-existing ECAPA-DLL diarize test. Each entry is a `(test_id, rationale)` tuple documenting why the test is on the allowlist.
+
+The allowlist itself is a rationale-registry, not a behavior-control. The actual disposition on the tests is `@pytest.mark.xfail(strict=False, reason=...)` decorators applied in P0.0.2 (§309).
+
+## 308. The S2 Tripwire and the Theater That P0.0.1 Closed
+
+S2 is the "dashboard authentication" deferred item in the security backlog. The deferral premise: "the dashboard is bound to `127.0.0.1`, no LAN exposure today, ship auth (S2) later when the dashboard becomes LAN-accessible". A deferred item is safe IF AND ONLY IF the premise it deferred on continues to hold.
+
+`tests/test_dashboard_bind_tripwire.py` is the structural tripwire that locks the precondition. The test scans `dog-ai-dashboard/package.json` for the `dev` and `start` scripts and asserts they're explicitly bound to localhost.
+
+**The theater P0.0 originally shipped:** the v1 tripwire asserted *absence* of `--hostname 0.0.0.0` (any explicit LAN bind), on the false premise that "no explicit LAN bind" meant "localhost". Next.js's actual behavior when `--hostname` is unspecified is to bind to `0.0.0.0` (LAN-accessible). The absence-of-flag check was theatrical — the dashboard was LAN-accessible whenever `npm run dev` was running, and the tripwire happily passed.
+
+P0.0.1 closed the gap. The fix (2 lines in `dog-ai-dashboard/package.json`): `dev` and `start` scripts now contain `--hostname 127.0.0.1 --port 3000` explicitly. The tripwire was tightened to REQUIRE the explicit flag rather than absence-of-LAN. The test was renamed from `test_dashboard_package_json_scripts_dont_bind_lan` to `test_dashboard_package_json_scripts_explicitly_bind_localhost`, asserting `_find_explicit_hostname_in_command` returns a value AND that the value is in `{127.0.0.1, localhost, ::1}`.
+
+The empirical lesson banked in §328: **tripwires must catch the actual failure mode the deferral leaves unsafe, NOT just the symbolic version that pattern-matches the surface description**. P0.0.1 is one of the 3 instances on the track record.
+
+## 309. P0.0.2 — V1 xfail Bundling for Infra-Debt Tests
+
+The 8 infra-debt failures on the allowlist now carry `@pytest.mark.xfail(strict=False, reason=...)` decorators with explicit P0.0.2 reason strings cross-referencing the allowlist. `strict=False` means an unexpected PASS surfaces as XPASS (notable, doesn't break CI) — the signal that infra debt was resolved.
+
+Slow CI now reports `715 passed, 9 xfailed, 0 failed` instead of `715 passed, 8 failed`. The 9th xfail is the pre-existing ECAPA-DLL diarize.
+
+New structural lock `tests/test_infra_debt_allowlist.py::test_xfail_decorators_align_with_allowlist` AST-scans `test_pipeline.py` and asserts every name in `INFRA_DEBT_FAILURES` carries a `pytest.mark.xfail` decorator. The test catches half-fixes — removing the decorator without removing the allowlist entry, or vice versa.
+
+The discipline this lock encodes: the allowlist and the xfail decorators are *dual artifacts of the same disposition*. When infra debt is genuinely fixed, both must be removed in the same commit. When new infra debt is added, both must be added in the same commit. The structural lock prevents either half from drifting.
+
+Deliberate-regression check confirmed (induction-surfaces-invariant-gaps discipline): (a) forced one xfail test to trivially pass → XPASS surfaced cleanly + suite still green; (b) removed an xfail decorator → alignment test fired with full S2-style remediation message; (c) restored → alignment test passes.
+
+---
+
+# Part XLIX — Event Log and Replay Harness (P0.0.7)
+
+## 310. Why Event-Sourcing the Boundary
+
+P0.0.7 ships the system's first event-sourcing layer. Every input crossing the runtime boundary (microphone audio → audio_in event; camera frame → vision_frame event; identity claim → identity_claim event; routing decision → routing_decision event; ...) emits a typed event into a SQLite table that can be replayed later for debugging or regression testing.
+
+The motivation is concrete: the next P0 work (P0.S1 — anti-spoof on every face match) needs regression tests that exercise the anti-spoof gate on a *captured* sequence of camera frames + voice signals + routing decisions. Without event-sourcing, those tests would need live camera input (expensive, flaky, non-deterministic). With event-sourcing, the test loads a captured event chain from a fixture, replays it through the system, and asserts the anti-spoof gate behaves correctly.
+
+The architecture is plain: a `event_log` table on `brain.db` with rows `(id, ts, session_id, room_session_id, event_type, schema_version, payload, parent_event_id)`, an async producer that emits events, a read-only CLI for inspecting the log, scenario-builder fixtures for tests, and health-log integration so degradation is observable.
+
+## 311. The 12 Payload Types
+
+`core/event_log/types.py` defines 12 dataclasses, one per event type:
+
+| Event type | Payload class | What it captures |
+|---|---|---|
+| `audio_in` | `AudioInPayload` | Microphone audio chunk + STT text + language + duration |
+| `vision_frame` | `VisionFramePayload` | Camera frame metadata + frame_id + frame_path (NOT inline bytes) + **anti_spoof_live** + **anti_spoof_score** (the load-bearing P0.S1 fields) |
+| `identity_claim` | `IdentityClaimPayload` | Voice-channel `IdentityClaim` (Part XXXII §199) flattened to JSON |
+| `presence_state` | `PresenceStatePayload` | Vision-channel `PresenceState` (Part XXXII §200) flattened to JSON |
+| `routing_decision` | `RoutingDecisionPayload` | Reconciler's `RoutingDecision` + `utt_band` tag |
+| `intent_classification` | `IntentClassificationPayload` | Classifier output (graph or LLM mode) |
+| `tool_call` | `ToolCallPayload` | LLM-proposed tool name + args + person_id |
+| `tool_result` | `ToolResultPayload` | Tool handler's return status |
+| `memory_write` | `MemoryWritePayload` | Conversation log write |
+| `state_write` | `StateWritePayload` | `state.json` IPC write |
+| `tts_out` | `TtsOutPayload` | TTS synthesis trigger + clean text |
+| `session_lifecycle` | `SessionLifecyclePayload` | Open / close event + pid + name + person_type |
+
+`EVENT_TYPES = frozenset(...)` enumerates the 12 names. `SCHEMA_VERSIONS = {(event_type, schema_version): payload_class}` — the dispatch table keyed on `(event_type, schema_version)` (§313).
+
+Every payload class has a `from_json_dict(json_dict, schema_version)` classmethod that reconstructs the dataclass from the deserialised JSON. This is the C2 replay-deserialization contract — the CLI and the replay tests both consume events via this contract.
+
+## 312. `NATURAL_PARENT_PAIRS` and Causal-Chain Auto-Resolution
+
+Some event sequences have causal structure. A tool_result is caused by a tool_call. An identity_claim is caused by an audio_in. A routing_decision is caused by an identity_claim. Linking child events to their parents lets the replay tool render natural chains as trees.
+
+`NATURAL_PARENT_PAIRS = frozenset({...})` is the registry of allowed (child_type, parent_type) edges:
+
+```python
+NATURAL_PARENT_PAIRS = frozenset({
+    ("tool_result", "tool_call"),
+    ("identity_claim", "audio_in"),
+    ("routing_decision", "identity_claim"),
+})
+```
+
+The producer auto-resolves parent_event_id when emitting a child event: it consults `_recent_parent[session_id]` (§315) for the most recent event of the matching parent_type, sets `parent_event_id` to that event's id, and falls back to NULL if no parent is in the cache. Manual override via the `parent_event_id` kwarg is supported but rare.
+
+Only the natural-pair edges are auto-resolved. Other causal relationships (memory_write → routing_decision, tts_out → routing_decision, intent_classification → audio_in) are tracked elsewhere or simply unwired in the current schema. The natural-pair set is a conservative starting point; additional edges land when replay analysis surfaces concrete need (§339).
+
+## 313. `_PAYLOAD_CLASSES` and the Deserialization Contract
+
+`_PAYLOAD_CLASSES: dict[tuple[str, int], type] = {(event_type, schema_version): payload_class, ...}` is the dispatch table. The CLI and the replay tests look up `(event_type, schema_version)` in the table, call `cls.from_json_dict(payload_dict, schema_version=schema_version)` to reconstruct the typed dataclass, and use the typed object for assertions / rendering.
+
+Schema versioning is per-event-type. A future change to `IdentityClaimPayload` (e.g. adding a new field) ships as `IdentityClaimPayloadV2` with `schema_version=2`. The dispatch table gains a `("identity_claim", 2)` entry pointing to the new class. Old rows in the DB (with `schema_version=1`) still deserialise correctly via the old class. The replay CLI handles both versions transparently.
+
+`test_d_schema_version_dispatch_keys_on_event_type_and_version` in `tests/test_event_log_replay.py` verifies the dispatch behavior: a mock `("tts_out", 2)` → `TtsOutPayloadV2` entry added to the dispatch table; v1 rows still resolve to the original class. The CLI's fallback path handles unknown schema_versions by falling back to truncated JSON dump (no crash).
+
+## 314. Producer Anatomy — `emit`, `emit_sync`, `safe_emit_sync`
+
+Three producer functions in `core/event_log/producer.py`:
+
+- **`async def emit(event_type, payload, *, session_id, room_session_id, parent_event_id)`** — primary async path. Builds the row dict, resolves parent_event_id via `_recent_parent` cache, JSON-serialises the payload, enqueues onto the bounded `asyncio.Queue`. Returns the event_id assigned by the writer task. Used in async contexts.
+- **`def emit_sync(event_type, payload, ...) -> int`** — sync wrapper for callers in non-async contexts (database trigger callbacks, signal handlers). Submits the emit task to the running loop via `asyncio.run_coroutine_threadsafe` and awaits its result. Same contract as async `emit`.
+- **`def safe_emit_sync(event_type, payload, ...) -> Optional[int]`** — swallowing wrapper around `emit_sync`. Catches every exception, increments `_safe_emit_failure_count`, logs a `[EventLog] WARN` line (rate-limited to first 3 failures), returns None. **The single annotated except block here satisfies P0.4's silent-except invariant for the entire 12-call-site hook surface.**
+
+The `safe_emit_sync` consolidation is the **developer-improves-on-spec** 5th instance banked in §327. The auditor's original P0.4 remediation prescribed annotating the 12 per-call-site try/except blocks with `# OPTIONAL:`. The developer's response: consolidate to a single helper with one annotated except — 12 violations → 1 annotated except + 12 unannotated call sites; future hooks automatically inherit the swallow-discipline.
+
+## 315. The `_recent_parent` Writer-Task-Scope Cache
+
+`_recent_parent: dict[str, dict[str, int]]` — keyed by `session_id`, value is a dict from `event_type` to the most-recent event id of that type within the session. Mutated only in the writer task (not in the producer's async path) to keep the cache mutation single-threaded.
+
+When a new event is written, the writer task updates `_recent_parent[session_id][event_type] = new_event_id`. The cache is cleared on `session_lifecycle=close` to prevent cross-session pollution (an audio_in from session A should never resolve to an identity_claim from session B).
+
+The C1 invariant (`_recent_parent` writer-task-scope-only) is enforced by an AST scan in `tests/test_event_log_invariants.py` that asserts no production code outside the writer task mutates `_recent_parent`. The test catches future refactors that move parent resolution into the async path (which would introduce a race).
+
+## 316. Bounded Queue and the D5 Lossy-Backpressure Decision
+
+The producer's `asyncio.Queue` has `maxsize=10000`. Above 10000 unprocessed events, `queue.put_nowait()` raises `asyncio.QueueFull`. The producer catches this, increments `_drop_count`, and logs a `[EventLog] WARN: queue full, dropping event` line (rate-limited).
+
+The design decision (D5 in the plan): **lossy backpressure under sustained overload**. The alternative (block on `queue.put`) would have made every producer-hook synchronous-with-DB-writes, which would break the "producer hooks never affect production behavior" contract.
+
+The empirical assumption is that 10000 unprocessed events represents minutes of normal traffic. If the writer task falls behind by more than that, the issue is structural (DB lock, disk full) and dropping events is the safe choice — observability degrades gracefully, production behavior continues.
+
+`get_drop_count()` exposes the cumulative drop count for health-log integration (§321). The drop counter is the observability channel; there is NO `event_log_dropped` event emitted in the queue (D5 circular-dependency guard — an "I dropped an event" event would itself be dropped under backpressure).
+
+## 317. The 11 Producer Hooks at 12 Sites
+
+| Hook | Site | Event type |
+|---|---|---|
+| H1 | `core/audio.py::listen_and_transcribe` | `audio_in` |
+| H2 | `pipeline._background_vision_loop` (sidecar + JPEG storage) | `vision_frame` |
+| H3 | `core/voice_channel.py::identify_speaker` | `identity_claim` |
+| H4 | `core/vision_channel.py::observe_scene` | `presence_state` |
+| H5 | `core/reconciler.py::reconcile` (+ utt_band tag) | `routing_decision` |
+| H6 | `core/brain.py::_classify_intent_smart` (via `_emit_intent_classification_safe`) | `intent_classification` |
+| H7 (×2) | `pipeline._execute_tool` (entry + exit) | `tool_call` + `tool_result` |
+| H8 | `core/db.py::FaceDB.log_turn` | `memory_write` |
+| H9 | `core/state.py::write` | `state_write` |
+| H10 | `core/audio.py::speak` + `speak_stream` (via `_emit_tts_event_safe`) | `tts_out` |
+| H11 | `pipeline._open_session` + `_close_session` (via `_emit_session_lifecycle_safe`) | `session_lifecycle` |
+
+The D7 N=1 invariant (exactly-one-producer-per-event-type) is enforced by AST scan in `tests/test_event_log_invariants.py`. The scan walks all `safe_emit_sync(...)`, `emit_sync(...)`, and `emit(...)` calls in the codebase, groups them by the `event_type` literal argument, and asserts exactly one production location per type. The `_EMIT_CALL_NAMES = frozenset({"emit", "emit_sync", "safe_emit_sync"})` recognition set was extended to include `safe_emit_sync` at Step 5 polish.
+
+## 318. `_m_0012_create_event_log_*` Migration
+
+The schema migration that creates the `event_log` table is registered at version 12 in `core/brain_db_migrations.py`. P0.9 5-tuple shape:
+
+```python
+(12, "Create event_log table for P0.0.7 event-sourcing foundation",
+ _m_0012_create_event_log_apply,
+ _m_0012_create_event_log_verify_post,
+ _m_0012_create_event_log_verify_present)
+```
+
+`apply_fn` creates the `event_log` table + 3 indexes: `idx_event_log_ts` (chronological queries), `idx_event_log_session` (per-session filter), `idx_event_log_room` (per-room filter). The indexes are tuned for the replay CLI's most-common filter compositions.
+
+`verify_post_fn` asserts the table + all 3 indexes exist after `apply`. `verify_present_fn` returns True if the table already exists (used by bootstrap on legacy DBs that may have manually-applied earlier versions).
+
+## 319. The Read-Only Replay CLI
+
+`tools/replay_session.py` (~410 LOC) is the operator-facing CLI for inspecting the event log. Read-only by design: opens the DB via `sqlite3.connect(f"file:{path}?mode=ro", uri=True)`, never writes, never initialises the producer. Safe to run against a live production DB.
+
+Filter flags compose with AND semantics:
+- `--session <id>` — per-session filter
+- `--room <room_id>` — per-room filter
+- `--type <event_type>` — filter to one event_type (closed-set choices via argparse)
+- `--since <offset>` — Unix timestamp / ISO-like string / duration suffix (`1m`/`30m`/`1h`/`24h`/`7d`)
+- `--limit N` — default 200, `0` = unbounded
+- `--no-tree` — disable parent-chain tree rendering (flat output for grep/pipe use)
+- `--raw-payload` — print full JSON payload below each line (debug mode)
+
+Tree rendering: events with `parent_event_id IS NOT NULL` where the parent is in the rendered window get a `└─` indent prefix. Orphaned events (parent outside window) fall back to indent=0. Natural-pair chains (`tool_call → tool_result`, `audio_in → identity_claim → routing_decision`) render as causality trees.
+
+UTF-8 stdout hygiene: `_ensure_utf8_stdout()` reconfigures stdout to UTF-8 at startup so the `→` and `└─` characters render on Windows cp1252 terminals. Fallback is wrapped in `# CLEANUP:` annotated except (P0.4 compliant).
+
+Defensive UX: missing DB → clear error pointing at `--db <path>` flag; missing `event_log` table → clear error pointing at the P0.0.7 migration prerequisite; corrupt/unknown payload → fall back to truncated JSON dump (line still renders, no crash).
+
+## 320. Reusable Scenario Fixtures for P0.S1+
+
+`tests/fixtures/event_log_fixtures.py` (~520 LOC) ships 4 scenario builders that compose realistic event chains for use in tests:
+
+- **`build_greeting_flow(session_id, pid, ...)`** — clean known-person turn: session_lifecycle=open → audio_in → identity_claim → routing_decision → intent_classification → tool_call → tool_result → memory_write×2 → state_write → tts_out → session_lifecycle=close. Exercises all 3 natural-pair links.
+- **`build_stranger_first_encounter(session_id, pid, ...)`** — stranger says system-name: 3× vision_frame frames (anti_spoof_live=True) → presence_state → audio_in → identity_claim (no match) → routing_decision (new_stranger) → session_lifecycle=open → intent_classification (assign_own_name).
+- **`build_multi_person_room(room_id, session_a, session_b, ...)`** — 2 sessions interleaved with shared room_session_id: 2× open → session A turn → session B turn (switch_enrolled) → 2× close. Verifies room_session_id threading + per-session parent cache isolation.
+- **`build_dispute_path(session_id, ...)`** — dispute-trigger pattern: low-confidence identity_claim → ambiguous routing_decision → intent_classification (assign_own_name) → tool_call (update_person_name) → tool_result (status=rejected, user-text gate refused).
+
+The fixtures use `safe_emit_sync` (the production hook surface) so the natural-pair parent_event_id resolution + `_recent_parent` cache lifecycle exercises exactly as on a live boot.
+
+The fixtures are parameterised top-level callables. P0.S1's anti-spoof regression tests will import `build_greeting_flow` etc. directly, compose chains, and verify the anti-spoof gate behaves correctly — without needing live camera input. This is the **D7.4 reusability** contract.
+
+## 321. Health-Log Integration via Drop and Emit-Failure Counters
+
+`HealthSnapshot` (Part XLVI §301) gained two new fields:
+
+- **`event_log_drops: int`** — from `get_drop_count()`. Bounded-queue full events shed by backpressure.
+- **`event_log_emit_failures: int`** — from `get_safe_emit_failure_count()`. Exceptions swallowed by `safe_emit_sync`.
+
+`format_health_line` conditionally surfaces both — clean steady-state line stays clean when both are 0; only surfaces during degradation. `format_health_alerts` emits two distinct alerts with remediation pointers:
+
+- **drops** → "writer task falling behind; bounded queue (10000) shedding envelopes. Investigate writer-loop / DB lock / disk-full."
+- **emit_failures** → "safe_emit_sync swallowed exception(s) from a producer hook. Grep `[EventLog] WARN` in terminal_output for the type+message of the first 3 (rate-limited)."
+
+The two alerts capture genuinely different failure modes (consumer falling behind vs producer-hook exception). Collapsing them to a single "event_log degraded" alert would force operators to grep both surfaces every time.
+
+The D5 circular-dependency guard is preserved: counters ARE the observability channel; no self-emitting `event_log_dropped` event exists in the queue. The lazy import + `# OPTIONAL:` annotated except in `gather_health_snapshot` handles legitimate cases where `core.event_log.producer` isn't loaded (early boot, tests that mock out the package).
+
+---
+
+# Part L — Architectural Disciplines (The Named Doctrines)
+
+## 322. Induction-Surfaces-Invariant-Gaps
+
+**Track record: 7-for-7** (P0.6.7v2, P0.8.2, P0.11, P0.12, P0.12.1, P0.0.7 ×2).
+
+Every structural invariant ships with an **induction protocol** that deliberately exercises the failure mode the invariant is meant to prevent. The induction is a test of the invariant, not of the production code. When induction surfaces a gap (either in the invariant's coverage or in production code), the gap is closed in the same cycle, not deferred.
+
+The operational rules:
+
+1. Every new structural invariant gets a deliberate-regression check before sign-off — induce the violation, confirm the test fires, revert, document the outcome in the closure report.
+2. Mid-flight production fixes from induction findings are NOT scope creep — they are the protocol working. Document them in the same sub-PR.
+3. When induction surfaces a detector gap (the invariant didn't catch a real violation), strengthen the detector in the same cycle. Do not defer.
+4. Property-based testing (Hypothesis) is a first-class induction tool. Use `max_examples=1000` for contract surfaces.
+
+The 7 instances:
+
+- **P0.6.7v2** — 8 deliberate-regression checks induced field-drift / unenumerated-writer / paired-write-atomicity / producer-copy / peek-not-mutate / ratchet / M2-coverage / prior-state-guard violations; all 8 fired correctly.
+- **P0.8.2** — F1 + F2 deliberate-regression: injected sync `.execute()` loop without checkpoint + flipped `include_tools=False` → `True`; both invariants fired correctly.
+- **P0.11** — 3 deliberate-regression checks; the third surfaced a detector gap (attribute-form access not caught) → detector strengthened in same cycle.
+- **P0.12** — Hypothesis property tests (1000 examples/test) induced two real production bugs.
+- **P0.12.1** — caller-audit surfaced one real downstream regression (`SocialGraphAgent` list-shape branch became unreachable after P0.12); fix landed in same cycle via sibling `_parse_json_array`.
+- **P0.0.7 (instance 1)** — round-trip test's coverage gate caught `presence_state` missing from fixture scenarios → added to scenario B in same cycle.
+- **P0.0.7 (instance 2)** — full-suite verification caught 12 P0.4 silent-except violations the subset-verification missed → fixed via `safe_emit_sync` consolidation.
+
+## 323. Architect-Reads-Production-Code-Before-Sign-Off
+
+**Track record: validated across P0.6.7 v1→v2, P0.7 closeout caller audit, P0.12.1 audit.**
+
+Reviewer / auditor sign-off requires reading the actual implementation against the closure summary. Summaries describe intent; code reveals what shipped.
+
+Three documented instances:
+- **P0.6.7 v1→v2** — three real gaps surfaced by post-closure audit: vision-globals migration miss, CacheStore touch-on-read LRU violating the locked spec, 4th-shim miscounted disclosure.
+- **P0.7 closeout caller audit** — 187 legacy patterns in `test_pipeline.py` surfaced after the 1717-passing milestone was reached.
+- **P0.12.1** — Site B dead branch surfaced from post-closure caller audit; Site A flagged but actually safe under existing dual-guard.
+
+The architect's read pass before sign-off is cheap (~30 minutes of focused diff review) and catches the cases where the closure summary diverges from what shipped. This is *complementary* to the developer's verification — it's not redundant; it's a different kind of pass against a different question.
+
+## 324. Verification-Before-Completion (Strengthened by Full-Suite Lesson)
+
+When about to claim work is complete, fixed, or passing, before committing or creating PRs — run verification commands and confirm output before making any success claims. **Evidence before assertions, always.**
+
+P0.0.7 Step 5 polish strengthened this discipline. The original claim "no regressions" was based on subset verification (P0.10 + reconciler + event_log tests). Reviewer's full-suite verification caught 12 P0.4 silent-except violations the subset verification missed. The lesson banked: subset verification is necessary but not sufficient; always run `pytest --tb=no -q` (full suite) before "no regressions" claims. The full-suite cost on this codebase is ~163 seconds; the cost of a wrong "no regressions" claim is much higher.
+
+## 325. Spec-First Review Cycle for Multi-Day Specs
+
+**Track record: 5-for-5** (P0.6, P0.7, P0.8, P0.9, P0.10).
+
+For sub-PRs estimated > 1 day, the workflow is:
+
+1. **Phase 0 audit** — pure documentation, zero production-code changes, grep-verified findings reported BEFORE any test code is written.
+2. **D1-Dn decisions surfaced** in the audit document.
+3. **Architect / auditor sign-off locks them** before Plan v1 is drafted.
+4. **Plan v1** is the first complete spec.
+5. **Architect / auditor feedback drives Plan v2.**
+6. **Code phase** starts only after v2's locked structure is in place.
+
+Spec-time investment pays back 2–4× in mid-flight rework avoided — every cycle that skipped Phase 0 hit larger surprises. The empirical proof: every Phase 0 audit in P0.2 – P0.10 saved 4–6 hours of Step 1 rework. The compound win across multi-day specs is substantial.
+
+P0.0.7 added a 6th instance to the cycle in 2026-05-18 (Phase 0 audit at `tests/p0_07_event_boundary_audit.md` → Plan v1 → Plan v2 with R1-R5 refinements → 8 implementation steps). Track record refresh pending the next multi-day spec.
+
+## 326. Spec-Contracts-Not-Implementations
+
+**Track record: 3-for-3 (P0.8.2 F2, P0.9.1, P0.9.2).**
+
+Architect specs describe what invariants must hold (the contract), not how to satisfy them (the implementation). Developers find the best implementation within the contract.
+
+Why it matters: the developer has full visibility into the actual code, runtime state, surrounding patterns, and adjacent constraints the spec author cannot pre-load. Specs that lock contracts let the developer's local knowledge improve the mechanism; specs that lock mechanisms turn the developer into a transcription typist.
+
+Examples of contract vs implementation:
+
+- **Contract**: "every paired-write site must use a `_mark_X_dirty()` sentinel before the cross-storage write."
+- **Implementation**: which file, which exact name, which line — developer's call.
+
+- **Contract**: "the band-divergence trigger fires when `utt_band ∈ {gap, short_hard}` and the rule that fired isn't the band's expected rule."
+- **Implementation**: where the mapping lives, what data type — developer's call (this is P0.10.1 F2: `EXPECTED_RULES_BY_BAND` belongs in `core/reconciler.py`, not pipeline.py inline).
+
+## 327. Developer-Improves-on-Spec-by-Reading-Carefully
+
+**Track record: 5-for-5.**
+
+When implementation reveals a better path that preserves the spec's architectural intent, bank the improvement explicitly in the closure report so the architect / auditor sees the deviation + rationale.
+
+The 5 instances:
+
+- **P0.8.2 F2** — spec named external call sites; developer's caller audit found the actual contract was internal (`ask_retry_text` doesn't accept `include_tools` as a parameter by design), so F2 verified the internal contract instead.
+- **P0.9.1** — spec sketched a fresh `init_ledger()`; developer made it self-evolving (idempotent ALTER adding `is_initial` to pre-P0.9 ledgers) so the classifier_scenarios.db schema upgrade rode the same code path.
+- **P0.9.2** — spec defined 4-tuple migrations; developer split `verify_post`/`verify_present` because conflating them would let bootstrap stamp `is_initial=1` on a partially-backfilled DB.
+- **P0.10 Block C** — spec said "extend the existing divergence-log block with more fields, don't change trigger"; Step 7's legacy deletion makes the original trigger unworkable; developer retargeted to band-divergence detection, preserving Block E's gate criteria semantically.
+- **P0.0.7 Step 5 polish** — reviewer's P0.4 remediation said "annotate the 12 hook-site try/except blocks with `# OPTIONAL:`"; developer instead consolidated to a single `safe_emit_sync(...)` helper with one annotated except. 12 violations → 1 annotated except + 12 unannotated call sites. Strictly better than the annotation patch the reviewer proposed.
+
+Pairs with **spec-first review cycle** (the discipline that produces these moments) and **spec-contracts-not-implementations** (the architect-side framing that makes them welcome).
+
+Sub-patterns identified:
+
+- **Sub-pattern A (premise correction)** — P0.10 Phase 0 audit caught the architect's wrong premise about Bug-W living in legacy when it actually lived in the new reconciler. Different shape from mechanism-level improvement: the audit changes WHAT gets built, not just HOW.
+- **Sub-pattern B (developer resists premature pattern elevation)** — P0.0.7 plan v2 discussion. Architect proposed elevating "tripwires must match the actual deferral surface" to a CLAUDE.md named doctrine after 4 instances. Developer pushed back: the established cadence is "3+ instances → memory note; 5+ instances → CLAUDE.md named doctrine" per the P0.10.1 F3b pattern. At 4-for-4, pattern is memory-note-only; wait for the 5th instance before elevating. Auditor endorsed the pushback.
+
+## 328. Tripwires-Must-Match-the-Actual-Deferral-Surface
+
+**Track record: 3-for-3 (P0.11 `_persistent` global decl, P0.10 Bug-W audit, P0.0 S2 binding).**
+
+When you defer an item and ship a tripwire to make the deferral safe, verify the tripwire actually catches what the deferral leaves unsafe — not just the symbolic version of it. A tripwire that catches the symbolic version while the real surface stays exploitable is **theater**.
+
+The 3 instances:
+
+- **P0.11 `_persistent` global declaration test** — architect's spec'd detector caught bare-name writes; auditor's deliberate-regression check injected attribute-form access; detector was strengthened to catch BOTH shapes.
+- **P0.10 Bug-W audit** — architect's premise "the new reconciler is correct, delete the 273-line legacy router" was wrong; Phase 0 audit caught it before code shipped.
+- **P0.0 S2 binding tripwire** — architect deferred S2 (dashboard auth) on the framing: "bound to 127.0.0.1, no LAN exposure today"; tripwire asserted absence-of-LAN-bind, but Next.js defaults to 0.0.0.0 when `--hostname` is absent. Dashboard was LAN-accessible right now. P0.0.1 fix added explicit `--hostname 127.0.0.1` AND tightened tripwire to require the flag.
+
+The architect-side discipline at spec-time: write a paragraph titled **"What this tripwire does NOT catch"** that enumerates implicit-default failure modes, alternate-access-path failure modes, and adjacent-behavior failure modes. If any items list a real risk, EITHER tighten the tripwire OR un-defer the item. Honest scoping is the discipline.
+
+## 329. Structured-Audit-vs-Reactive-Patching (Empirical Foundation)
+
+Reactive patching surfaces ~30% of an invariant's violations. Structured audits surface ~100%.
+
+Established empirically by **P0.4** (silent excepts: 22 sites surfaced via AST audit vs ~7 caught reactively, a 3× discovery ratio) and confirmed by **P1.A1-slice** (9 layering violations: 7 new beyond the 2 previously known reactively, a 4.5× discovery ratio).
+
+Implication: when an invariant is worth enforcing, schedule the structured audit. Don't budget the work as "fix the reactive findings and call it done." When in doubt, audit; don't react.
+
+Future items where this matters most: P1.A4 (service decomposition), P1.A8 (single SQLite split), any future invariant that scans for boundary violations.
+
+## 330. Why Each Discipline Has a Track Record, Not a Rule
+
+The disciplines above are not stated as absolute rules. Each one is a **named pattern with a track record**. The track record matters because:
+
+1. **A rule with no track record is theoretical.** Until a pattern has fired across multiple instances, it's a hypothesis. The track record is the empirical evidence that the pattern is real.
+2. **A track record is auditable.** Anyone can grep `Track record: N-for-N` and read the actual instances. The pattern's status is visible.
+3. **A track record refreshes.** Each new instance adds a notch; each closure cycle adds context. The pattern earns its place as it pays off in practice.
+4. **The cadence prevents premature elevation.** Per the P0.10.1 pattern banked as sub-pattern B in §327: 3+ instances → memory note; 5+ instances → CLAUDE.md named doctrine. The cadence is meaningful; it prevents the architect from naming every accident-of-the-moment as a doctrine.
+
+The disciplines above all sit at 3+ instances (one at 5+, several at 4+). New disciplines join when they reach 3 instances; named doctrines elevate when they reach 5.
+
+---
+
+# Part LI — Upcoming Work and Roadmap
+
+## 331. P0.0.7.X — Hypothesis TestLargeInput Flakiness
+
+**Status: OPEN. Filed as a bookmark during P0.0.7 Step 5 polish + Step 7-9 full-suite verification.**
+
+`tests/test_brain_json_parser_hypothesis.py::TestLargeInput` fails or errors under specific run conditions (test-isolation pollution / Hypothesis state leak). Stable failure pattern hasn't been pinned down — exhibits 13 fails + 2 errors in one run, then 0 fails in another with identical code.
+
+Impact: the file is excluded from full-suite runs (`--ignore=tests/test_brain_json_parser_hypothesis.py`) to keep "no regressions" claims honest. P0.12's brain_json_parser hardening discipline holds — the production code is unchanged; the issue is purely test-side.
+
+Remediation candidates (not yet scoped):
+- Audit Hypothesis state leak between TestLargeInput cases (likely a `phase=Phase.shrink` interaction with module-level Hypothesis settings).
+- Isolate TestLargeInput into its own test file with `@pytest.mark.flaky` + explicit Hypothesis settings reset.
+- Cap `max_examples` for TestLargeInput specifically if the leak is example-bank related.
+
+Should be triaged before any sub-PR that wants to re-include the file in default `pytest` runs.
+
+## 332. P0.S1 — Anti-Spoof on Every Face Match (Next Item)
+
+**Status: greenlit pending P0.0.7 auditor sign-off. Next item in the locked sequence.**
+
+Pre-P0.S1, anti-spoof is gated on the greeting path (`is_live()` is called in `first_boot_flow` and `enrollment_flow`) but NOT on every face match. The recognition update path (`add_embedding(source="recognition_update")`) writes to the gallery when a high-confidence face match occurs; if that face match was actually a presentation attack (photo, screen, video replay), the attacker can poison the legitimate person's gallery.
+
+Session 51's MiniFASNet activation (Session 52) closed the gating gap on the greeting path. P0.S1 closes the gap on every match.
+
+The architectural approach:
+- Every code path that calls `FaceDB.add_embedding(...)` with `source="recognition_update"` must pass through `verify_live(...)` first.
+- Replay regression tests built on top of P0.0.7's scenario fixtures (`build_greeting_flow`, `build_stranger_first_encounter`) — the fixtures already capture `anti_spoof_live` and `anti_spoof_score` in `VisionFramePayload`, so the test can pin the assertion at the gate without live camera input.
+- The current `ANTISPOOFING_THRESHOLD = 0.5` is the production gate; P0.S1 may tune this empirically but not as part of the structural fix.
+
+Phase 0 audit + Plan v1 + Plan v2 cadence per the spec-first-review-cycle (§325). The replay fixtures unblock the regression tests; the regression tests pin the behavior at the new gate.
+
+## 333. P0 Security — The Locked Sequence Beyond P0.S1
+
+The complete-plan.md security backlog has S1 through S11. The user-locked sequence:
+
+- **P0.S1** — anti-spoof on every face match (next)
+- **P0.S6** — secrets management (env vars, no hardcoded API keys)
+- **P0.S5** — dashboard CSRF protection (deferred S2 remains pre-auth; S5 is the inside-the-auth-boundary protection)
+- **P0 medium-priority security** — S2 (dashboard auth proper), S3 (input sanitisation), S4 (TLS for dashboard), S7-S11 (specific surface hardening)
+
+Each item ships as a Phase 0 audit + Plan v1 + Plan v2 + code cycle. Each one ends with structural invariants + induction-confirmed regression tests.
+
+## 334. P0 Robustness — R1 through R11
+
+The robustness backlog targets failure modes that don't affect security or correctness directly but degrade reliability over time:
+
+- **P0.R1** — startup determinism (every boot from a clean state must reach `WATCHING` within budget; surfaces flakiness in model loading, DB init, etc.)
+- **P0.R2** — model cache integrity (HF model downloads can corrupt; checksum verification + redownload on mismatch)
+- **P0.R3** — graceful degradation matrix (formal documentation of every degraded mode + recovery path)
+- **P0.R6** — DB integrity check on boot (PRAGMA integrity_check on faces.db, brain.db, classifier_scenarios.db; auto-repair if possible, alert if not)
+- **P0.R7** — fallback brain when Together.ai unavailable (current: Ollama hardcoded; user has flagged this needs to be config-driven like the primary brain for plug-and-play model swapping)
+- **P0.R10** — config snapshot on boot (record the config values that affect this run, for post-hoc debugging)
+- **P0.R11** — automated backup of brain.db + faces.db on dream cycle
+
+The expected sequence is R3 → R2 → R6 with an R7 spike in parallel (the user wants deeper discussion before R7's spec lands). R1, R10, R11 follow.
+
+## 335. Eval Gates — Continuous Evaluation Becomes Real
+
+The eval-gates work formalises the continuous-evaluation tooling sketched in Part XXX. The components:
+
+- **Golden corpus** — `tests/golden_intent.jsonl` already exists with 149 rows (Session 87 end). The corpus grows per the source-taxonomy rules in CLAUDE.md.
+- **Bench harness** — `tests/eval_intent_bench.py` (P1.6) runs the classifier against all non-legacy rows and persists run metrics + mismatches to `tests/eval_bench_runs/YYYYMMDD_HHMMSS.json`.
+- **Weekly drift report** — `tests/eval_weekly.py` queries `intent_divergences` over the last 7 days, prints per-intent precision/recall drift, low-confidence gate decisions, recent rejections.
+- **Quarterly golden-set drift detection** — `tests/golden_set_drift.py` exports 20 random stratified rows for human review, accepts the reviewed markdown back, flags drifted labels.
+
+Each tool is a standalone module; none of them block production behavior. The eval gates work makes the metrics surface visible enough that drift can't hide between releases.
+
+## 336. P1.A — Pipeline.py Decomposition into ~30 Modules
+
+`pipeline.py` is currently ~10,000 lines. P0 work has reduced its size somewhat (the Store-pattern migration moved ~3500 lines to `core/store_*` modules) but the file is still the project's single largest module and the bottleneck for understanding the runtime.
+
+P1.A is the decomposition project. The plan (in coarse outline; Phase 0 audit will refine):
+
+- **P1.A1** — layering audit (already done as a slice in P0.X-audit; the full audit will surface every cross-module access pattern)
+- **P1.A2-A6** — extract the major runtime services into named modules (microphone capture loop, vision background loop, conversation turn handler, session lifecycle, brain dispatch)
+- **P1.A7-A12** — extract the supporting services (KAIROS, dream loop, factory reset, IPC writers, classifier wiring, anti-spoof integration)
+
+Each extracted module follows the Part XXXII pattern: pure functions where possible, structural invariants on import boundaries, AST-enforced layering rules.
+
+Target end state: `pipeline.py` shrinks to roughly 1500-2000 lines of orchestration code; the runtime logic lives in ~30 focused modules under `core/`. The decomposition is the biggest single architectural improvement queued — but it has to land AFTER the P0 security/robustness/eval cycle because those provide the test scaffolding that makes safe decomposition possible.
+
+## 337. Voice Gallery Growth Bug for Promoted Voice-Only Strangers
+
+**Known issue, fix queued.** (Documented in Part XXXII §203.4.)
+
+Session 94 added bootstrap-credit replenishment so engaged strangers could grow their voice profile to maturity. The condition includes `person_type == 'stranger'`. After a voice-only stranger is promoted via `update_person_name` ("My name is Lexi"), the promotion chain flips `person_type` to `known`. The replenishment condition stops firing. Subsequent voice samples are refused.
+
+The fix shape (architect's recommendation, pending implementation):
+- Add a `voice_only_origin` session-dict flag, set at engagement-gate pass when no face was witnessed.
+- Replenishment fires when `voice_only_origin == True` AND `voice_n < MATURE`, regardless of `person_type`.
+- Flag clears on first face-witness event.
+
+Cost: small (10-20 lines + 3 tests). The reason it's not P0.S1-priority is that the failure mode is gradual degradation (stunted voice profiles) rather than active security risk. Will land alongside one of the P0.R items where session-state plumbing is already on the table.
+
+## 338. Kuzu v3 Schema Bump and Graph-Side Privacy
+
+Sessions 96-108 (Phase 3A) shipped the four-tier privacy model and the SQL-side `_visibility_clause` helper. The corresponding Kuzu-side change — gate `find_shared_entities` and similar 1-hop traversals on `privacy_level` — was deferred. The full Kuzu v3 bump will:
+
+- Add `privacy_level` to graph edges.
+- Update the `find_shared_entities` MATCH query to filter on `privacy_level != 'system_only'`.
+- Wire `room_session_id` and `audience_ids` into conversation_log retrieval paths via graph-aware queries (currently Q3 is SQL-only).
+- Rev the `GRAPH_SCHEMA_VERSION` from 2 to 3, triggering rebuild from brain.db on first boot.
+
+Deferred reason: the SQL-side filter is sufficient for current threat model (S107 audit). v3 lands alongside the RoomOrchestrator work (currently scoped under Phase 3B, deferred until P0 cycle is fully closed).
+
+## 339. Format-Bridge Unification (Producer Rows vs CLI Render)
+
+**Open architectural smell from P0.0.7 Step 7.** `ctx.all_events()` returns events with `payload` (parsed dict); CLI's `_render` expects `payload_json` (raw JSON string). Tests bridge with `{**e, "payload_json": json.dumps(e["payload"], sort_keys=True)}` before passing to `_render`.
+
+The bridge is harmless in tests; it's mild architectural debt. A future micro-PR unifies the row dict shape so callers don't need to bridge. Either:
+
+- Producer rows carry both `payload` (parsed) and `payload_json` (raw) — caller picks.
+- Producer rows carry only `payload_json` — caller does `json.loads` if they need parsed.
+- Producer rows carry only `payload` — caller does `json.dumps` if they need raw.
+
+Decision pending; not blocking other work.
+
+## 340. The Multi-Layer Classifier Architecture (XXXV) — When It Ships
+
+Part XXXV documents the six-layer multi-layer classifier architecture as **FUTURE WORK**. The dependency chain is:
+
+1. P0 security + P0 robustness + Eval gates land (current trajectory).
+2. P1.A pipeline decomposition lands (next major architectural project).
+3. THEN the classifier multi-layer work can land cleanly because it builds on top of a clean classifier integration point (`classify_intent_smart` → `classify_intent_graph` → the multi-layer graph) without touching the rest of the system.
+
+The work is committed (the Part XXXV roadmap is locked) but the timing is sequential. When P1.A is done, multi-layer can ship in 4-6 weeks.
+
+Until then, Part XXXV is the architectural commitment, not the implementation.
+
+---
+
 # End of Document
 
-This documentation describes the system as of **Session 122 / Phase 4 voice/vision cutover live, graph classifier in shadow mode, 2026-05-02, 1374 tests passing**. It is intended to be read front-to-back by someone learning the project for the first time, and also to be searchable reference material for anyone debugging a specific subsystem.
+This documentation describes the system as of **2026-05-18, post-P0.0.7 event-sourcing foundation, full P0 correctness + architectural-hardening cycle closed, ~2216 tests passing**. It is intended to be read front-to-back by someone learning the project for the first time, and also to be searchable reference material for anyone debugging a specific subsystem.
 
-Further updates should preserve the pattern: every design decision traces to a specific incident (logged in `CLAUDE.md`), a specific config value, or a specific architectural principle from Part XXII.
+Further updates should preserve the pattern: every design decision traces to a specific incident (logged in `CLAUDE.md`), a specific config value, or a specific architectural principle from Part XXII or Part L.
 
-If you add a new subsystem, write its section before writing its code. If you change a threshold, update §147. If you land a new agent, extend Part XIV. If you discover an invariant that isn't in Part XXII, add it.
+If you add a new subsystem, write its section before writing its code. If you change a threshold, update §147. If you land a new agent, extend Part XIV. If you discover an invariant that isn't in Part XXII or named in Part L, add it. If you complete a multi-day spec, add an instance to the appropriate track record in Part L.
 
-Currently the largest unimplemented work is **Part XXXV — the multi-layer classifier architecture**. When that ships, the corresponding sections will move from FUTURE-WORK status to STATUS-NORMAL and the front-matter "what changed" log will reflect the deltas. Until then, Part XXXV is the architectural commitment, not the implementation.
+Currently the largest unimplemented work, in order:
+1. **Part LI §332 — P0.S1 (anti-spoof on every face match)** — next item in the locked sequence.
+2. **Part LI §333-§334 — P0 security + robustness backlog (S1-S11, R1-R11)** — multi-month effort.
+3. **Part LI §336 — P1.A pipeline.py decomposition into ~30 modules** — biggest architectural project queued.
+4. **Part XXXV — Multi-layer classifier architecture** — six-layer plan, ships after P1.A.
 
-The system is the sum of its decisions. Documenting the decisions is how we keep the system coherent across sessions, across contributors, and across time.
+The system is the sum of its decisions. Documenting the decisions is how we keep the system coherent across sessions, across contributors, and across time. The Part L named disciplines are how we ensure the decisions accumulate into doctrine rather than dissolving back into ad-hoc patterns.

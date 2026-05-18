@@ -1322,6 +1322,28 @@ HISTORY_OVERRIDE_TOOLS: frozenset = frozenset({
 # where the LLM keeps calling the same tool with the same args with no progress.
 TOOL_REPEAT_MAX_CONSECUTIVE: int = 2
 
+# ── P0.8: Per-tool execution timeouts ──────────────────────────────────────
+# Default wall-clock budget for any tool handler.  Layer 0 / privilege /
+# repeat-guard gates run OUTSIDE this budget (they're micro-operations).
+# Asymmetric overrides accommodate tools that legitimately exceed the
+# default (network round-trips for search_web; faster pure-SQL for
+# search_memory; small fixed deadlines for control-flow tools).
+#
+# On timeout, _execute_tool returns "tool_timeout" — distinct from existing
+# handled/handled_noop/rejected/unknown/None taxonomy.  asyncio.wait_for
+# cancels the handler task, which propagates CancelledError through
+# transaction __aexit__ (FaceDB.transaction / BrainDB._safe_commit) — partial
+# SQL writes are rolled back. Behavioral test enforces this.
+TOOL_TIMEOUT_SECS: float = 10.0
+TOOL_TIMEOUT_OVERRIDES: "dict[str, float]" = {
+    "search_web":              20.0,   # Tavily multi-query + retries
+    "search_memory":            5.0,   # local SQLite read; fast
+    "update_person_name":       5.0,
+    "update_system_name":       5.0,
+    "shutdown":                 3.0,
+    "report_identity_mismatch": 3.0,
+}
+
 # ── Health summary log (Wave 5 / Item 19) ──────────────────────────────────
 HEALTH_LOG_ENABLED          = True
 HEALTH_LOG_INTERVAL_SECS    = 300   # 5 min — first log fires immediately at boot

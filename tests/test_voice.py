@@ -12,7 +12,11 @@ def _reset_executor():
     voice_mod._voice_diarize_executor = None
 
 
+@pytest.mark.slow
+@pytest.mark.models
 class TestDiarizeExecutor:
+    """Marked slow+models: imports `core.voice` which drags real torchaudio
+    + speechbrain + pyannote into scope. Fast CI skips; nightly CI runs."""
 
     def setup_method(self):
         _reset_executor()

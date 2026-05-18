@@ -1,5 +1,9 @@
 # DOG-AI
 
+![fast CI](https://github.com/jagannivas/dog-ai/actions/workflows/fast.yml/badge.svg)
+![nightly CI](https://github.com/jagannivas/dog-ai/actions/workflows/slow.yml/badge.svg)
+![security scan](https://github.com/jagannivas/dog-ai/actions/workflows/security.yml/badge.svg)
+
 Face recognition pipeline: See face → identify → greet → listen → respond → repeat.
 
 ## Structure

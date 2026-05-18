@@ -23,6 +23,7 @@ import re
 import pytest
 
 PIPELINE_PATH = pathlib.Path(__file__).parent.parent / "pipeline.py"
+TESTS_DIR = pathlib.Path(__file__).parent
 
 # ---------------------------------------------------------------------------
 # Documented keeps — every non-migratable legacy read with its rationale.
@@ -160,4 +161,74 @@ class TestReadMigrationProgress:
         assert len(ALLOWED_LEGACY_READS) <= cap, (
             f"ALLOWED_LEGACY_READS has {len(ALLOWED_LEGACY_READS)} entries (cap={cap}). "
             "New keeps require a separate reviewer sign-off and an updated rationale."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Cross-file invariant — all tests/*.py files must be free of legacy
+# _active_sessions usage patterns.
+#
+# Catches the class of bug seen in test_pipeline_latency.py where a test
+# file in tests/ was missed by the P0.7.5.A migration scan (which only
+# covered the root-level test_pipeline.py).
+#
+# Two violation shapes are detected:
+#   A) pipeline._active_sessions  — direct module-attribute access/assignment
+#   B) "_active_sessions"          — string literal (used in getattr-based
+#                                     save/restore dicts like the latency
+#                                     fixture's `orig` dict)
+# ---------------------------------------------------------------------------
+
+_RE_DIRECT_ACCESS = re.compile(r'pipeline\._active_sessions\b')
+_RE_STRING_LITERAL = re.compile(r'["\']_active_sessions["\']')
+
+# Files exempted from this scan.
+# test_p072_read_migration_progress.py — this file IS the scanner; its own docstrings
+#   and patterns necessarily mention "_active_sessions" as the token being detected.
+# test_repeat_guard_invariant.py — uses "_active_sessions" as an AST node ID string
+#   for structural inspection of the repeat-guard invariant, not as legacy usage.
+_SCAN_EXEMPT_FILES: frozenset[str] = frozenset({
+    "test_p072_read_migration_progress.py",
+    "test_repeat_guard_invariant.py",
+})
+
+
+def _scan_test_files_for_legacy_active_sessions() -> list[tuple[pathlib.Path, int, str]]:
+    """Return (file, lineno, stripped_line) for every legacy _active_sessions
+    pattern found in tests/*.py files."""
+    violations: list[tuple[pathlib.Path, int, str]] = []
+    for py_file in sorted(TESTS_DIR.glob("*.py")):
+        if py_file.name in _SCAN_EXEMPT_FILES:
+            continue
+        for lineno, raw in enumerate(
+            py_file.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            stripped = raw.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if _RE_DIRECT_ACCESS.search(raw) or _RE_STRING_LITERAL.search(raw):
+                violations.append((py_file, lineno, stripped[:120]))
+    return violations
+
+
+class TestTestFileMigrationProgress:
+    """Ensures no test file in tests/ re-introduces legacy _active_sessions usage.
+
+    P0.7.5.A migrated test_pipeline.py (root level). This class guards the
+    tests/ subdirectory — the gap that allowed test_pipeline_latency.py to
+    carry the bug undetected until P0.6.2 cleanup.
+    """
+
+    def test_no_legacy_active_sessions_in_test_files(self) -> None:
+        """tests/*.py must not contain pipeline._active_sessions references
+        or "_active_sessions" string literals (getattr-based save/restore)."""
+        violations = _scan_test_files_for_legacy_active_sessions()
+        assert not violations, (
+            f"Found {len(violations)} legacy _active_sessions pattern(s) in tests/*.py.\n"
+            "Migrate to _session_store API (open_session / peek_snapshot) and remove\n"
+            "the attribute name from any getattr-based save/restore lists.\n\n"
+            + "\n".join(
+                f"  {f.name}:L{ln}: {src}"
+                for f, ln, src in violations
+            )
         )

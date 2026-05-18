@@ -283,7 +283,7 @@ def observe_scene(
         f"{n_dropped_quality} dropped on quality, "
         f"{n_dropped_yaw} dropped on yaw"
     )
-    return PresenceState(
+    _presence = PresenceState(
         visible_pids=tuple(sorted_pids),
         unrecognized_track_ids=tuple(unrecognized_track_ids),
         per_pid_confidence=per_conf,
@@ -291,3 +291,13 @@ def observe_scene(
         frame_ts=float(now),
         reasoning=reasoning,
     )
+    # P0.0.7 H4 — emit presence_state via safe_emit_sync (single
+    # P0.4-annotated except lives inside the helper). Early-return paths
+    # (no detections / no embedder / no db) skip the emission; replay
+    # infers their absence from vision_frame events.
+    from core.event_log import safe_emit_sync, PresenceStatePayload
+    safe_emit_sync(
+        "presence_state",
+        PresenceStatePayload(presence=_presence),
+    )
+    return _presence

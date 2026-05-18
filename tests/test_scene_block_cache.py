@@ -90,15 +90,9 @@ def test_call_sites_use_cached_wrapper():
 # ---------------------------------------------------------------------------
 
 def test_module_state_vars_defined():
-    """All three cache state variables must be declared at module level."""
-    assert "_scene_block_cache:" in _PIPELINE_SRC or "_scene_block_cache =" in _PIPELINE_SRC, (
-        "Wave 6 Item 23 regression: _scene_block_cache not declared in pipeline.py"
-    )
-    assert "_scene_block_cache_hits" in _PIPELINE_SRC, (
-        "Wave 6 Item 23 regression: _scene_block_cache_hits not declared in pipeline.py"
-    )
-    assert "_scene_block_cache_misses" in _PIPELINE_SRC, (
-        "Wave 6 Item 23 regression: _scene_block_cache_misses not declared in pipeline.py"
+    """The scene_block CacheStore must be declared at module level (P0.6.5)."""
+    assert "_scene_block_store" in _PIPELINE_SRC, (
+        "P0.6.5 regression: _scene_block_store not declared in pipeline.py"
     )
     # Config constants must be present
     assert "SCENE_BLOCK_CACHE_ENABLED" in _CONFIG_SRC, (
@@ -115,9 +109,12 @@ def test_module_state_vars_defined():
 
 def test_factory_reset_clears_cache():
     """The factory-reset runtime-state clearing block must call _scene_block_cache.clear()."""
-    # Find the factory-reset section by anchor text
+    # Find the factory-reset section by anchor text.
+    # P0.6.6: _last_face_seen is now managed by _pipeline_state_store.reset()
+    # so the old end-anchor pattern is gone. Use _pipeline_state_store.reset()
+    # as the end anchor instead.
     reset_match = re.search(
-        r"# Clear all runtime state.*?_last_face_seen\s*=\s*0\.0",
+        r"# Clear all runtime state.*?_pipeline_state_store\.reset\(\)",
         _PIPELINE_SRC,
         re.DOTALL,
     )
@@ -126,8 +123,8 @@ def test_factory_reset_clears_cache():
         "in pipeline.py — structure may have changed."
     )
     block = reset_match.group(0)
-    assert "_scene_block_cache.clear()" in block, (
-        "Wave 6 Item 23 regression: factory-reset block does not call "
-        "_scene_block_cache.clear(). Scene block cache will accumulate stale "
+    assert "_scene_block_store.clear()" in block, (
+        "P0.6.5 regression: factory-reset block does not call "
+        "_scene_block_store.clear(). Scene block cache will accumulate stale "
         "entries after a factory reset."
     )

@@ -70,33 +70,42 @@ def latency_pipeline_harness():
     pid = "alice_001"
     session = _make_session("Alice")
 
-    orig = {attr: getattr(pipeline, attr) for attr in (
-        "_active_sessions", "_conversation", "_cloud_state", "_pipeline_state",
-        "_brain_orchestrator", "_emotion_agents", "_query_embedding_cache",
-        "_last_user_speech_at", "_identity_hints", "_persons_in_frame",
-        "_unrecognized_tracks", "_active_room_session", "_active_room_started_at",
-        "_active_room_participants", "_cloud_failed_at", "_cloud_monitor_task",
-        "_detected_lang", "_active_system_name",
-    )}
+    orig_brain_orchestrator = pipeline._brain_orchestrator
+    orig_pss_snapshot = {
+        "cloud_state": pipeline._pipeline_state_store.peek_cloud_state(),
+        "pipeline_state": pipeline._pipeline_state_store.peek_pipeline_state(),
+        "last_user_speech_at": pipeline._pipeline_state_store.peek_last_user_speech_at(),
+        "active_room_session": pipeline._pipeline_state_store.peek_active_room_session(),
+        "active_room_started_at": pipeline._pipeline_state_store.peek_active_room_started_at(),
+        "active_room_participants": pipeline._pipeline_state_store.peek_active_room_participants(),
+        "cloud_failed_at": pipeline._pipeline_state_store.peek_cloud_failed_at(),
+        "cloud_monitor_task": pipeline._pipeline_state_store.peek_cloud_monitor_task(),
+        "detected_lang": pipeline._pipeline_state_store.peek_detected_lang(),
+        "active_system_name": pipeline._pipeline_state_store.peek_active_system_name(),
+    }
 
-    pipeline._active_sessions = {pid: session}
-    pipeline._conversation = {}
-    pipeline._cloud_state = CloudState.ONLINE
-    pipeline._pipeline_state = PipelineState.WATCHING
+    # Seed session via SessionStore (replaces legacy _active_sessions dict write)
+    asyncio.run(pipeline._session_store.open_session(
+        pid,
+        session["person_name"],
+        person_type=session["person_type"],
+        session_type="face",
+        now=time.time(),
+    ))
+    pipeline._conversation_store.reset()
+    asyncio.run(pipeline._pipeline_state_store.recover_online_no_flag())
+    asyncio.run(pipeline._pipeline_state_store.set_pipeline_state(PipelineState.WATCHING))
     pipeline._brain_orchestrator = None
-    pipeline._emotion_agents = {}
-    pipeline._query_embedding_cache = {}
-    pipeline._last_user_speech_at = time.time()
-    pipeline._identity_hints = {}
-    pipeline._persons_in_frame = {}
-    pipeline._unrecognized_tracks = {}
-    pipeline._active_room_session = None
-    pipeline._active_room_started_at = None
-    pipeline._active_room_participants = set()
-    pipeline._cloud_failed_at = 0.0
-    pipeline._cloud_monitor_task = None
-    pipeline._detected_lang = "en"
-    pipeline._active_system_name = "Kara"
+    pipeline._per_person_agent_store.reset()
+    asyncio.run(pipeline._pipeline_state_store.set_last_user_speech_at(time.time()))
+    asyncio.run(pipeline._pipeline_state_store.set_active_room_session(None))
+    asyncio.run(pipeline._pipeline_state_store.set_active_room_started_at(None))
+    asyncio.run(pipeline._pipeline_state_store.set_active_room_participants(set()))
+    asyncio.run(pipeline._pipeline_state_store.transition_to_sick(0.0))
+    asyncio.run(pipeline._pipeline_state_store.recover_online_no_flag())
+    asyncio.run(pipeline._pipeline_state_store.set_cloud_monitor_task(None))
+    asyncio.run(pipeline._pipeline_state_store.set_detected_lang("en"))
+    asyncio.run(pipeline._pipeline_state_store.set_active_system_name("Kara"))
 
     patches = [
         patch("pipeline.ask_stream", side_effect=_fast_ask_stream),
@@ -122,8 +131,18 @@ def latency_pipeline_harness():
     for p in patches:
         p.stop()
 
-    for attr, val in orig.items():
-        setattr(pipeline, attr, val)
+    pipeline._session_store = __import__("core.session_state", fromlist=["SessionStore"]).SessionStore()  # fresh store
+    pipeline._per_person_agent_store.reset()
+    pipeline._brain_orchestrator = orig_brain_orchestrator
+
+    asyncio.run(pipeline._pipeline_state_store.set_pipeline_state(orig_pss_snapshot["pipeline_state"]))
+    asyncio.run(pipeline._pipeline_state_store.set_last_user_speech_at(orig_pss_snapshot["last_user_speech_at"]))
+    asyncio.run(pipeline._pipeline_state_store.set_active_room_session(orig_pss_snapshot["active_room_session"]))
+    asyncio.run(pipeline._pipeline_state_store.set_active_room_started_at(orig_pss_snapshot["active_room_started_at"]))
+    asyncio.run(pipeline._pipeline_state_store.set_active_room_participants(orig_pss_snapshot["active_room_participants"]))
+    asyncio.run(pipeline._pipeline_state_store.set_cloud_monitor_task(orig_pss_snapshot["cloud_monitor_task"]))
+    asyncio.run(pipeline._pipeline_state_store.set_detected_lang(orig_pss_snapshot["detected_lang"]))
+    asyncio.run(pipeline._pipeline_state_store.set_active_system_name(orig_pss_snapshot["active_system_name"]))
 
 
 @pytest.fixture
@@ -132,12 +151,12 @@ def latency_pipeline_harness_with_long_history(latency_pipeline_harness):
 
     pid, session = latency_pipeline_harness
     # 50 turns — enough to cross the compact gate threshold
-    pipeline._conversation[pid] = [
+    asyncio.run(pipeline._conversation_store.set_history(pid, [
         {"role": "user" if i % 2 == 0 else "assistant",
          "content": f"message {i}",
          "ts": time.time() - (50 - i)}
         for i in range(50)
-    ]
+    ]))
     yield pid, session
 
 

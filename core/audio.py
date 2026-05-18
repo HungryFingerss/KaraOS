@@ -4,6 +4,7 @@ VAD: Silero | Playback: sounddevice only | English only
 """
 import asyncio
 import os
+import sys
 import time
 import threading
 import numpy as np
@@ -592,6 +593,24 @@ async def listen_and_transcribe(
     if len(audio) == 0:
         return "", "en", audio
     text, lang = await loop.run_in_executor(None, transcribe, audio)
+    # P0.0.7 H1 — emit audio_in event via safe_emit_sync. session_id=None
+    # at this boundary (audio capture is session-agnostic; identity_claim
+    # downstream threads session via the natural-pair chain). The
+    # safe_emit_sync helper carries the single P0.4-annotated except block;
+    # this call site does not need its own try/except.
+    import hashlib as _h1_hash
+    from core.event_log import safe_emit_sync, AudioInPayload
+    _audio_hash = "sha256:" + _h1_hash.sha256(audio.tobytes()[:16384]).hexdigest()[:16]
+    safe_emit_sync(
+        "audio_in",
+        AudioInPayload(
+            audio_hash=_audio_hash,
+            speech_secs=float(getattr(sys.modules[__name__], "_last_speech_secs", 0.0)),
+            stt_text=text,
+            language=lang,
+            pre_roll_ms=int(silence_duration * 1000),
+        ),
+    )
     return text, lang, audio
 
 
@@ -626,8 +645,42 @@ async def speak(text: str, language: str = "en"):
         global _tts_end_time
         _tts_end_time = time.time()
 
+        # P0.0.7 H10 — emit tts_out event after successful playback.
+        _emit_tts_event_safe(
+            text=text, language=language, was_stream=False,
+            pcm_len=len(pcm) if pcm is not None else 0,
+            sample_rate=sample_rate,
+        )
+
     except Exception as e:
         print(f"[Audio] TTS error: {e}")
+
+
+def _emit_tts_event_safe(*, text: str, language: str, was_stream: bool,
+                        pcm_len: int, sample_rate: int) -> None:
+    """P0.0.7 H10 single producer location for tts_out events.
+
+    Called by both speak() and speak_stream() so D7 N=1 holds. Delegates
+    to `safe_emit_sync` so any event_log failure never breaks TTS playback
+    (the single P0.4-annotated except block lives inside safe_emit_sync).
+    """
+    import hashlib as _h10_hash
+    from core.event_log import safe_emit_sync, TtsOutPayload
+    _full_hash = "sha256:" + _h10_hash.sha256(text.encode("utf-8")).hexdigest()[:16]
+    _truncated = text if len(text) <= 500 else (text[:497] + "...")
+    _duration_ms = (int(pcm_len / max(1, sample_rate) * 1000)
+                   if pcm_len > 0 else None)
+    safe_emit_sync(
+        "tts_out",
+        TtsOutPayload(
+            text=_truncated,
+            text_full_hash=_full_hash,
+            language=language,
+            was_stream=was_stream,
+            purpose="conversation",  # generic; specific purpose threading is a follow-up
+            duration_ms_est=_duration_ms,
+        ),
+    )
 
 
 def _tts_piper_en(text: str) -> tuple[np.ndarray | None, int]:
@@ -671,8 +724,14 @@ async def speak_stream(sentences, language: str = "en"):
     loop = asyncio.get_running_loop()
     # maxsize=2: synthesizer stays at most one sentence ahead of playback
     audio_q: asyncio.Queue = asyncio.Queue(maxsize=2)
+    # P0.0.7 H10 — accumulate the streamed text for the tts_out event
+    # emitted at stream-end. Per-sentence emission would N>1 violate D7.
+    _streamed_text_parts: list[str] = []
+    _streamed_total_pcm_len: int = 0
+    _streamed_sample_rate: int = 0
 
     async def _synth_worker():
+        nonlocal _streamed_total_pcm_len, _streamed_sample_rate
         try:
             async for sentence in sentences:
                 if not sentence.strip():
@@ -681,12 +740,15 @@ async def speak_stream(sentences, language: str = "en"):
                 if not sentence:
                     continue
                 print(f"[Audio] TTS stream {_now_log_ts()}: '{sentence}'")
+                _streamed_text_parts.append(sentence)
                 try:
                     pcm, sr = await loop.run_in_executor(None, _tts_kokoro, sentence)
                     if pcm is None or len(pcm) == 0:
                         print(f"[Audio] Piper fallback: Kokoro returned empty — using Piper for '{sentence[:40]}'")
                         pcm, sr = await loop.run_in_executor(None, _tts_piper_en, sentence)
                     if pcm is not None and len(pcm) > 0:
+                        _streamed_total_pcm_len += len(pcm)
+                        _streamed_sample_rate = sr or _streamed_sample_rate
                         await audio_q.put((pcm, sr))
                 except Exception as e:
                     print(f"[Audio] Synthesis error for sentence: {e}")
@@ -717,6 +779,18 @@ async def speak_stream(sentences, language: str = "en"):
                 break
 
     await asyncio.gather(_synth_worker(), _play_worker())
+
+    # P0.0.7 H10 — emit one tts_out event for the whole stream at exit.
+    # Accumulated text + total PCM length give the replay tool the same
+    # shape as a non-stream tts_out event with was_stream=True.
+    if _streamed_text_parts:
+        _emit_tts_event_safe(
+            text=" ".join(_streamed_text_parts),
+            language=language,
+            was_stream=True,
+            pcm_len=_streamed_total_pcm_len,
+            sample_rate=_streamed_sample_rate or 24000,
+        )
 
 
 def speak_sync(text: str):

@@ -14,8 +14,21 @@ _persistent: dict = {}  # fields merged into every write() — set once at start
 
 
 def set_persistent(key: str, value) -> None:
-    """Set a field that survives every subsequent write() call."""
-    _persistent[key] = value
+    """Set a field that survives every subsequent write() call.
+
+    Atomic-replace pattern: rebinds `_persistent` to a new dict rather
+    than mutating in place. CPython STORE_NAME is GIL-atomic, so a
+    concurrent reader iterating the OLD dict reference sees a
+    consistent snapshot.
+
+    NOTE: This protects readers from torn iteration. It does NOT protect
+    against concurrent writers losing updates (RMW race — multiple
+    writers can both load the old dict, both build new dicts, and the
+    second STORE wins). Production has 1 writer at startup, so RMW is
+    not a concern. If runtime writers are added, add `threading.Lock`.
+    """
+    global _persistent
+    _persistent = {**_persistent, key: value}
 
 
 def write(
@@ -56,6 +69,22 @@ def write(
             raise
     except Exception as e:
         print(f"[State] WARNING: failed to write state file: {e}")
+
+    # P0.0.7 H9 — emit state_write event AFTER successful atomic-replace
+    # (and after any logged-and-swallowed failure) via safe_emit_sync.
+    # Single P0.4-annotated except lives inside safe_emit_sync.
+    from core.event_log import safe_emit_sync, StateWritePayload
+    safe_emit_sync(
+        "state_write",
+        StateWritePayload(
+            mode=mode,
+            current_person=current_person,
+            current_person_id=current_person_id,
+            visible_people=tuple(visible_people or ()),
+            message=message,
+        ),
+        session_id=current_person_id,
+    )
 
 
 def read() -> dict:

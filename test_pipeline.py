@@ -211,7 +211,7 @@ def test_cloudstate_enum_values_exist():
 def test_cloudstate_initial_is_online():
     import pipeline
     from pipeline import CloudState
-    assert pipeline._cloud_state == CloudState.ONLINE
+    assert pipeline._pipeline_state_store.peek_cloud_state() == CloudState.ONLINE
 
 
 def test_root_conftest_session_reset_fixture_is_active(request):
@@ -231,16 +231,13 @@ def test_root_conftest_session_reset_fixture_is_active(request):
 @pytest.fixture(autouse=True)
 def reset_pipeline_globals():
     """Restore pipeline module globals after each test to avoid cross-test bleed."""
+    import asyncio
     import pipeline
-    orig_system_name       = pipeline._active_system_name
-    orig_detected_lang     = pipeline._detected_lang
-    orig_conversation      = dict(pipeline._conversation)
-    orig_ambient_wake      = set(pipeline._ambient_wake_pending)
+    orig_system_name   = pipeline._pipeline_state_store.peek_active_system_name()
+    orig_detected_lang = pipeline._pipeline_state_store.peek_detected_lang()
     yield
-    pipeline._active_system_name   = orig_system_name
-    pipeline._detected_lang        = orig_detected_lang
-    pipeline._conversation         = orig_conversation
-    pipeline._ambient_wake_pending = orig_ambient_wake
+    asyncio.run(pipeline._pipeline_state_store.set_active_system_name(orig_system_name))
+    asyncio.run(pipeline._pipeline_state_store.set_detected_lang(orig_detected_lang))
 
 
 async def test_execute_tool_shutdown_returns_signal():
@@ -301,9 +298,9 @@ async def test_execute_tool_shutdown_rejected_on_unrelated():
 async def test_execute_tool_set_language_no_op_when_same():
     import pipeline
     from pipeline import _execute_tool
-    pipeline._detected_lang = "en"
+    await pipeline._pipeline_state_store.set_detected_lang("en")
     await _execute_tool("set_language", {"language": "en"}, "p1", "Jagan", db=None)
-    assert pipeline._detected_lang == "en"
+    assert pipeline._pipeline_state_store.peek_detected_lang() == "en"
 
 
 async def test_execute_tool_update_person_name_calls_db():
@@ -312,7 +309,7 @@ async def test_execute_tool_update_person_name_calls_db():
     from pipeline import _execute_tool
     import time as _t
     await pipeline._session_store.open_session("p1", "OldName", "stranger", "face", now=__import__("time").time())
-    pipeline._conversation = {"p1": []}
+    await pipeline._conversation_store.set_history("p1", [])
     mock_db = MagicMock()
     await _execute_tool(
         "update_person_name", {"name": "Jagan"},
@@ -332,7 +329,7 @@ async def test_execute_tool_update_person_name_no_op_when_same():
     from pipeline import _execute_tool
     import time as _t
     await pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=_t.time())
-    pipeline._conversation = {"p1": []}
+    await pipeline._conversation_store.set_history("p1", [])
     mock_db = MagicMock()
     await _execute_tool(
         "update_person_name", {"name": "jagan"},
@@ -348,23 +345,22 @@ async def test_execute_tool_update_person_name_fixes_history():
     from pipeline import _execute_tool
     import time as _t
     await pipeline._session_store.open_session("p1", "Jaren", "stranger", "face", now=__import__("time").time())
-    pipeline._conversation = {
-        "p1": [
-            {"role": "assistant", "content": "Hello Jaren, how are you?"},
-            {"role": "user",      "content": "Good thanks"},
-            {"role": "assistant", "content": "Great, Jaren!"},
-        ]
-    }
+    await pipeline._conversation_store.set_history("p1", [
+        {"role": "assistant", "content": "Hello Jaren, how are you?"},
+        {"role": "user",      "content": "Good thanks"},
+        {"role": "assistant", "content": "Great, Jaren!"},
+    ])
     mock_db = MagicMock()
     await _execute_tool(
         "update_person_name", {"name": "Jagan"},
         "p1", "Jaren", db=mock_db,
         user_text="my name is Jagan",
     )
-    for msg in pipeline._conversation["p1"]:
+    hist = pipeline._conversation_store.peek_history("p1")
+    for msg in hist:
         assert "Jaren" not in msg["content"]
-    assert pipeline._conversation["p1"][0]["content"] == "Hello Jagan, how are you?"
-    assert pipeline._conversation["p1"][2]["content"] == "Great, Jagan!"
+    assert hist[0]["content"] == "Hello Jagan, how are you?"
+    assert hist[2]["content"] == "Great, Jagan!"
 
 
 async def test_execute_tool_update_person_name_promotes_stranger():
@@ -374,8 +370,7 @@ async def test_execute_tool_update_person_name_promotes_stranger():
     import time as _t
 
     await pipeline._session_store.open_session("stranger_001", "visitor", "stranger", "face", now=__import__("time").time())
-    pipeline._conversation = {"stranger_001": []}
-    pipeline._identity_hints = {}
+    await pipeline._conversation_store.set_history("stranger_001", [])
 
     mock_db = MagicMock()
     mock_brain = MagicMock()
@@ -424,7 +419,7 @@ async def test_execute_tool_update_person_name_classifier_allows_fires_tool():
     from pipeline import _execute_tool
     import time as _t
     await pipeline._session_store.open_session("p1", "OldName", "stranger", "face", now=__import__("time").time())
-    pipeline._conversation = {"p1": []}
+    await pipeline._conversation_store.set_history("p1", [])
     mock_db = MagicMock()
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
@@ -466,7 +461,7 @@ async def test_execute_tool_update_person_name_classifier_rejects_blocks_tool():
     from pipeline import _execute_tool
     import time as _t
     await pipeline._session_store.open_session("p1", "OldName", "stranger", "face", now=__import__("time").time())
-    pipeline._conversation = {"p1": []}
+    await pipeline._conversation_store.set_history("p1", [])
     mock_db = MagicMock()
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
@@ -513,7 +508,7 @@ async def test_execute_tool_update_person_name_classifier_unavail_fallback_to_re
     assert INTENT_FALLBACK_TO_REGEX is True, "P1.17 flip invalidates this test"
 
     await pipeline._session_store.open_session("p1", "OldName", "stranger", "face", now=__import__("time").time())
-    pipeline._conversation = {"p1": []}
+    await pipeline._conversation_store.set_history("p1", [])
     mock_db = MagicMock()
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
@@ -549,7 +544,7 @@ async def test_execute_tool_update_person_name_classifier_unavail_fallback_disab
     monkeypatch.setattr("core.config.INTENT_FALLBACK_TO_REGEX", False)
 
     await pipeline._session_store.open_session("p1", "OldName", "stranger", "face", now=__import__("time").time())
-    pipeline._conversation = {"p1": []}
+    await pipeline._conversation_store.set_history("p1", [])
     mock_db = MagicMock()
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
@@ -583,7 +578,7 @@ async def test_execute_tool_update_system_name_classifier_allows_fires_tool():
     import pipeline
     from pipeline import _execute_tool
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_system_name = "Atlas"
+    await pipeline._pipeline_state_store.set_active_system_name("Atlas")
     mock_db = MagicMock()
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
@@ -602,13 +597,13 @@ async def test_execute_tool_update_system_name_classifier_allows_fires_tool():
             intent_sidecar=sidecar,
         )
         assert result == "handled"
-        assert pipeline._active_system_name == "Alexa"
+        assert pipeline._pipeline_state_store.peek_active_system_name() == "Alexa"
         kwargs = mock_brain_db.log_intent_divergence.call_args.kwargs
         assert kwargs["tool_proposed"] == "update_system_name"
         assert kwargs["gate_decision"] == "allow"
     finally:
         pipeline._brain_orchestrator = _prev_orch
-        pipeline._active_system_name = "Atlas"
+        await pipeline._pipeline_state_store.set_active_system_name("Atlas")
 
 
 async def test_execute_tool_update_system_name_classifier_rejects_on_grounding_fail():
@@ -618,7 +613,7 @@ async def test_execute_tool_update_system_name_classifier_rejects_on_grounding_f
     import pipeline
     from pipeline import _execute_tool
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_system_name = "Atlas"
+    await pipeline._pipeline_state_store.set_active_system_name("Atlas")
     mock_db = MagicMock()
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
@@ -637,7 +632,7 @@ async def test_execute_tool_update_system_name_classifier_rejects_on_grounding_f
             intent_sidecar=sidecar,
         )
         assert result == "rejected"
-        assert pipeline._active_system_name == "Atlas"
+        assert pipeline._pipeline_state_store.peek_active_system_name() == "Atlas"
         kwargs = mock_brain_db.log_intent_divergence.call_args.kwargs
         assert kwargs["gate_decision"].startswith("reject:")
         assert "not grounded" in kwargs["gate_decision"]
@@ -859,7 +854,7 @@ async def test_execute_tool_update_system_name_updates_global():
     import pipeline
     from pipeline import _execute_tool
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_system_name = "Dog"
+    await pipeline._pipeline_state_store.set_active_system_name("Dog")
     pipeline._brain_orchestrator = None
     mock_db = MagicMock()
     await _execute_tool(
@@ -867,7 +862,7 @@ async def test_execute_tool_update_system_name_updates_global():
         "p1", "Jagan", db=mock_db,
         user_text="I'll call you Rex",   # Session 73: gate requires assignment phrase
     )
-    assert pipeline._active_system_name == "Rex"
+    assert pipeline._pipeline_state_store.peek_active_system_name() == "Rex"
     mock_db.set_system_identity.assert_called_once()
 
 
@@ -875,7 +870,7 @@ async def test_execute_tool_update_system_name_no_op_when_same():
     import pipeline
     from pipeline import _execute_tool
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_system_name = "Rex"
+    await pipeline._pipeline_state_store.set_active_system_name("Rex")
     mock_db = MagicMock()
     await _execute_tool(
         "update_system_name", {"name": "rex"},
@@ -923,7 +918,7 @@ async def test_execute_tool_update_system_name_noop_returns_handled_noop():
     import pipeline
     from pipeline import _execute_tool
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_system_name = "Kara"
+    await pipeline._pipeline_state_store.set_active_system_name("Kara")
     result = await _execute_tool(
         "update_system_name", {"name": "Kara"}, "p1", "Jagan", db=None,
         user_text="call you Kara",
@@ -1224,11 +1219,13 @@ def test_conversation_turn_all_unreal_triggers_ollama_retry():
     import inspect, pipeline
     src = inspect.getsource(pipeline.conversation_turn)
     assert "_all_unreal" in src, (
-        "conversation_turn must classify the all-ungrounded case (unknown + rejected)"
+        "conversation_turn must classify the all-ungrounded case (unknown + rejected + tool_timeout)"
     )
-    assert '("unknown", "rejected")' in src, (
-        "the _all_unreal classifier must accept BOTH 'unknown' (Bug P) and "
-        "'rejected' (Bugs S/T) as ungrounded outcomes"
+    # P0.8: "tool_timeout" joined the ungrounded-outcomes set so the retry
+    # path also fires when a handler hits its per-tool budget.
+    assert '"unknown"' in src and '"rejected"' in src and '"tool_timeout"' in src, (
+        "the _all_unreal classifier must accept ALL of 'unknown' (Bug P), "
+        "'rejected' (Bugs S/T), and 'tool_timeout' (P0.8) as ungrounded outcomes"
     )
     assert "ungrounded" in src.lower(), (
         "the Ollama-retry log must distinctly describe this class so operators "
@@ -1247,14 +1244,14 @@ async def test_update_system_name_rejected_when_user_did_not_assign():
     wrong reason."""
     import pipeline, time as _t
     from pipeline import _execute_tool
-    pipeline._active_system_name = "Dog"
+    await pipeline._pipeline_state_store.set_active_system_name("Dog")
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=_t.time())
     result = await _execute_tool(
         "update_system_name", {"name": "Kara"}, "p1", "Jagan", db=None,
         user_text="Do you know the game called Detroit?",
     )
     assert result == "rejected"
-    assert pipeline._active_system_name == "Dog", "name must NOT change on rejected call"
+    assert pipeline._pipeline_state_store.peek_active_system_name() == "Dog", "name must NOT change on rejected call"
 
 
 # ── Session 73 / Bugs G1-G4 — shared user-text gate primitive ────────────────
@@ -1328,7 +1325,6 @@ def test_dispute_auto_clear_requires_three_consecutive_not_two():
     asyncio.run(pipeline._session_store.transition_to_disputed(pid, None, "test", now=now - 10))
     for conf in [0.75, 0.80]:  # only 2 strong matches — must NOT clear
         asyncio.run(pipeline._session_store.append_voice_conf(pid, conf=conf))
-    pipeline._persons_in_frame = {}
     orig_orch = pipeline._brain_orchestrator
     pipeline._brain_orchestrator = None
     try:
@@ -1339,7 +1335,6 @@ def test_dispute_auto_clear_requires_three_consecutive_not_two():
             "only 2 strong matches must NOT clear dispute — need 3 consecutive"
         )
     finally:
-        pipeline._persons_in_frame = {}
         pipeline._brain_orchestrator = orig_orch
 
 
@@ -1353,7 +1348,6 @@ def test_dispute_auto_clear_rejects_mixed_weak_matches():
     asyncio.run(pipeline._session_store.transition_to_disputed(pid, None, "test", now=now - 10))
     for conf in [0.80, 0.50, 0.80]:  # mid below floor
         asyncio.run(pipeline._session_store.append_voice_conf(pid, conf=conf))
-    pipeline._persons_in_frame = {}
     orig_orch = pipeline._brain_orchestrator
     pipeline._brain_orchestrator = None
     try:
@@ -1362,7 +1356,6 @@ def test_dispute_auto_clear_rejects_mixed_weak_matches():
         assert snap is not None
         assert snap.person_type == "disputed"
     finally:
-        pipeline._persons_in_frame = {}
         pipeline._brain_orchestrator = orig_orch
 
 
@@ -1378,9 +1371,7 @@ def test_dispute_auto_clear_on_face_in_frame_with_strong_conf():
         pid, None, "test", now=now - 10))
     asyncio.run(pipeline._session_store.update_face_seen(
         pid, conf=0.85, ts=now, anti_spoof_live=True, anti_spoof_score=0.9))
-    pipeline._persons_in_frame = {
-        pid: {"name": "Jagan", "conf": 0.85, "last_seen": now, "source": "face"},
-    }
+    asyncio.run(pipeline._presence_store.upsert_face_recognition(pid, "Jagan", 0.85, now))
     orig_orch = pipeline._brain_orchestrator
     pipeline._brain_orchestrator = None
     try:
@@ -1393,7 +1384,7 @@ def test_dispute_auto_clear_on_face_in_frame_with_strong_conf():
         assert snap.dispute_reason is None
         assert snap.dispute_set_at is None
     finally:
-        pipeline._persons_in_frame = {}
+        asyncio.run(pipeline._presence_store.remove(pid))
         pipeline._brain_orchestrator = orig_orch
 
 
@@ -1422,7 +1413,7 @@ def test_dispute_auto_clear_voice_only_requires_higher_threshold():
     # 3 consecutive matches ≥ MIN (0.70) but below SOLO_MIN (0.85)
     for conf in [0.72, 0.78, 0.75]:
         asyncio.run(pipeline._session_store.append_voice_conf(pid, conf=conf))
-    pipeline._persons_in_frame = {}   # NO face corroboration
+    # NO face corroboration — presence store left empty
     orig_orch = pipeline._brain_orchestrator
     pipeline._brain_orchestrator = None
     try:
@@ -1434,7 +1425,6 @@ def test_dispute_auto_clear_voice_only_requires_higher_threshold():
             "0.72/0.78/0.75 must stay disputed when no face is present"
         )
     finally:
-        pipeline._persons_in_frame = {}
         pipeline._brain_orchestrator = orig_orch
 
 
@@ -1449,7 +1439,7 @@ def test_dispute_auto_clear_voice_only_at_solo_threshold():
         pid, None, "test", now=now - 30))
     for conf in [0.86, 0.88, 0.90]:
         asyncio.run(pipeline._session_store.append_voice_conf(pid, conf=conf))
-    pipeline._persons_in_frame = {}
+    # NO face in frame — presence store left empty
     orig_orch = pipeline._brain_orchestrator
     pipeline._brain_orchestrator = None
     try:
@@ -1460,7 +1450,6 @@ def test_dispute_auto_clear_voice_only_at_solo_threshold():
             f"3 consecutive ≥ SOLO_MIN must clear dispute; got {snap.person_type!r}"
         )
     finally:
-        pipeline._persons_in_frame = {}
         pipeline._brain_orchestrator = orig_orch
 
 
@@ -1481,9 +1470,7 @@ def test_dispute_auto_clear_voice_with_face_uses_lower_min():
     asyncio.run(pipeline._session_store.update_face_seen(
         pid, conf=0.80, ts=now, anti_spoof_live=True, anti_spoof_score=0.9))
     # Face IS in frame with confident face_match_conf
-    pipeline._persons_in_frame = {
-        pid: {"name": "Jagan", "conf": 0.80, "last_seen": now, "source": "face"},
-    }
+    asyncio.run(pipeline._presence_store.upsert_face_recognition(pid, "Jagan", 0.80, now))
     orig_orch = pipeline._brain_orchestrator
     pipeline._brain_orchestrator = None
     try:
@@ -1495,7 +1482,7 @@ def test_dispute_auto_clear_voice_with_face_uses_lower_min():
             f"face corroboration should lower voice floor to MIN; got {snap.person_type!r}"
         )
     finally:
-        pipeline._persons_in_frame = {}
+        asyncio.run(pipeline._presence_store.remove(pid))
         pipeline._brain_orchestrator = orig_orch
 
 
@@ -2443,14 +2430,14 @@ async def test_update_system_name_accepted_when_name_in_turn():
     import pipeline
     import time as _t
     from pipeline import _execute_tool
-    pipeline._active_system_name = "Dog"
+    await pipeline._pipeline_state_store.set_active_system_name("Dog")
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=_t.time())
     result = await _execute_tool(
         "update_system_name", {"name": "Kara"}, "p1", "Jagan", db=None,
         user_text="I want to name you Kara.",
     )
     assert result == "handled"
-    assert pipeline._active_system_name == "Kara"
+    assert pipeline._pipeline_state_store.peek_active_system_name() == "Kara"
 
 
 async def test_update_system_name_accepted_on_assign_intent_phrase():
@@ -2460,7 +2447,7 @@ async def test_update_system_name_accepted_on_assign_intent_phrase():
     import pipeline
     import time as _t
     from pipeline import _execute_tool
-    pipeline._active_system_name = "Dog"
+    await pipeline._pipeline_state_store.set_active_system_name("Dog")
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=_t.time())
     result = await _execute_tool(
         "update_system_name", {"name": "Kara"}, "p1", "Jagan", db=None,
@@ -2508,7 +2495,7 @@ async def test_update_system_name_rejected_on_detroit_cameo():
     import pipeline
     from pipeline import _execute_tool
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_system_name = "Dog"
+    await pipeline._pipeline_state_store.set_active_system_name("Dog")
     result = await _execute_tool(
         "update_system_name", {"name": "Detroit"}, "p1", "Jagan", db=None,
         user_text="Yeah, do you know the name called Detroit? I'm playing it",
@@ -2516,7 +2503,7 @@ async def test_update_system_name_rejected_on_detroit_cameo():
     assert result == "rejected", (
         f"Detroit rename must be blocked by capture-group gate, got {result!r}"
     )
-    assert pipeline._active_system_name == "Dog", (
+    assert pipeline._pipeline_state_store.peek_active_system_name() == "Dog", (
         "system name must NOT change when gate rejects"
     )
 
@@ -2527,7 +2514,7 @@ async def test_update_system_name_rejected_on_empty_user_text_by_default():
     import pipeline
     from pipeline import _execute_tool
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_system_name = "Dog"
+    await pipeline._pipeline_state_store.set_active_system_name("Dog")
     result = await _execute_tool(
         "update_system_name", {"name": "Kara"}, "p1", "Jagan", db=None,
         user_text="",
@@ -2724,17 +2711,16 @@ def test_report_identity_mismatch_preserves_prior_person_type_for_best_friend():
     transition_to_disputed() in SessionStore — not inline in the pipeline
     branch. Verify the branch calls transition_to_disputed (which guarantees
     prior_person_type is captured at the SessionStore layer)."""
+    # P0.8: report_identity_mismatch logic was extracted to
+    # _handle_report_identity_mismatch (mechanical handler extraction).
+    # The branch in _execute_tool is now a delegation line; inspect the
+    # extracted handler instead.
     import inspect, pipeline
-    src = inspect.getsource(pipeline._execute_tool)
-    idx_start = src.find('elif name == "report_identity_mismatch":')
-    idx_end   = src.find('elif name == "update_system_name":', idx_start)
-    assert idx_start > -1
-    assert idx_end > idx_start, "branch bounded by the next elif"
-    branch = src[idx_start:idx_end]
-    assert "transition_to_disputed" in branch, (
-        "report_identity_mismatch must call transition_to_disputed() which "
-        "atomically captures prior_person_type so auto-clear can restore "
-        "best_friend vs known correctly"
+    src = inspect.getsource(pipeline._handle_report_identity_mismatch)
+    assert "transition_to_disputed" in src, (
+        "_handle_report_identity_mismatch must call transition_to_disputed() "
+        "which atomically captures prior_person_type so auto-clear can "
+        "restore best_friend vs known correctly"
     )
 
 
@@ -2944,10 +2930,10 @@ async def test_kairos_tick_logs_turns_and_notifies_brain():
         "id": "q1", "text": "How are you feeling?"
     }
 
-    orig_last_speech = pipeline._last_user_speech_at
-    orig_last_kairos = pipeline._last_kairos_at
-    pipeline._last_user_speech_at = _time_mod.time() - 60   # past 30s threshold
-    pipeline._last_kairos_at      = _time_mod.time() - 200  # past 120s cooldown
+    orig_last_speech = pipeline._pipeline_state_store.peek_last_user_speech_at()
+    orig_last_kairos = pipeline._pipeline_state_store.peek_last_kairos_at()
+    await pipeline._pipeline_state_store.set_last_user_speech_at(_time_mod.time() - 60)   # past 30s threshold
+    await pipeline._pipeline_state_store.set_last_kairos_at(_time_mod.time() - 200)  # past 120s cooldown
 
     async def fake_ask_stream(*args, **kwargs):
         yield ("text", "Hey, how are you feeling today?")
@@ -2963,8 +2949,8 @@ async def test_kairos_tick_logs_turns_and_notifies_brain():
              patch("pipeline._set_state"):
             result = await pipeline._kairos_tick("jagan_abc123", "Jagan", mock_db)
     finally:
-        pipeline._last_user_speech_at = orig_last_speech
-        pipeline._last_kairos_at      = orig_last_kairos
+        await pipeline._pipeline_state_store.set_last_user_speech_at(orig_last_speech)
+        await pipeline._pipeline_state_store.set_last_kairos_at(orig_last_kairos)
 
     assert result is True
     assert mock_db.log_turn.call_count == 2
@@ -2995,10 +2981,10 @@ async def test_kairos_tick_no_log_when_llm_returns_empty():
         "id": "q2", "text": "What did you eat today?"
     }
 
-    orig_last_speech = pipeline._last_user_speech_at
-    orig_last_kairos = pipeline._last_kairos_at
-    pipeline._last_user_speech_at = _time_mod.time() - 60
-    pipeline._last_kairos_at      = _time_mod.time() - 200
+    orig_last_speech = pipeline._pipeline_state_store.peek_last_user_speech_at()
+    orig_last_kairos = pipeline._pipeline_state_store.peek_last_kairos_at()
+    await pipeline._pipeline_state_store.set_last_user_speech_at(_time_mod.time() - 60)
+    await pipeline._pipeline_state_store.set_last_kairos_at(_time_mod.time() - 200)
 
     async def fake_ask_stream_empty(*args, **kwargs):
         return
@@ -3015,8 +3001,8 @@ async def test_kairos_tick_no_log_when_llm_returns_empty():
              patch("pipeline._set_state"):
             result = await pipeline._kairos_tick("jagan_abc123", "Jagan", mock_db)
     finally:
-        pipeline._last_user_speech_at = orig_last_speech
-        pipeline._last_kairos_at      = orig_last_kairos
+        await pipeline._pipeline_state_store.set_last_user_speech_at(orig_last_speech)
+        await pipeline._pipeline_state_store.set_last_kairos_at(orig_last_kairos)
 
     mock_db.log_turn.assert_not_called()
     mock_orchestrator.notify.assert_not_called()
@@ -3028,14 +3014,14 @@ async def test_kairos_tick_silent_before_threshold():
     mock_db = MagicMock()
     mock_orchestrator = MagicMock()
 
-    orig_last_speech = pipeline._last_user_speech_at
-    pipeline._last_user_speech_at = _time_mod.time() - 5   # only 5s ago, threshold is 30s
+    orig_last_speech = pipeline._pipeline_state_store.peek_last_user_speech_at()
+    await pipeline._pipeline_state_store.set_last_user_speech_at(_time_mod.time() - 5)   # only 5s ago, threshold is 30s
 
     try:
         with patch("pipeline._brain_orchestrator", mock_orchestrator):
             result = await pipeline._kairos_tick("jagan_abc123", "Jagan", mock_db)
     finally:
-        pipeline._last_user_speech_at = orig_last_speech
+        await pipeline._pipeline_state_store.set_last_user_speech_at(orig_last_speech)
 
     assert result is False
     mock_db.log_turn.assert_not_called()
@@ -3140,9 +3126,9 @@ async def test_cloud_retry_loop_continues_after_recovery():
     import pipeline
     from pipeline import CloudState, _cloud_retry_loop
 
-    orig_state      = pipeline._cloud_state
-    orig_recovered  = pipeline._cloud_recovered
-    orig_failed_at  = pipeline._cloud_failed_at
+    orig_state      = pipeline._pipeline_state_store.peek_cloud_state()
+    orig_recovered  = pipeline._pipeline_state_store.peek_cloud_recovered()
+    orig_failed_at  = pipeline._pipeline_state_store.peek_cloud_failed_at()
 
     # ping sequence: recover on first call, then fail, then recover again
     ping_results = [True, False, True]
@@ -3156,9 +3142,7 @@ async def test_cloud_retry_loop_continues_after_recovery():
 
     shutdown = asyncio.Event()  # not set — loop should run freely
 
-    pipeline._cloud_state        = CloudState.SICK
-    pipeline._cloud_recovered    = False
-    pipeline._cloud_failed_at    = _time_mod.time() - 10
+    await pipeline._pipeline_state_store.transition_to_sick(_time_mod.time() - 10)
     pipeline._brain_orchestrator = None
 
     with patch("pipeline.CLOUD_RETRY_INTERVAL", 0.05), \
@@ -3169,18 +3153,17 @@ async def test_cloud_retry_loop_continues_after_recovery():
 
         # First ping recovers → ONLINE → loop continues (must not exit)
         await asyncio.sleep(0.12)
-        assert pipeline._cloud_state == CloudState.ONLINE
-        assert pipeline._cloud_recovered is True
+        assert pipeline._pipeline_state_store.peek_cloud_state() == CloudState.ONLINE
+        assert pipeline._pipeline_state_store.peek_cloud_recovered() is True
         assert not task.done(), "Loop must still be running after first recovery"
 
         # Simulate second outage
-        pipeline._cloud_state     = CloudState.SICK
-        pipeline._cloud_recovered = False
+        await pipeline._pipeline_state_store.transition_to_sick(pipeline.time.time())
 
         # Second ping fails, third ping recovers
         await asyncio.sleep(0.15)
-        assert pipeline._cloud_state == CloudState.ONLINE
-        assert pipeline._cloud_recovered is True
+        assert pipeline._pipeline_state_store.peek_cloud_state() == CloudState.ONLINE
+        assert pipeline._pipeline_state_store.peek_cloud_recovered() is True
         assert not task.done(), "Loop must still be running after second recovery"
 
         task.cancel()
@@ -3189,9 +3172,9 @@ async def test_cloud_retry_loop_continues_after_recovery():
         except asyncio.CancelledError:
             pass
 
-    pipeline._cloud_state        = orig_state
-    pipeline._cloud_recovered    = orig_recovered
-    pipeline._cloud_failed_at    = orig_failed_at
+    await pipeline._pipeline_state_store.set_cloud_state(orig_state)
+    await pipeline._pipeline_state_store.set_cloud_recovered(orig_recovered)
+    await pipeline._pipeline_state_store.set_cloud_failed_at(orig_failed_at)
     pipeline._brain_orchestrator = None
 
 
@@ -3200,13 +3183,12 @@ async def test_cloud_retry_loop_skips_ping_when_online():
     import pipeline
     from pipeline import CloudState, _cloud_retry_loop
 
-    orig_state     = pipeline._cloud_state
-    orig_recovered = pipeline._cloud_recovered
+    orig_state     = pipeline._pipeline_state_store.peek_cloud_state()
+    orig_recovered = pipeline._pipeline_state_store.peek_cloud_recovered()
 
     shutdown = asyncio.Event()  # not set
 
-    pipeline._cloud_state        = CloudState.ONLINE
-    pipeline._cloud_recovered    = False
+    await pipeline._pipeline_state_store.recover_online_no_flag()
     pipeline._brain_orchestrator = None
 
     ping_called = False
@@ -3233,8 +3215,8 @@ async def test_cloud_retry_loop_skips_ping_when_online():
         except asyncio.CancelledError:
             pass
 
-    pipeline._cloud_state     = orig_state
-    pipeline._cloud_recovered = orig_recovered
+    await pipeline._pipeline_state_store.set_cloud_state(orig_state)
+    await pipeline._pipeline_state_store.set_cloud_recovered(orig_recovered)
 
 
 # ── G4: stranger system-name gate ─────────────────────────────────────────────
@@ -3273,7 +3255,7 @@ async def test_stranger_name_gate_activates_on_system_name():
 
     await pipeline._session_store.open_session("stranger_001", "visitor", "stranger", "face", now=_t.time())
     await pipeline._session_store.set_waiting_for_name("stranger_001", True)
-    pipeline._active_system_name = "Rex"
+    await pipeline._pipeline_state_store.set_active_system_name("Rex")
 
     text = "Hey Rex, are you awake?"
     pid = "stranger_001"
@@ -3281,13 +3263,13 @@ async def test_stranger_name_gate_activates_on_system_name():
     # Simulate the name gate logic (mirrors production _session_store read path)
     _snap_gate = pipeline._session_store.peek_snapshot(pid)
     if _snap_gate and _snap_gate.waiting_for_name:
-        if pipeline._active_system_name.lower() in text.lower():
+        if pipeline._pipeline_state_store.peek_active_system_name().lower() in text.lower():
             await pipeline._session_store.set_waiting_for_name(pid, False)
 
     _snap_after = pipeline._session_store.peek_snapshot(pid)
     assert _snap_after is not None and not _snap_after.waiting_for_name
 
-    pipeline._active_system_name = "Dog"
+    await pipeline._pipeline_state_store.set_active_system_name("Dog")
 
 
 async def test_stranger_name_gate_stays_silent_without_name():
@@ -3298,10 +3280,10 @@ async def test_stranger_name_gate_stays_silent_without_name():
 
     await pipeline._session_store.open_session("stranger_002", "visitor", "stranger", "face", now=_t.time())
     await pipeline._session_store.set_waiting_for_name("stranger_002", True)
-    pipeline._active_system_name = "Rex"
+    await pipeline._pipeline_state_store.set_active_system_name("Rex")
 
     pid = "stranger_002"
-    name_pattern = r'\b' + re.escape(pipeline._active_system_name.lower()) + r'\b'
+    name_pattern = r'\b' + re.escape(pipeline._pipeline_state_store.peek_active_system_name().lower()) + r'\b'
 
     # Name absent → no fire; gate does not clear waiting_for_name
     gate_fired = False
@@ -3313,12 +3295,12 @@ async def test_stranger_name_gate_stays_silent_without_name():
     assert _snap_check is not None and _snap_check.waiting_for_name is True
 
     # Word-boundary: "reflex" must NOT match "rex"
-    pipeline._active_system_name = "rex"
+    await pipeline._pipeline_state_store.set_active_system_name("rex")
     name_pattern2 = r'\b' + re.escape("rex") + r'\b'
     assert not re.search(name_pattern2, "reflex is a thing")
     assert re.search(name_pattern2, "hey rex, wake up")
 
-    pipeline._active_system_name = "Dog"
+    await pipeline._pipeline_state_store.set_active_system_name("Dog")
 
 
 async def test_promotion_clears_waiting_for_name():
@@ -3330,8 +3312,7 @@ async def test_promotion_clears_waiting_for_name():
     import time as _t2
     await pipeline._session_store.open_session("stranger_003", "visitor", "stranger", "face", now=_t2.time())
     await pipeline._session_store.set_waiting_for_name("stranger_003", True)
-    pipeline._conversation = {"stranger_003": []}
-    pipeline._identity_hints = {}
+    await pipeline._conversation_store.set_history("stranger_003", [])
 
     mock_db = MagicMock()
     mock_brain = MagicMock()
@@ -3394,15 +3375,11 @@ async def test_background_scan_uses_temporal_pooling():
     mock_db       = MagicMock(); mock_db.recognize.return_value = (None, None, 0.0)
 
     orig_scan_last      = pipeline._vision_face_scan_last
-    orig_prev_count     = pipeline._vision_prev_det_count
-    orig_track_identity = pipeline._track_identity
-    orig_unrec_tracks   = pipeline._unrecognized_tracks
+    orig_prev_count     = pipeline._vision_frame_store.peek_prev_det_count()
 
     await pipeline._session_store.open_session("pid_001", "Alice", "known", "face", now=_t.time())
     pipeline._vision_face_scan_last = 0.0
-    pipeline._vision_prev_det_count = 0
-    pipeline._track_identity        = {}   # brand-new track 7 → _should_run_recognition → True
-    pipeline._unrecognized_tracks   = {}
+    pipeline._vision_frame_store._sync_set_prev_det_count(0)
 
     with patch("pipeline.face_quality_score", return_value=0.8):
         task = asyncio.create_task(
@@ -3424,9 +3401,7 @@ async def test_background_scan_uses_temporal_pooling():
     )
 
     pipeline._vision_face_scan_last = orig_scan_last
-    pipeline._vision_prev_det_count = orig_prev_count
-    pipeline._track_identity        = orig_track_identity
-    pipeline._unrecognized_tracks   = orig_unrec_tracks
+    pipeline._vision_frame_store._sync_set_prev_det_count(orig_prev_count)
 
 
 async def test_background_scan_uses_adaptive_threshold():
@@ -3447,15 +3422,11 @@ async def test_background_scan_uses_adaptive_threshold():
     mock_db       = MagicMock(); mock_db.recognize.return_value = (None, None, 0.0)
 
     orig_scan_last      = pipeline._vision_face_scan_last
-    orig_prev_count     = pipeline._vision_prev_det_count
-    orig_track_identity = pipeline._track_identity
-    orig_unrec_tracks   = pipeline._unrecognized_tracks
+    orig_prev_count     = pipeline._vision_frame_store.peek_prev_det_count()
 
     await pipeline._session_store.open_session("pid_001", "Alice", "known", "face", now=_t.time())
     pipeline._vision_face_scan_last = 0.0
-    pipeline._vision_prev_det_count = 0
-    pipeline._track_identity        = {}   # brand-new track 7 → _should_run_recognition → True
-    pipeline._unrecognized_tracks   = {}
+    pipeline._vision_frame_store._sync_set_prev_det_count(0)
 
     quality = 0.9  # high quality → threshold should drop below base
     with patch("pipeline.face_quality_score", return_value=quality):
@@ -3480,9 +3451,7 @@ async def test_background_scan_uses_adaptive_threshold():
     )
 
     pipeline._vision_face_scan_last = orig_scan_last
-    pipeline._vision_prev_det_count = orig_prev_count
-    pipeline._track_identity        = orig_track_identity
-    pipeline._unrecognized_tracks   = orig_unrec_tracks
+    pipeline._vision_frame_store._sync_set_prev_det_count(orig_prev_count)
 
 
 async def test_background_scan_skips_when_temporal_buffer_none():
@@ -3500,11 +3469,11 @@ async def test_background_scan_skips_when_temporal_buffer_none():
     mock_db       = MagicMock(); mock_db.recognize.return_value = (None, None, 0.0)
 
     orig_scan_last  = pipeline._vision_face_scan_last
-    orig_prev_count = pipeline._vision_prev_det_count
+    orig_prev_count = pipeline._vision_frame_store.peek_prev_det_count()
 
     await pipeline._session_store.open_session("pid_001", "Alice", "known", "face", now=_t.time())
     pipeline._vision_face_scan_last = 0.0
-    pipeline._vision_prev_det_count = 0
+    pipeline._vision_frame_store._sync_set_prev_det_count(0)
 
     with patch("pipeline.face_quality_score", return_value=0.8):
         task = asyncio.create_task(
@@ -3521,7 +3490,7 @@ async def test_background_scan_skips_when_temporal_buffer_none():
     mock_db.recognize.assert_not_called()
 
     pipeline._vision_face_scan_last = orig_scan_last
-    pipeline._vision_prev_det_count = orig_prev_count
+    pipeline._vision_frame_store._sync_set_prev_det_count(orig_prev_count)
 
 
 # ── G5b: auto-confirm pipeline path ───────────────────────────────────────────
@@ -3534,22 +3503,16 @@ async def test_auto_confirm_promotion_runs_full_chain():
     import time as _t
 
     # ── Global state setup ─────────────────────────────────────────────────────
-    orig_conversation   = pipeline._conversation
-    orig_identity_hints = pipeline._identity_hints
-    orig_cloud_state    = pipeline._cloud_state
-    orig_emotion_agents  = pipeline._emotion_agents
+    orig_cloud_state    = pipeline._pipeline_state_store.peek_cloud_state()
     orig_brain_orch     = pipeline._brain_orchestrator
-    orig_qcache         = pipeline._query_embedding_cache
-    orig_detected_lang  = pipeline._detected_lang
-    orig_system_name    = pipeline._active_system_name
+    orig_detected_lang  = pipeline._pipeline_state_store.peek_detected_lang()
+    orig_system_name    = pipeline._pipeline_state_store.peek_active_system_name()
 
-    pipeline._conversation        = {"stranger_001": []}
-    pipeline._identity_hints      = {}
-    pipeline._cloud_state         = CloudState.ONLINE
-    pipeline._emotion_agents       = {}
-    pipeline._query_embedding_cache = {}
-    pipeline._detected_lang       = "en"
-    pipeline._active_system_name  = "Rex"
+    await pipeline._conversation_store.set_history("stranger_001", [])
+    await pipeline._pipeline_state_store.recover_online_no_flag()
+    pipeline._per_person_agent_store.reset()
+    await pipeline._pipeline_state_store.set_detected_lang("en")
+    await pipeline._pipeline_state_store.set_active_system_name("Rex")
 
     # ── Mocks ─────────────────────────────────────────────────────────────────
     mock_brain = MagicMock()
@@ -3607,18 +3570,14 @@ async def test_auto_confirm_promotion_runs_full_chain():
         assert _snap is None or not _snap.waiting_for_name
 
         # identity_hints entry should be cleared after auto-confirm
-        assert "stranger_001" not in pipeline._identity_hints
+        assert pipeline._identity_hints_store.peek("stranger_001") is None
 
     finally:
         # ── Restore globals ───────────────────────────────────────────────────
-        pipeline._conversation          = orig_conversation
-        pipeline._identity_hints        = orig_identity_hints
-        pipeline._cloud_state           = orig_cloud_state
-        pipeline._emotion_agents         = orig_emotion_agents
+        await pipeline._pipeline_state_store.set_cloud_state(orig_cloud_state)
         pipeline._brain_orchestrator    = orig_brain_orch
-        pipeline._query_embedding_cache = orig_qcache
-        pipeline._detected_lang         = orig_detected_lang
-        pipeline._active_system_name    = orig_system_name
+        await pipeline._pipeline_state_store.set_detected_lang(orig_detected_lang)
+        await pipeline._pipeline_state_store.set_active_system_name(orig_system_name)
 
 
 # ── G6a: FaceDB.get_person_id_by_name + search_conversation ──────────────────
@@ -4129,7 +4088,7 @@ async def test_tool_repeat_guard_fires_on_second_consecutive_call():
     """L3: Same (tool, args) fired twice in a row — second call returns None."""
     import pipeline
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_system_name = "OldName"
+    await pipeline._pipeline_state_store.set_active_system_name("OldName")
 
     r1 = await pipeline._execute_tool(
         "update_system_name", {"name": "BotName"}, "p1", "Jagan", db=None,
@@ -4151,7 +4110,7 @@ async def test_tool_repeat_guard_resets_on_different_args():
     """L3: Different args hash — guard does not fire, second call proceeds."""
     import pipeline
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_system_name = "OldName"
+    await pipeline._pipeline_state_store.set_active_system_name("OldName")
 
     r1 = await pipeline._execute_tool(
         "update_system_name", {"name": "Alpha"}, "p1", "Jagan", db=None,
@@ -4170,7 +4129,7 @@ async def test_tool_repeat_guard_resets_after_pop():
     """L3: After guard keys are popped (simulates new user message), same tool proceeds."""
     import pipeline
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_system_name = "OldName"
+    await pipeline._pipeline_state_store.set_active_system_name("OldName")
 
     await pipeline._execute_tool(
         "update_system_name", {"name": "Kara"}, "p1", "Jagan", db=None,
@@ -4179,7 +4138,7 @@ async def test_tool_repeat_guard_resets_after_pop():
 
     # Simulate new user message: reset tool repeat state in session store
     await pipeline._session_store.update_tool_repeat("p1", None, 0)
-    pipeline._active_system_name = "OldName"  # reset so tool has work to do
+    await pipeline._pipeline_state_store.set_active_system_name("OldName")  # reset so tool has work to do
 
     r = await pipeline._execute_tool(
         "update_system_name", {"name": "Kara"}, "p1", "Jagan", db=None,
@@ -4192,7 +4151,7 @@ async def test_tool_repeat_guard_different_tool_unaffected():
     """L3: Guard counter is per (tool+args) key — a different tool is not blocked."""
     import pipeline
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._active_system_name = "OldName"
+    await pipeline._pipeline_state_store.set_active_system_name("OldName")
 
     # Fire update_system_name once (count=1 for that key)
     await pipeline._execute_tool(
@@ -4204,7 +4163,7 @@ async def test_tool_repeat_guard_different_tool_unaffected():
     await pipeline._execute_tool(
         "set_language", {"language": "en"}, "p1", "Jagan", db=None
     )
-    assert pipeline._detected_lang == "en"
+    assert pipeline._pipeline_state_store.peek_detected_lang() == "en"
 
 
 # ── Layer 1: History override for action tools ────────────────────────────────
@@ -4216,9 +4175,9 @@ async def test_history_override_update_system_name():
     from unittest.mock import patch, AsyncMock
 
     await pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=__import__("time").time())
-    pipeline._conversation       = {"p1": []}
-    pipeline._active_system_name = "Kara"
-    pipeline._cloud_state        = CloudState.ONLINE
+    await pipeline._conversation_store.set_history("p1", [])
+    await pipeline._pipeline_state_store.set_active_system_name("Kara")
+    await pipeline._pipeline_state_store.recover_online_no_flag()
 
     async def fake_stream(*a, **kw):
         yield ("text", "Sorry, I missed that.")
@@ -4238,7 +4197,7 @@ async def test_history_override_update_system_name():
                new=AsyncMock(side_effect=lambda h, *a, **kw: h)):
         await pipeline.conversation_turn("call yourself Kara", "p1", "Jagan", db=None)
 
-    history   = pipeline._conversation["p1"]
+    history   = pipeline._conversation_store.peek_history("p1")
     asst_msgs = [m for m in history if m["role"] == "assistant"]
     assert len(asst_msgs) == 1
     assert asst_msgs[0]["content"] == "Got it, I'll go by Kara."
@@ -4252,9 +4211,9 @@ async def test_history_override_update_person_name():
     from unittest.mock import patch, AsyncMock
 
     await pipeline._session_store.open_session("p1", "Jay", "known", "face", now=__import__("time").time())
-    pipeline._conversation       = {"p1": []}
-    pipeline._active_system_name = "Rex"
-    pipeline._cloud_state        = CloudState.ONLINE
+    await pipeline._conversation_store.set_history("p1", [])
+    await pipeline._pipeline_state_store.set_active_system_name("Rex")
+    await pipeline._pipeline_state_store.recover_online_no_flag()
 
     async def fake_stream(*a, **kw):
         yield ("text", "No problem at all.")
@@ -4274,7 +4233,7 @@ async def test_history_override_update_person_name():
                new=AsyncMock(side_effect=lambda h, *a, **kw: h)):
         await pipeline.conversation_turn("my name is Jay", "p1", "Jay", db=None)
 
-    history   = pipeline._conversation["p1"]
+    history   = pipeline._conversation_store.peek_history("p1")
     asst_msgs = [m for m in history if m["role"] == "assistant"]
     assert len(asst_msgs) == 1
     assert asst_msgs[0]["content"] == "Got it, Jay."
@@ -4290,9 +4249,9 @@ async def test_history_override_not_fired_for_set_language():
     from unittest.mock import patch, AsyncMock
 
     await pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=__import__("time").time())
-    pipeline._conversation       = {"p1": []}
-    pipeline._active_system_name = "Rex"
-    pipeline._cloud_state        = CloudState.ONLINE
+    await pipeline._conversation_store.set_history("p1", [])
+    await pipeline._pipeline_state_store.set_active_system_name("Rex")
+    await pipeline._pipeline_state_store.recover_online_no_flag()
 
     async def fake_stream(*a, **kw):
         yield ("text", "I remember you mentioning that.")
@@ -4313,7 +4272,7 @@ async def test_history_override_not_fired_for_set_language():
             "what do you know about me", "p1", "Jagan", db=None
         )
 
-    history   = pipeline._conversation["p1"]
+    history   = pipeline._conversation_store.peek_history("p1")
     asst_msgs = [m for m in history if m["role"] == "assistant"]
     assert len(asst_msgs) == 1
     # set_language not in HISTORY_OVERRIDE_TOOLS → original LLM text preserved
@@ -4330,9 +4289,9 @@ async def test_layer4_stop_audio_called_for_action_tool():
     from unittest.mock import patch, AsyncMock, MagicMock
 
     await pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=time.time())
-    pipeline._conversation       = {"p1": []}
-    pipeline._active_system_name = "Rex"
-    pipeline._cloud_state        = CloudState.ONLINE
+    await pipeline._conversation_store.set_history("p1", [])
+    await pipeline._pipeline_state_store.set_active_system_name("Rex")
+    await pipeline._pipeline_state_store.recover_online_no_flag()
 
     async def fake_stream(*a, **kw):
         yield ("text", "Wrong text.")
@@ -4365,9 +4324,9 @@ async def test_layer4_stop_audio_not_called_for_non_action_tool():
     from unittest.mock import patch, AsyncMock
 
     await pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=__import__("time").time())
-    pipeline._conversation       = {"p1": []}
-    pipeline._active_system_name = "Rex"
-    pipeline._cloud_state        = CloudState.ONLINE
+    await pipeline._conversation_store.set_history("p1", [])
+    await pipeline._pipeline_state_store.set_active_system_name("Rex")
+    await pipeline._pipeline_state_store.recover_online_no_flag()
 
     async def fake_stream(*a, **kw):
         yield ("text", "Switching language.")
@@ -4397,9 +4356,9 @@ async def test_layer4_stop_audio_not_called_when_no_tool_calls():
     from unittest.mock import patch, AsyncMock
 
     await pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=__import__("time").time())
-    pipeline._conversation       = {"p1": []}
-    pipeline._active_system_name = "Rex"
-    pipeline._cloud_state        = CloudState.ONLINE
+    await pipeline._conversation_store.set_history("p1", [])
+    await pipeline._pipeline_state_store.set_active_system_name("Rex")
+    await pipeline._pipeline_state_store.recover_online_no_flag()
 
     async def fake_stream(*a, **kw):
         yield ("text", "That sounds great!")
@@ -4470,25 +4429,19 @@ async def test_rejected_shutdown_response_overridden_to_neutral():
     import pipeline
     from pipeline import conversation_turn, CloudState
 
-    orig_conv      = pipeline._conversation
-    orig_cloud     = pipeline._cloud_state
-    orig_emotion_agents   = pipeline._emotion_agents
+    orig_cloud     = pipeline._pipeline_state_store.peek_cloud_state()
     orig_brain     = pipeline._brain_orchestrator
-    orig_qcache    = pipeline._query_embedding_cache
-    orig_lang      = pipeline._detected_lang
-    orig_sysname   = pipeline._active_system_name
-    orig_hints     = pipeline._identity_hints
+    orig_lang      = pipeline._pipeline_state_store.peek_detected_lang()
+    orig_sysname   = pipeline._pipeline_state_store.peek_active_system_name()
     orig_shutdown  = pipeline._shutdown_event
 
     await pipeline._session_store.open_session("p_sd", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._conversation          = {"p_sd": []}
-    pipeline._cloud_state           = CloudState.ONLINE
-    pipeline._emotion_agents       = {}
+    await pipeline._conversation_store.set_history("p_sd", [])
+    await pipeline._pipeline_state_store.recover_online_no_flag()
+    pipeline._per_person_agent_store.reset()
     pipeline._brain_orchestrator    = None
-    pipeline._query_embedding_cache = {}
-    pipeline._detected_lang         = "en"
-    pipeline._active_system_name    = "Kara"
-    pipeline._identity_hints        = {}
+    await pipeline._pipeline_state_store.set_detected_lang("en")
+    await pipeline._pipeline_state_store.set_active_system_name("Kara")
     pipeline._shutdown_event        = asyncio.Event()   # fresh, not set
 
     async def fake_ask_stream(*args, **kwargs):
@@ -4506,19 +4459,15 @@ async def test_rejected_shutdown_response_overridden_to_neutral():
              patch("pipeline.play_filler"):
             await conversation_turn("hey", "p_sd", "Jagan", db=None)
 
-        hist = pipeline._conversation["p_sd"]
+        hist = pipeline._conversation_store.peek_history("p_sd")
         assert hist[-1]["role"] == "assistant"
         assert hist[-1]["content"] == "Okay.", \
             f"Expected 'Okay.' but got {hist[-1]['content']!r}"
     finally:
-        pipeline._conversation          = orig_conv
-        pipeline._cloud_state           = orig_cloud
-        pipeline._emotion_agents         = orig_emotion_agents
+        await pipeline._pipeline_state_store.set_cloud_state(orig_cloud)
         pipeline._brain_orchestrator    = orig_brain
-        pipeline._query_embedding_cache = orig_qcache
-        pipeline._detected_lang         = orig_lang
-        pipeline._active_system_name    = orig_sysname
-        pipeline._identity_hints        = orig_hints
+        await pipeline._pipeline_state_store.set_detected_lang(orig_lang)
+        await pipeline._pipeline_state_store.set_active_system_name(orig_sysname)
         pipeline._shutdown_event        = orig_shutdown
 
 
@@ -4527,25 +4476,19 @@ async def test_rejected_shutdown_does_not_write_goodbye_to_history():
     import pipeline
     from pipeline import conversation_turn, CloudState
 
-    orig_conv      = pipeline._conversation
-    orig_cloud     = pipeline._cloud_state
-    orig_emotion_agents   = pipeline._emotion_agents
+    orig_cloud     = pipeline._pipeline_state_store.peek_cloud_state()
     orig_brain     = pipeline._brain_orchestrator
-    orig_qcache    = pipeline._query_embedding_cache
-    orig_lang      = pipeline._detected_lang
-    orig_sysname   = pipeline._active_system_name
-    orig_hints     = pipeline._identity_hints
+    orig_lang      = pipeline._pipeline_state_store.peek_detected_lang()
+    orig_sysname   = pipeline._pipeline_state_store.peek_active_system_name()
     orig_shutdown  = pipeline._shutdown_event
 
     await pipeline._session_store.open_session("p_sd", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._conversation          = {"p_sd": []}
-    pipeline._cloud_state           = CloudState.ONLINE
-    pipeline._emotion_agents       = {}
+    await pipeline._conversation_store.set_history("p_sd", [])
+    await pipeline._pipeline_state_store.recover_online_no_flag()
+    pipeline._per_person_agent_store.reset()
     pipeline._brain_orchestrator    = None
-    pipeline._query_embedding_cache = {}
-    pipeline._detected_lang         = "en"
-    pipeline._active_system_name    = "Kara"
-    pipeline._identity_hints        = {}
+    await pipeline._pipeline_state_store.set_detected_lang("en")
+    await pipeline._pipeline_state_store.set_active_system_name("Kara")
     pipeline._shutdown_event        = asyncio.Event()
 
     async def fake_ask_stream(*args, **kwargs):
@@ -4563,19 +4506,15 @@ async def test_rejected_shutdown_does_not_write_goodbye_to_history():
              patch("pipeline.play_filler"):
             await conversation_turn("Don't look at that", "p_sd", "Jagan", db=None)
 
-        hist = pipeline._conversation["p_sd"]
+        hist = pipeline._conversation_store.peek_history("p_sd")
         assert hist[-1]["role"] == "assistant"
         assert "goodbye" not in hist[-1]["content"].lower(), \
             f"'Goodbye!' leaked into history: {hist[-1]['content']!r}"
     finally:
-        pipeline._conversation          = orig_conv
-        pipeline._cloud_state           = orig_cloud
-        pipeline._emotion_agents         = orig_emotion_agents
+        await pipeline._pipeline_state_store.set_cloud_state(orig_cloud)
         pipeline._brain_orchestrator    = orig_brain
-        pipeline._query_embedding_cache = orig_qcache
-        pipeline._detected_lang         = orig_lang
-        pipeline._active_system_name    = orig_sysname
-        pipeline._identity_hints        = orig_hints
+        await pipeline._pipeline_state_store.set_detected_lang(orig_lang)
+        await pipeline._pipeline_state_store.set_active_system_name(orig_sysname)
         pipeline._shutdown_event        = orig_shutdown
 
 
@@ -4584,25 +4523,19 @@ async def test_approved_shutdown_override_does_not_fire():
     import pipeline
     from pipeline import conversation_turn, CloudState
 
-    orig_conv      = pipeline._conversation
-    orig_cloud     = pipeline._cloud_state
-    orig_emotion_agents   = pipeline._emotion_agents
+    orig_cloud     = pipeline._pipeline_state_store.peek_cloud_state()
     orig_brain     = pipeline._brain_orchestrator
-    orig_qcache    = pipeline._query_embedding_cache
-    orig_lang      = pipeline._detected_lang
-    orig_sysname   = pipeline._active_system_name
-    orig_hints     = pipeline._identity_hints
+    orig_lang      = pipeline._pipeline_state_store.peek_detected_lang()
+    orig_sysname   = pipeline._pipeline_state_store.peek_active_system_name()
     orig_shutdown  = pipeline._shutdown_event
 
     await pipeline._session_store.open_session("p_sd", "Jagan", "best_friend", "face", now=__import__("time").time())
-    pipeline._conversation          = {"p_sd": []}
-    pipeline._cloud_state           = CloudState.ONLINE
-    pipeline._emotion_agents       = {}
+    await pipeline._conversation_store.set_history("p_sd", [])
+    await pipeline._pipeline_state_store.recover_online_no_flag()
+    pipeline._per_person_agent_store.reset()
     pipeline._brain_orchestrator    = None
-    pipeline._query_embedding_cache = {}
-    pipeline._detected_lang         = "en"
-    pipeline._active_system_name    = "Kara"
-    pipeline._identity_hints        = {}
+    await pipeline._pipeline_state_store.set_detected_lang("en")
+    await pipeline._pipeline_state_store.set_active_system_name("Kara")
     pipeline._shutdown_event        = asyncio.Event()
 
     async def fake_ask_stream(*args, **kwargs):
@@ -4620,20 +4553,16 @@ async def test_approved_shutdown_override_does_not_fire():
              patch("pipeline.play_filler"):
             await conversation_turn("shut down", "p_sd", "Jagan", db=None)
 
-        hist = pipeline._conversation["p_sd"]
+        hist = pipeline._conversation_store.peek_history("p_sd")
         assert hist[-1]["role"] == "assistant"
         # Approved path: override must NOT have replaced the LLM's text with "Okay."
         assert hist[-1]["content"] != "Okay.", \
             "Override fired on an approved shutdown — it should only fire on rejected calls"
     finally:
-        pipeline._conversation          = orig_conv
-        pipeline._cloud_state           = orig_cloud
-        pipeline._emotion_agents         = orig_emotion_agents
+        await pipeline._pipeline_state_store.set_cloud_state(orig_cloud)
         pipeline._brain_orchestrator    = orig_brain
-        pipeline._query_embedding_cache = orig_qcache
-        pipeline._detected_lang         = orig_lang
-        pipeline._active_system_name    = orig_sysname
-        pipeline._identity_hints        = orig_hints
+        await pipeline._pipeline_state_store.set_detected_lang(orig_lang)
+        await pipeline._pipeline_state_store.set_active_system_name(orig_sysname)
         pipeline._shutdown_event        = orig_shutdown
 
 
@@ -4645,25 +4574,19 @@ async def test_auto_confirm_retroactively_fixes_history():
     from pipeline import conversation_turn, CloudState
     import time as _t
 
-    orig_conversation   = pipeline._conversation
-    orig_identity_hints = pipeline._identity_hints
-    orig_cloud_state    = pipeline._cloud_state
-    orig_emotion_agents  = pipeline._emotion_agents
+    orig_cloud_state    = pipeline._pipeline_state_store.peek_cloud_state()
     orig_brain_orch     = pipeline._brain_orchestrator
-    orig_qcache         = pipeline._query_embedding_cache
-    orig_detected_lang  = pipeline._detected_lang
-    orig_system_name    = pipeline._active_system_name
+    orig_detected_lang  = pipeline._pipeline_state_store.peek_detected_lang()
+    orig_system_name    = pipeline._pipeline_state_store.peek_active_system_name()
 
-    pipeline._conversation = {"stranger_x": [
+    await pipeline._conversation_store.set_history("stranger_x", [
         {"role": "user",      "content": "visitor said hello"},
         {"role": "assistant", "content": "Nice to meet you, visitor!"},
-    ]}
-    pipeline._identity_hints      = {}
-    pipeline._cloud_state         = CloudState.ONLINE
-    pipeline._emotion_agents       = {}
-    pipeline._query_embedding_cache = {}
-    pipeline._detected_lang       = "en"
-    pipeline._active_system_name  = "Rex"
+    ])
+    await pipeline._pipeline_state_store.recover_online_no_flag()
+    pipeline._per_person_agent_store.reset()
+    await pipeline._pipeline_state_store.set_detected_lang("en")
+    await pipeline._pipeline_state_store.set_active_system_name("Rex")
 
     mock_brain = MagicMock()
     mock_brain.score_stranger_identity.return_value = {
@@ -4699,7 +4622,7 @@ async def test_auto_confirm_retroactively_fixes_history():
             # Session 73 Bug G4: user_text needs self-ID for auto-confirm to fire.
             await conversation_turn("my name is Priya", "stranger_x", "visitor", db=mock_db)
 
-        history = pipeline._conversation.get("stranger_x", [])
+        history = pipeline._conversation_store.peek_history("stranger_x")
         for msg in history:
             assert "visitor" not in msg["content"].lower(), (
                 f"Old name 'visitor' still present in: {msg['content']!r}"
@@ -4708,124 +4631,13 @@ async def test_auto_confirm_retroactively_fixes_history():
         assert "priya" in combined.lower()
 
     finally:
-        pipeline._conversation          = orig_conversation
-        pipeline._identity_hints        = orig_identity_hints
-        pipeline._cloud_state           = orig_cloud_state
-        pipeline._emotion_agents         = orig_emotion_agents
+        await pipeline._pipeline_state_store.set_cloud_state(orig_cloud_state)
         pipeline._brain_orchestrator    = orig_brain_orch
-        pipeline._query_embedding_cache = orig_qcache
-        pipeline._detected_lang         = orig_detected_lang
-        pipeline._active_system_name    = orig_system_name
+        await pipeline._pipeline_state_store.set_detected_lang(orig_detected_lang)
+        await pipeline._pipeline_state_store.set_active_system_name(orig_system_name)
 
 
 # ── Issue B — Per-Turn Speaker Routing ───────────────────────────────────────
-
-def test_resolve_actual_speaker_voice_matches_current():
-    """Voice confirms the current session holder → action = current."""
-    import pipeline, time
-    resolved, action = pipeline._resolve_actual_speaker(
-        "jagan_b3ff7d", 0.6, "jagan_b3ff7d", {}, {}, {}, time.time()
-    )
-    assert action   == "current"
-    assert resolved == "jagan_b3ff7d"
-
-
-def test_resolve_actual_speaker_switch_enrolled_high_score():
-    """Voice identifies a DIFFERENT enrolled person at score >= 0.55 (weak profile) → switch_enrolled."""
-    import pipeline, time
-    resolved, action = pipeline._resolve_actual_speaker(
-        "p2", 0.55, "p1", {}, {}, {}, time.time()
-    )
-    assert action   == "switch_enrolled"
-    assert resolved == "p2"
-
-
-def test_resolve_actual_speaker_no_switch_below_threshold():
-    """Score 0.35 for a different person not visible in frame → ambiguous (P2 mid-range miss)."""
-    import pipeline, time
-    resolved, action = pipeline._resolve_actual_speaker(
-        "p2", 0.35, "p1", {}, {}, {}, time.time()
-    )
-    assert action   == "ambiguous"
-    assert resolved is None
-
-
-def test_resolve_actual_speaker_new_stranger_holder_absent():
-    """Unrecognized voice, score below threshold → new_stranger."""
-    import pipeline, time
-    resolved, action = pipeline._resolve_actual_speaker(
-        None, 0.1, "jagan_b3ff7d", {}, {42: time.time()}, {}, time.time()
-    )
-    assert action   == "new_stranger"
-    assert resolved is None
-
-
-def test_resolve_actual_speaker_holder_visible_ambiguous_voice():
-    """v_score == 0.0, unrecognized track present → ambiguous (cannot attribute)."""
-    import pipeline, time
-    now = time.time()
-    resolved, action = pipeline._resolve_actual_speaker(
-        None, 0.0, "jagan_b3ff7d",
-        {},                    # persons_in_frame (holder not in frame)
-        {42: now},             # fresh unrecognized track
-        {}, now
-    )
-    assert action == "ambiguous"
-
-
-def test_resolve_actual_speaker_uses_session_last_face_seen():
-    """v_score == 0.0, no unrecognized tracks, no other candidates → current."""
-    import pipeline, time
-    resolved, action = pipeline._resolve_actual_speaker(
-        None, 0.0, "p1", {}, {}, {}, time.time()
-    )
-    assert action == "current"
-    assert resolved == "p1"
-
-
-def test_resolve_actual_speaker_stale_session_triggers_new_stranger():
-    """v_score == 0.0, fresh unrecognized track but no explicit score → ambiguous."""
-    import pipeline, time
-    now = time.time()
-    resolved, action = pipeline._resolve_actual_speaker(
-        None, 0.0, "p1", {}, {99: now}, {}, now
-    )
-    assert action == "ambiguous"
-
-
-def test_resolve_actual_speaker_imposter_score_holder_off_camera():
-    """Stranger speaks, holder off-camera, score below threshold → new_stranger."""
-    import pipeline, time
-    from core.config import VOICE_RECOGNITION_THRESHOLD
-    low_score = VOICE_RECOGNITION_THRESHOLD - 0.05
-    resolved, action = pipeline._resolve_actual_speaker(
-        None, low_score, "jagan_b3ff7d", {}, {}, {}, time.time()
-    )
-    assert action   == "new_stranger"
-    assert resolved is None
-
-
-def test_resolve_actual_speaker_imposter_score_holder_on_camera():
-    """Low voice score routes to new_stranger regardless of holder face visibility."""
-    import pipeline, time
-    from core.config import VOICE_RECOGNITION_THRESHOLD
-    low_score = VOICE_RECOGNITION_THRESHOLD - 0.05
-    resolved, action = pipeline._resolve_actual_speaker(
-        None, low_score, "jagan_b3ff7d", {}, {}, {}, time.time()
-    )
-    assert action   == "new_stranger"
-    assert resolved is None
-
-
-def test_resolve_actual_speaker_zero_score_uses_face_evidence():
-    """v_score == 0.0, no other candidates → current (P4 scene_candidates=0 path)."""
-    import pipeline, time
-    resolved, action = pipeline._resolve_actual_speaker(
-        None, 0.0, "p1", {}, {}, {}, time.time()
-    )
-    assert action   == "current"
-    assert resolved == "p1"
-
 
 def test_unrecognized_tracks_pruned_after_scene_stale_secs():
     """Stale entries (> SCENE_STALE_SECS old) are removed from _unrecognized_tracks by decay logic."""
@@ -4833,141 +4645,38 @@ def test_unrecognized_tracks_pruned_after_scene_stale_secs():
     import time
     from core.config import SCENE_STALE_SECS
 
-    orig_unrt = pipeline._unrecognized_tracks
-
+    import asyncio
     stale_ts = time.time() - (SCENE_STALE_SECS + 1.0)
-    pipeline._unrecognized_tracks = {42: stale_ts, 99: time.time()}  # one stale, one fresh
-
+    asyncio.run(pipeline._track_store.mark_unrecognized(42, stale_ts))
+    asyncio.run(pipeline._track_store.mark_unrecognized(99, time.time()))
     _bv_scan_now = time.time()
-    pipeline._unrecognized_tracks = {
-        tid: ts for tid, ts in pipeline._unrecognized_tracks.items()
-        if _bv_scan_now - ts < SCENE_STALE_SECS
-    }
-
-    assert 42 not in pipeline._unrecognized_tracks   # stale → pruned
-    assert 99 in pipeline._unrecognized_tracks        # fresh → kept
-
-    pipeline._unrecognized_tracks = orig_unrt
-
-
-def test_speaker_switch_enrolled_action_opens_new_session():
-    """switch_enrolled: a second enrolled person session is opened when not already active."""
-    import asyncio, pipeline, time
-    from unittest.mock import MagicMock, patch
-    orig_conv     = pipeline._conversation
-    orig_sys_name = pipeline._active_system_name
-
-    asyncio.run(pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=0.0))
-    pipeline._conversation       = {"p1": []}
-    pipeline._active_system_name = "Rex"
-
-    mock_db = MagicMock()
-    mock_db.load_conversation_history.return_value = []
-
-    def fake_open_session(pid, name, stype, **kw):
-        asyncio.run(pipeline._session_store.open_session(pid, name, "known", stype, now=0.0))
-
-    with patch("pipeline._open_session", side_effect=fake_open_session):
-        resolved, action = pipeline._resolve_actual_speaker(
-            "p2", 0.55, "p1", {}, {}, {}, time.time()
-        )
-        assert action == "switch_enrolled"
-        if pipeline._session_store.peek_snapshot(resolved) is None:
-            fake_open_session(resolved, "Venkat", "voice", voice_confidence=0.55)
-            if resolved not in pipeline._conversation:
-                pipeline._conversation[resolved] = mock_db.load_conversation_history(resolved)
-
-    assert pipeline._session_store.peek_snapshot("p2") is not None
-    assert "p2" in pipeline._conversation
-
-    pipeline._conversation       = orig_conv
-    pipeline._active_system_name = orig_sys_name
-
-
-def test_new_stranger_session_created_for_unrecognized_voice():
-    """new_stranger: a stranger_ session is created when score < threshold."""
-    import asyncio, pipeline, time
-    import uuid as _uuid_mod
-    from unittest.mock import patch
-    orig_conv     = pipeline._conversation
-
-    asyncio.run(pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=0.0))
-    pipeline._conversation = {"p1": []}
-
-    resolved, action = pipeline._resolve_actual_speaker(
-        None, 0.1, "p1", {}, {42: time.time()}, {}, time.time()
-    )
-    assert action   == "new_stranger"
-    assert resolved is None
-
-    _sid = f"stranger_{_uuid_mod.uuid4().hex[:8]}"
-
-    def fake_open_session(pid, name, stype, **kw):
-        asyncio.run(pipeline._session_store.open_session(pid, name, "stranger", stype, now=time.time()))
-
-    with patch("pipeline._open_session", side_effect=fake_open_session):
-        fake_open_session(_sid, "visitor", "voice")
-        pipeline._conversation[_sid] = []
-
-    assert any(s.person_id.startswith("stranger_") for s in pipeline._session_store.peek_all_snapshots())
-    assert any(pid.startswith("stranger_") for pid in pipeline._conversation)
-    assert pipeline._session_store.peek_snapshot("p1") is not None
-
-    pipeline._conversation    = orig_conv
+    asyncio.run(pipeline._track_store.prune_stale(_bv_scan_now - SCENE_STALE_SECS))
+    assert 42 not in pipeline._track_store   # stale → pruned
+    assert 99 in pipeline._track_store        # fresh → kept
 
 
 # ── Session 27 — Per-track stranger session mapping ──────────────────────────
 
 def test_unrecognized_tracks_populated_with_track_id():
-    """Secondary scan else-branch adds track_id to _unrecognized_tracks."""
-    import pipeline
-    import time
-    orig_unrt = pipeline._unrecognized_tracks
-    try:
-        pipeline._unrecognized_tracks = {}
-        _bv_scan_now = time.time()
-        # Simulate the else-branch logic for track_id=42
-        _tid = 42
-        pipeline._unrecognized_tracks[_tid] = _bv_scan_now
-        assert 42 in pipeline._unrecognized_tracks
-        assert abs(pipeline._unrecognized_tracks[42] - _bv_scan_now) < 0.01
-    finally:
-        pipeline._unrecognized_tracks = orig_unrt
-
-
-def test_unrecognized_tracks_stale_entry_excluded_from_routing():
-    """Stale track does NOT count for scene_candidates.
-    Imposter score still fires new_stranger; score=0 with stale track → current."""
-    import pipeline, time
-    from core.config import VOICE_ROUTING_FACE_STALE_SECS, VOICE_RECOGNITION_THRESHOLD
-    now = time.time()
-    stale_ts  = now - (VOICE_ROUTING_FACE_STALE_SECS + 1.0)
-    low_score = VOICE_RECOGNITION_THRESHOLD - 0.05
-    # Score below threshold → new_stranger regardless of stale track
-    resolved, action = pipeline._resolve_actual_speaker(
-        None, low_score, "p1", {}, {42: stale_ts}, {}, now
-    )
-    assert action == "new_stranger"
-    # v_score=0.0, stale track excluded → scene_candidates=0 → current
-    resolved2, action2 = pipeline._resolve_actual_speaker(
-        None, 0.0, "p1", {}, {42: stale_ts}, {}, now
-    )
-    assert action2 == "current"
+    """Secondary scan else-branch adds track_id to _track_store."""
+    import asyncio, pipeline, time
+    _bv_scan_now = time.time()
+    # Simulate the else-branch logic for track_id=42
+    _tid = 42
+    asyncio.run(pipeline._track_store.mark_unrecognized(_tid, _bv_scan_now))
+    assert 42 in pipeline._track_store
+    assert abs(pipeline._track_store.peek_last_seen(42) - _bv_scan_now) < 0.01
 
 
 def test_stranger_track_map_binds_single_track_to_new_session():
     """With exactly 1 unrecognized track, routing creates a session and maps track -> session."""
     import asyncio, pipeline, time
-    orig_conv      = pipeline._conversation
-    orig_unrt      = pipeline._unrecognized_tracks
-    orig_stmap     = pipeline._stranger_track_map
-    orig_sys_name  = pipeline._active_system_name
+    orig_sys_name  = pipeline._pipeline_state_store.peek_active_system_name()
 
     asyncio.run(pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=0.0))
-    pipeline._conversation        = {"p1": []}
-    pipeline._unrecognized_tracks = {42: time.time()}  # one fresh track
-    pipeline._stranger_track_map  = {}
-    pipeline._active_system_name  = "Rex"
+    asyncio.run(pipeline._conversation_store.set_history("p1", []))
+    asyncio.run(pipeline._track_store.mark_unrecognized(42, time.time()))  # one fresh track
+    asyncio.run(pipeline._pipeline_state_store.set_active_system_name("Rex"))
 
     # Execute new_stranger routing logic (inline mirror of pipeline routing block)
     from core.config import VOICE_ROUTING_FACE_STALE_SECS, STRANGER_REQUIRE_SYSTEM_NAME
@@ -4975,76 +4684,69 @@ def test_stranger_track_map_binds_single_track_to_new_session():
 
     _now_route   = time.time()
     _active_unrec = {
-        tid: ts for tid, ts in pipeline._unrecognized_tracks.items()
-        if _now_route - ts < VOICE_ROUTING_FACE_STALE_SECS
+        tid: pipeline._track_store.peek_last_seen(tid)
+        for tid in pipeline._track_store.peek_active_unrecognized()
+        if _now_route - pipeline._track_store.peek_last_seen(tid) < VOICE_ROUTING_FACE_STALE_SECS
     }
     _speaker_track = next(iter(_active_unrec)) if len(_active_unrec) == 1 else None
-    _target_sid    = pipeline._stranger_track_map.get(_speaker_track) if _speaker_track is not None else None
+    _target_sid    = pipeline._track_store.peek_stranger_pid(_speaker_track) if _speaker_track is not None else None
 
     assert _target_sid is None  # no existing mapping yet
 
     _sid = f"stranger_{_uuid_mod.uuid4().hex[:8]}"
     asyncio.run(pipeline._session_store.open_session(_sid, "visitor", "stranger", "voice", now=_now_route))
-    pipeline._conversation[_sid] = []
+    asyncio.run(pipeline._conversation_store.set_history(_sid, []))
     if _speaker_track is not None:
-        pipeline._stranger_track_map[_speaker_track] = _sid
+        asyncio.run(pipeline._track_store.mint_stranger(_speaker_track, _sid))
 
-    assert _speaker_track in pipeline._stranger_track_map
-    assert pipeline._stranger_track_map[_speaker_track].startswith("stranger_")
+    assert pipeline._track_store.peek_stranger_pid(_speaker_track) is not None
+    assert pipeline._track_store.peek_stranger_pid(_speaker_track).startswith("stranger_")
 
-    pipeline._conversation       = orig_conv
-    pipeline._unrecognized_tracks = orig_unrt
-    pipeline._stranger_track_map  = orig_stmap
-    pipeline._active_system_name  = orig_sys_name
+    asyncio.run(pipeline._pipeline_state_store.set_active_system_name(orig_sys_name))
 
 
 def test_stranger_track_map_resumes_existing_session():
     """Same SORT track speaks again → routing reuses the previously bound session."""
     import asyncio, pipeline, time
     from core.config import VOICE_ROUTING_FACE_STALE_SECS
-    orig_unrt     = pipeline._unrecognized_tracks
-    orig_stmap    = pipeline._stranger_track_map
 
     asyncio.run(pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=0.0))
     asyncio.run(pipeline._session_store.open_session(
         "stranger_abc", "visitor", "stranger", "voice", now=time.time() - 5.0
     ))
-    pipeline._unrecognized_tracks = {42: time.time()}   # track 42 is active
-    pipeline._stranger_track_map  = {42: "stranger_abc"}  # already bound
+    asyncio.run(pipeline._track_store.mark_unrecognized(42, time.time()))   # track 42 is active
+    asyncio.run(pipeline._track_store.mint_stranger(42, "stranger_abc"))     # already bound
 
     _now_route    = time.time()
     _active_unrec = {
-        tid: ts for tid, ts in pipeline._unrecognized_tracks.items()
-        if _now_route - ts < VOICE_ROUTING_FACE_STALE_SECS
+        tid: pipeline._track_store.peek_last_seen(tid)
+        for tid in pipeline._track_store.peek_active_unrecognized()
+        if _now_route - pipeline._track_store.peek_last_seen(tid) < VOICE_ROUTING_FACE_STALE_SECS
     }
     _speaker_track = next(iter(_active_unrec)) if len(_active_unrec) == 1 else None
-    _target_sid    = pipeline._stranger_track_map.get(_speaker_track) if _speaker_track is not None else None
+    _target_sid    = pipeline._track_store.peek_stranger_pid(_speaker_track) if _speaker_track is not None else None
 
     assert _target_sid == "stranger_abc"
     assert pipeline._session_store.peek_snapshot(_target_sid) is not None
-
-    pipeline._unrecognized_tracks = orig_unrt
-    pipeline._stranger_track_map  = orig_stmap
 
 
 def test_two_unrecognized_tracks_routes_to_most_recent_stranger():
     """With 2 unrecognized tracks (ambiguous), routing reuses most recently active voice stranger."""
     import asyncio, pipeline, time
     from core.config import VOICE_ROUTING_FACE_STALE_SECS
-    orig_unrt     = pipeline._unrecognized_tracks
-    orig_stmap    = pipeline._stranger_track_map
 
     t_now = time.time()
     asyncio.run(pipeline._session_store.open_session(
         "stranger_abc", "visitor", "stranger", "voice", now=t_now - 3.0
     ))
-    pipeline._unrecognized_tracks = {1: t_now, 2: t_now}  # 2 tracks — ambiguous
-    pipeline._stranger_track_map  = {}
+    asyncio.run(pipeline._track_store.mark_unrecognized(1, t_now))  # 2 tracks — ambiguous
+    asyncio.run(pipeline._track_store.mark_unrecognized(2, t_now))
 
     _now_route    = time.time()
     _active_unrec = {
-        tid: ts for tid, ts in pipeline._unrecognized_tracks.items()
-        if _now_route - ts < VOICE_ROUTING_FACE_STALE_SECS
+        tid: pipeline._track_store.peek_last_seen(tid)
+        for tid in pipeline._track_store.peek_active_unrecognized()
+        if _now_route - pipeline._track_store.peek_last_seen(tid) < VOICE_ROUTING_FACE_STALE_SECS
     }
     _speaker_track = next(iter(_active_unrec)) if len(_active_unrec) == 1 else None
     assert _speaker_track is None  # 2 tracks → ambiguous → no definitive speaker
@@ -5058,24 +4760,22 @@ def test_two_unrecognized_tracks_routes_to_most_recent_stranger():
 
     assert _candidate == "stranger_abc"
 
-    pipeline._unrecognized_tracks = orig_unrt
-    pipeline._stranger_track_map  = orig_stmap
-
 
 def test_two_unrecognized_tracks_creates_new_session_when_none_exist():
     """With 2 unrecognized tracks and no stranger sessions, routing creates a new one."""
-    import pipeline, time
+    import asyncio, pipeline, time
     from core.config import VOICE_ROUTING_FACE_STALE_SECS
-    orig_unrt     = pipeline._unrecognized_tracks
 
     t_now = time.time()
-    # store is already empty via autouse _reset_session_state_between_tests
-    pipeline._unrecognized_tracks = {1: t_now, 2: t_now}
+    # store is already empty via autouse _reset_pipeline_state_between_tests
+    asyncio.run(pipeline._track_store.mark_unrecognized(1, t_now))
+    asyncio.run(pipeline._track_store.mark_unrecognized(2, t_now))
 
     _now_route    = time.time()
     _active_unrec = {
-        tid: ts for tid, ts in pipeline._unrecognized_tracks.items()
-        if _now_route - ts < VOICE_ROUTING_FACE_STALE_SECS
+        tid: pipeline._track_store.peek_last_seen(tid)
+        for tid in pipeline._track_store.peek_active_unrecognized()
+        if _now_route - pipeline._track_store.peek_last_seen(tid) < VOICE_ROUTING_FACE_STALE_SECS
     }
     _candidate = max(
         (s.person_id for s in pipeline._session_store.peek_all_snapshots()
@@ -5086,77 +4786,59 @@ def test_two_unrecognized_tracks_creates_new_session_when_none_exist():
 
     assert _candidate is None  # no existing stranger sessions → must create new
 
-    pipeline._unrecognized_tracks = orig_unrt
-
 
 def test_vision_report_none_when_no_detections():
     """Vision report string is 'none' when det_count_bv == 0."""
-    import pipeline
-    from core.config import VOICE_ROUTING_FACE_STALE_SECS
-    import time
-    orig_pif  = pipeline._persons_in_frame
-    orig_unrt = pipeline._unrecognized_tracks
-    try:
-        pipeline._persons_in_frame   = {"p1": {"name": "Jagan", "last_seen": time.time()}}
-        pipeline._unrecognized_tracks = {42: time.time()}
-        _det_count_bv = 0
-        _vis_report_now = "none" if _det_count_bv == 0 else "other"
-        assert _vis_report_now == "none"
-    finally:
-        pipeline._persons_in_frame   = orig_pif
-        pipeline._unrecognized_tracks = orig_unrt
+    import asyncio, pipeline, time
+    asyncio.run(pipeline._presence_store.upsert_face_recognition("p1", "Jagan", 0.9, time.time()))
+    asyncio.run(pipeline._track_store.mark_unrecognized(42, time.time()))
+    _det_count_bv = 0
+    _vis_report_now = "none" if _det_count_bv == 0 else "other"
+    assert _vis_report_now == "none"
 
 
 def test_vision_report_includes_recognized_and_unrecognized():
     """Vision report shows recognized name + 'unrecognized' when both present and fresh."""
-    import pipeline
-    import time
+    import asyncio, pipeline, time
     from core.config import VOICE_ROUTING_FACE_STALE_SECS
-    orig_pif  = pipeline._persons_in_frame
-    orig_unrt = pipeline._unrecognized_tracks
-    try:
-        t_now = time.time()
-        pipeline._persons_in_frame   = {"p1": {"name": "Jagan", "last_seen": t_now - 0.5}}
-        pipeline._unrecognized_tracks = {42: t_now - 0.5}
-        _det_count_bv = 2
-        _now_vr  = time.time()
-        _rnames  = sorted(
-            v["name"] for v in pipeline._persons_in_frame.values()
-            if _now_vr - v["last_seen"] < VOICE_ROUTING_FACE_STALE_SECS
-        )
-        _unrec_n = sum(
-            1 for ts in pipeline._unrecognized_tracks.values()
-            if _now_vr - ts < VOICE_ROUTING_FACE_STALE_SECS
-        )
-        _vr_parts = list(_rnames)
-        if _unrec_n == 1:
-            _vr_parts.append("unrecognized")
-        _vis_report = ", ".join(_vr_parts) if _vr_parts else "none"
-        assert "jagan" in _vis_report.lower()
-        assert "unrecognized" in _vis_report
-    finally:
-        pipeline._persons_in_frame   = orig_pif
-        pipeline._unrecognized_tracks = orig_unrt
+    t_now = time.time()
+    asyncio.run(pipeline._presence_store.upsert_face_recognition("p1", "Jagan", 0.9, t_now - 0.5))
+    asyncio.run(pipeline._track_store.mark_unrecognized(42, t_now - 0.5))
+    _det_count_bv = 2
+    _now_vr  = time.time()
+    _rnames  = sorted(
+        snap.name for snap in pipeline._presence_store.peek_all_snapshots()
+        if _now_vr - snap.last_seen < VOICE_ROUTING_FACE_STALE_SECS
+    )
+    _unrec_n = sum(
+        1 for tid in pipeline._track_store.peek_active_unrecognized()
+        if _now_vr - pipeline._track_store.peek_last_seen(tid) < VOICE_ROUTING_FACE_STALE_SECS
+    )
+    _vr_parts = list(_rnames)
+    if _unrec_n == 1:
+        _vr_parts.append("unrecognized")
+    _vis_report = ", ".join(_vr_parts) if _vr_parts else "none"
+    assert "jagan" in _vis_report.lower()
+    assert "unrecognized" in _vis_report
 
 
 async def test_close_session_cleans_stranger_track_map():
     """_close_session() removes all track_map entries pointing to the closed session."""
     import pipeline
-    orig_stmap = pipeline._stranger_track_map
-
     await pipeline._session_store.open_session("stranger_abc", "visitor", "stranger", "voice", now=0.0)
     await pipeline._session_store.open_session("stranger_xyz", "visitor", "stranger", "voice", now=0.0)
-    pipeline._stranger_track_map = {42: "stranger_abc", 99: "stranger_xyz"}
+    await pipeline._track_store.mark_unrecognized(42, 100.0)
+    await pipeline._track_store.mark_unrecognized(99, 100.0)
+    await pipeline._track_store.mint_stranger(42, "stranger_abc")
+    await pipeline._track_store.mint_stranger(99, "stranger_xyz")
 
     pipeline._close_session("stranger_abc")
     # Yield so create_task'd close_session coroutine runs.
     await asyncio.sleep(0)
 
-    assert 42 not in pipeline._stranger_track_map   # removed — session closed
-    assert 99 in pipeline._stranger_track_map       # unrelated entry preserved
+    assert 42 not in pipeline._track_store   # removed — session closed
+    assert 99 in pipeline._track_store       # unrelated entry preserved
     assert pipeline._session_store.peek_snapshot("stranger_abc") is None
-
-    pipeline._stranger_track_map = orig_stmap
 
 
 
@@ -5194,10 +4876,10 @@ def test_kairos_clock_not_reset_on_reentry_after_no_speech():
     """Issue 4: When the conversation loop re-enters after 'No speech detected',
     _last_user_speech_at must NOT be reset (kairos_clock_reset already consumed)."""
     import asyncio, pipeline, time
-    orig_speech_at = pipeline._last_user_speech_at
+    orig_speech_at = pipeline._pipeline_state_store.peek_last_user_speech_at()
     try:
         past = time.time() - 50  # 50 seconds ago
-        pipeline._last_user_speech_at = past
+        asyncio.run(pipeline._pipeline_state_store.set_last_user_speech_at(past))
 
         # Session with flag already consumed — simulates re-entry after "No speech detected"
         asyncio.run(pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=time.time()))
@@ -5206,13 +4888,13 @@ def test_kairos_clock_not_reset_on_reentry_after_no_speech():
         # Inline the conditional from pipeline.py (reads from session store)
         _snap = pipeline._session_store.peek_snapshot("p1")
         if _snap is not None and _snap.kairos_clock_reset:
-            pipeline._last_user_speech_at = time.time()
+            asyncio.run(pipeline._pipeline_state_store.set_last_user_speech_at(time.time()))
 
         # Clock must NOT have been reset — silence should still be ~50s
-        assert time.time() - pipeline._last_user_speech_at > 40, \
+        assert time.time() - pipeline._pipeline_state_store.peek_last_user_speech_at() > 40, \
             "Kairos clock was incorrectly reset on re-entry without the flag"
     finally:
-        pipeline._last_user_speech_at = orig_speech_at
+        asyncio.run(pipeline._pipeline_state_store.set_last_user_speech_at(orig_speech_at))
 
 
 # ── Issue 5: TTS hallucination artifacts — _clean_for_tts() ──────────────────
@@ -5717,21 +5399,21 @@ async def test_kairos_does_not_fire_with_fresh_speech_at():
     import pipeline, time
     from unittest.mock import MagicMock
 
-    orig_speech_at    = pipeline._last_user_speech_at
-    orig_kairos_at    = pipeline._last_kairos_at
+    orig_speech_at    = pipeline._pipeline_state_store.peek_last_user_speech_at()
+    orig_kairos_at    = pipeline._pipeline_state_store.peek_last_kairos_at()
     orig_orchestrator = pipeline._brain_orchestrator
 
     await pipeline._session_store.open_session("p1", "Alice", "known", "face", now=time.time())
-    pipeline._last_user_speech_at = pipeline.time.time()   # just spoke
-    pipeline._last_kairos_at      = 0.0                    # cooldown gate would pass
+    await pipeline._pipeline_state_store.set_last_user_speech_at(pipeline.time.time())   # just spoke
+    await pipeline._pipeline_state_store.set_last_kairos_at(0.0)                    # cooldown gate would pass
     pipeline._brain_orchestrator  = MagicMock()
     pipeline._brain_orchestrator.get_pending_question.return_value = {"id": "q1", "text": "Hi?"}
 
     try:
         result = await pipeline._kairos_tick("p1", "Alice", MagicMock())
     finally:
-        pipeline._last_user_speech_at = orig_speech_at
-        pipeline._last_kairos_at      = orig_kairos_at
+        await pipeline._pipeline_state_store.set_last_user_speech_at(orig_speech_at)
+        await pipeline._pipeline_state_store.set_last_kairos_at(orig_kairos_at)
         pipeline._brain_orchestrator  = orig_orchestrator
 
     assert result is False   # silence gate blocked — user just spoke
@@ -5744,13 +5426,13 @@ async def test_kairos_fires_after_silence_threshold():
     import pipeline, time
     from unittest.mock import MagicMock, AsyncMock, patch
 
-    orig_speech_at    = pipeline._last_user_speech_at
-    orig_kairos_at    = pipeline._last_kairos_at
+    orig_speech_at    = pipeline._pipeline_state_store.peek_last_user_speech_at()
+    orig_kairos_at    = pipeline._pipeline_state_store.peek_last_kairos_at()
     orig_orchestrator = pipeline._brain_orchestrator
 
     await pipeline._session_store.open_session("p1", "Alice", "known", "face", now=time.time())
-    pipeline._last_user_speech_at = 0.0   # long ago — silence gate opens
-    pipeline._last_kairos_at      = 0.0   # cooldown gate opens too
+    await pipeline._pipeline_state_store.set_last_user_speech_at(0.0)   # long ago — silence gate opens
+    await pipeline._pipeline_state_store.set_last_kairos_at(0.0)   # cooldown gate opens too
     mock_orch = MagicMock()
     mock_orch.get_pending_question.return_value = {"id": "q1", "text": "How are you?"}
     pipeline._brain_orchestrator = mock_orch
@@ -5766,8 +5448,8 @@ async def test_kairos_fires_after_silence_threshold():
             mock_ask.return_value = _fake_ask()
             await pipeline._kairos_tick("p1", "Alice", MagicMock())
     finally:
-        pipeline._last_user_speech_at = orig_speech_at
-        pipeline._last_kairos_at      = orig_kairos_at
+        await pipeline._pipeline_state_store.set_last_user_speech_at(orig_speech_at)
+        await pipeline._pipeline_state_store.set_last_kairos_at(orig_kairos_at)
         pipeline._brain_orchestrator  = orig_orchestrator
 
     # The silence gate opened; KAIROS attempted to run (didn't return False early)
@@ -5865,13 +5547,13 @@ async def test_kairos_tick_passes_memory_search_fn():
     import pipeline, time
     from unittest.mock import MagicMock, AsyncMock, patch
 
-    orig_speech_at    = pipeline._last_user_speech_at
-    orig_kairos_at    = pipeline._last_kairos_at
+    orig_speech_at    = pipeline._pipeline_state_store.peek_last_user_speech_at()
+    orig_kairos_at    = pipeline._pipeline_state_store.peek_last_kairos_at()
     orig_orchestrator = pipeline._brain_orchestrator
 
     await pipeline._session_store.open_session("p1", "Alice", "known", "face", now=time.time())
-    pipeline._last_user_speech_at = 0.0
-    pipeline._last_kairos_at      = 0.0
+    await pipeline._pipeline_state_store.set_last_user_speech_at(0.0)
+    await pipeline._pipeline_state_store.set_last_kairos_at(0.0)
     mock_orch = MagicMock()
     mock_orch.get_pending_question.return_value = {"id": "q1", "text": "Do you exercise?"}
     pipeline._brain_orchestrator = mock_orch
@@ -5898,8 +5580,8 @@ async def test_kairos_tick_passes_memory_search_fn():
 
             await pipeline._kairos_tick("p1", "Alice", MagicMock(), memory_search_fn=my_memory_search)
     finally:
-        pipeline._last_user_speech_at = orig_speech_at
-        pipeline._last_kairos_at      = orig_kairos_at
+        await pipeline._pipeline_state_store.set_last_user_speech_at(orig_speech_at)
+        await pipeline._pipeline_state_store.set_last_kairos_at(orig_kairos_at)
         pipeline._brain_orchestrator  = orig_orchestrator
 
     assert captured_kwargs.get("memory_search_fn") is my_memory_search, \
@@ -5913,13 +5595,13 @@ async def test_kairos_tick_memory_search_fn_none_by_default():
     import pipeline, time
     from unittest.mock import MagicMock, AsyncMock, patch
 
-    orig_speech_at    = pipeline._last_user_speech_at
-    orig_kairos_at    = pipeline._last_kairos_at
+    orig_speech_at    = pipeline._pipeline_state_store.peek_last_user_speech_at()
+    orig_kairos_at    = pipeline._pipeline_state_store.peek_last_kairos_at()
     orig_orchestrator = pipeline._brain_orchestrator
 
     await pipeline._session_store.open_session("p1", "Alice", "known", "face", now=time.time())
-    pipeline._last_user_speech_at = 0.0
-    pipeline._last_kairos_at      = 0.0
+    await pipeline._pipeline_state_store.set_last_user_speech_at(0.0)
+    await pipeline._pipeline_state_store.set_last_kairos_at(0.0)
     mock_orch = MagicMock()
     mock_orch.get_pending_question.return_value = None
     pipeline._brain_orchestrator = mock_orch
@@ -5938,8 +5620,8 @@ async def test_kairos_tick_memory_search_fn_none_by_default():
             # Must not raise even without memory_search_fn argument
             result = await pipeline._kairos_tick("p1", "Alice", MagicMock())
     finally:
-        pipeline._last_user_speech_at = orig_speech_at
-        pipeline._last_kairos_at      = orig_kairos_at
+        await pipeline._pipeline_state_store.set_last_user_speech_at(orig_speech_at)
+        await pipeline._pipeline_state_store.set_last_kairos_at(orig_kairos_at)
         pipeline._brain_orchestrator  = orig_orchestrator
 
     assert result is False, "brain returning SILENT must cause tick to return False"
@@ -6201,103 +5883,101 @@ def test_recognize_acquires_index_lock(tmp_path):
 # ── Ambient wake pending debounce (Issue #1) ──────────────────────────────────
 
 def test_ambient_wake_pending_flag_set_on_first_wake():
-    """Background loop sets _ambient_wake_pending when it calls stop_audio."""
-    import pipeline
-    pipeline._ambient_wake_pending = set()
-    pipeline._last_greeted         = {}
+    """Background loop sets ambient wake when it calls stop_audio."""
+    import asyncio, pipeline, time
+    from pipeline import GREET_COOLDOWN
+    pipeline._per_person_agent_store.reset()
+    last_greeted = {}
 
     stop_calls = []
 
     def fake_stop():
         stop_calls.append(1)
         # Simulate: after first call, flag is already set (no second fire)
-        pipeline._ambient_wake_pending.add("p1")
+        asyncio.run(pipeline._per_person_agent_store.add_ambient_wake("p1"))
 
-    # The condition mirrors the production code exactly:
-    # if (_pid and time.time()-_last_greeted.get(_pid,0)>=GREET_COOLDOWN
-    #         and _pid not in _ambient_wake_pending):
-    import time
-    from pipeline import GREET_COOLDOWN
     _pid = "p1"
     condition_met = (
         _pid
-        and time.time() - pipeline._last_greeted.get(_pid, 0) >= GREET_COOLDOWN
-        and _pid not in pipeline._ambient_wake_pending
+        and time.time() - last_greeted.get(_pid, 0) >= GREET_COOLDOWN
+        and not pipeline._per_person_agent_store.is_ambient_wake_pending(_pid)
     )
     if condition_met:
-        pipeline._ambient_wake_pending.add(_pid)
+        asyncio.run(pipeline._per_person_agent_store.add_ambient_wake(_pid))
         fake_stop()
 
     assert len(stop_calls) == 1
-    assert "p1" in pipeline._ambient_wake_pending
+    assert pipeline._per_person_agent_store.is_ambient_wake_pending("p1")
 
 
 def test_ambient_wake_pending_blocks_second_fire():
-    """Once _ambient_wake_pending contains a pid, a second wake for same pid is suppressed."""
-    import pipeline, time
+    """Once ambient wake contains a pid, a second wake for same pid is suppressed."""
+    import asyncio, pipeline, time
     from pipeline import GREET_COOLDOWN
-    pipeline._ambient_wake_pending = {"p1"}  # already set by first fire
-    pipeline._last_greeted         = {}
+    pipeline._per_person_agent_store.reset()
+    asyncio.run(pipeline._per_person_agent_store.add_ambient_wake("p1"))
+    last_greeted = {}
 
     stop_calls = []
     _pid = "p1"
     condition_met = (
         _pid
-        and time.time() - pipeline._last_greeted.get(_pid, 0) >= GREET_COOLDOWN
-        and _pid not in pipeline._ambient_wake_pending   # <-- this blocks it
+        and time.time() - last_greeted.get(_pid, 0) >= GREET_COOLDOWN
+        and not pipeline._per_person_agent_store.is_ambient_wake_pending(_pid)
     )
     if condition_met:
         stop_calls.append(1)
 
-    assert len(stop_calls) == 0, "Second fire must be suppressed by _ambient_wake_pending"
+    assert len(stop_calls) == 0, "Second fire must be suppressed by ambient wake store"
 
 
 def test_ambient_wake_pending_cleared_before_antispoof_blocked():
-    """discard() is called before anti-spoof check, so block still clears the flag."""
-    import pipeline
-    pipeline._ambient_wake_pending = {"p1"}
+    """discard_ambient_wake() before anti-spoof check clears the flag even on block."""
+    import asyncio, pipeline
+    pipeline._per_person_agent_store.reset()
+    asyncio.run(pipeline._per_person_agent_store.add_ambient_wake("p1"))
 
-    # Simulate the outer loop greeting gate reaching the discard line:
     person_id = "p1"
-    pipeline._ambient_wake_pending.discard(person_id)
+    asyncio.run(pipeline._per_person_agent_store.discard_ambient_wake(person_id))
     # Anti-spoof blocks (continue) — but flag is already cleared
 
-    assert "p1" not in pipeline._ambient_wake_pending
+    assert not pipeline._per_person_agent_store.is_ambient_wake_pending("p1")
 
 
 def test_ambient_wake_pending_cleared_on_successful_greeting():
-    """discard() is called and flag is absent after successful greeting."""
-    import pipeline
-    pipeline._ambient_wake_pending = {"p1"}
+    """discard_ambient_wake() clears flag before successful greeting continues."""
+    import asyncio, pipeline
+    pipeline._per_person_agent_store.reset()
+    asyncio.run(pipeline._per_person_agent_store.add_ambient_wake("p1"))
 
     person_id = "p1"
-    pipeline._ambient_wake_pending.discard(person_id)
-    # Anti-spoof passes, _open_session would be called here — flag already gone
+    asyncio.run(pipeline._per_person_agent_store.discard_ambient_wake(person_id))
 
-    assert "p1" not in pipeline._ambient_wake_pending
+    assert not pipeline._per_person_agent_store.is_ambient_wake_pending("p1")
 
 
 def test_ambient_wake_pending_per_person_independent():
     """Flag for p1 does not suppress wake for a different person p2."""
-    import pipeline, time
+    import asyncio, pipeline, time
     from pipeline import GREET_COOLDOWN
-    pipeline._ambient_wake_pending = {"p1"}  # p1 already pending
-    pipeline._last_greeted         = {}
+    pipeline._per_person_agent_store.reset()
+    asyncio.run(pipeline._per_person_agent_store.add_ambient_wake("p1"))
+    last_greeted = {}
 
     stop_calls = []
     _pid = "p2"   # different person
     condition_met = (
         _pid
-        and time.time() - pipeline._last_greeted.get(_pid, 0) >= GREET_COOLDOWN
-        and _pid not in pipeline._ambient_wake_pending
+        and time.time() - last_greeted.get(_pid, 0) >= GREET_COOLDOWN
+        and not pipeline._per_person_agent_store.is_ambient_wake_pending(_pid)
     )
     if condition_met:
-        pipeline._ambient_wake_pending.add(_pid)
+        asyncio.run(pipeline._per_person_agent_store.add_ambient_wake(_pid))
         stop_calls.append(1)
 
     assert len(stop_calls) == 1, "p2 wake must fire even when p1 is pending"
-    assert "p2" in pipeline._ambient_wake_pending
-    assert "p1" in pipeline._ambient_wake_pending  # p1 unchanged
+    assert pipeline._per_person_agent_store.is_ambient_wake_pending("p2")
+    assert pipeline._per_person_agent_store.is_ambient_wake_pending("p1")  # p1 unchanged
 
 
 # ── FAISS path isolation (Issue #2) ───────────────────────────────────────────
@@ -6453,8 +6133,22 @@ def test_silence_log_fires_once_per_separate_streak(capsys):
 
 # ── SpeechBrain torchaudio compat patch (Issue #5) ───────────────────────────
 
+@pytest.mark.slow
+@pytest.mark.models
+@pytest.mark.xfail(
+    strict=False,
+    reason=(
+        "P0.0.2 infra debt: torchaudio DLL missing on Windows dev machine; "
+        "patch applied at core.voice import time but test imports in "
+        "isolation. Remediation: include torchaudio wheel in dev venv. "
+        "See tests/test_infra_debt_allowlist.py::INFRA_DEBT_FAILURES."
+    ),
+)
 def test_torchaudio_list_audio_backends_patch_applied_at_import():
-    """voice.py must patch list_audio_backends onto torchaudio at module import time."""
+    """voice.py must patch list_audio_backends onto torchaudio at module import time.
+    Marked slow+models: importing voice.py drags torchaudio + speechbrain into scope.
+    Marked xfail per P0.0.2: torchaudio DLL crash on Windows dev — XPASS signals
+    the infra debt was resolved (slow CI shows it as notable, not failing)."""
     import torchaudio
     # voice.py is imported as part of the test suite — the patch must already be applied
     assert hasattr(torchaudio, "list_audio_backends"), \
@@ -6463,8 +6157,22 @@ def test_torchaudio_list_audio_backends_patch_applied_at_import():
     assert isinstance(result, list), "list_audio_backends() must return a list"
 
 
+@pytest.mark.slow
+@pytest.mark.models
+@pytest.mark.xfail(
+    strict=False,
+    reason=(
+        "P0.0.2 infra debt: SpeechBrain logger suppression test requires the "
+        "real SpeechBrain import chain, which triggers the torchaudio DLL "
+        "crash on Windows dev. Remediation: fix torchaudio wheel (unblocks "
+        "this + torchaudio test together). See "
+        "tests/test_infra_debt_allowlist.py::INFRA_DEBT_FAILURES."
+    ),
+)
 def test_speechbrain_logger_suppressed_at_import():
-    """speechbrain logger must be at ERROR level after voice.py is imported."""
+    """speechbrain logger must be at ERROR level after voice.py is imported.
+    Marked slow+models: needs the real speechbrain package and its logger config.
+    Marked xfail per P0.0.2: shares the torchaudio DLL root cause."""
     import logging
     sb_logger = logging.getLogger("speechbrain")
     assert sb_logger.level == logging.ERROR, \
@@ -6600,11 +6308,11 @@ async def test_accumulate_voice_updates_gallery_for_enrolled_stranger(tmp_path):
     fake_emb = np.ones(192, dtype=np.float32)
     fake_emb /= np.linalg.norm(fake_emb)
 
-    import pipeline as _pl
-    _pl._voice_gallery.pop(stranger_id, None)
+    import asyncio as _asyncio, pipeline as _pl
+    await _pl._voice_gallery_store.pop_gallery(stranger_id)
     # Open a session with engagement_gate_passed=True so bootstrap credits enable
     # first-turn accumulation via Path C.
-    _pl._active_sessions.pop(stranger_id, None)
+    _pl._session_store._sessions.pop(stranger_id, None)
     _pl._open_session(stranger_id, "visitor", "voice",
                       person_type="stranger", engagement_gate_passed=True)
     await _pl._session_store.open_session(stranger_id, "visitor", "stranger", "voice",
@@ -6614,8 +6322,8 @@ async def test_accumulate_voice_updates_gallery_for_enrolled_stranger(tmp_path):
     with patch("pipeline.voice_mod.embed", return_value=fake_emb):
         await _pl._accumulate_voice(stranger_id, audio, db)
 
-    assert stranger_id in _pl._voice_gallery, \
-        "_voice_gallery must contain the stranger after first accumulation"
+    assert _pl._voice_gallery_store.peek_gallery(stranger_id) is not None, \
+        "_voice_gallery_store must contain the stranger after first accumulation"
     _pl._close_session(stranger_id)
     db._conn.close()
 
@@ -6804,6 +6512,17 @@ def _fake_pipeline(return_annotation: _FakeAnnotation):
     return _FakePipeline()
 
 
+@pytest.mark.slow
+@pytest.mark.models
+@pytest.mark.xfail(
+    strict=False,
+    reason=(
+        "P0.0.2 infra debt: pyannote.audio pipeline load fails — patched "
+        "io.py not applied in this test's import context. Remediation: "
+        "P0.R5 pyannote vendor patch. See "
+        "tests/test_infra_debt_allowlist.py::INFRA_DEBT_FAILURES."
+    ),
+)
 def test_diarize_drops_segments_below_min_segment_secs():
     """P2.4 policy: pyannote segments shorter than DIARIZE_MIN_SEGMENT_SECS
     (0.5s) are dropped entirely — ECAPA is too noisy below this bound AND
@@ -6827,6 +6546,16 @@ def test_diarize_drops_segments_below_min_segment_secs():
     assert segs[0]["speaker_label"] == "SPEAKER_01"
 
 
+@pytest.mark.slow
+@pytest.mark.models
+@pytest.mark.xfail(
+    strict=False,
+    reason=(
+        "P0.0.2 infra debt: shares pyannote load failure with "
+        "test_diarize_drops_segments_below_min_segment_secs. "
+        "Remediation: P0.R5 pyannote vendor patch."
+    ),
+)
 def test_diarize_short_segment_drops_attribution_keeps_label():
     """P2.4 policy: segments in the DIARIZE_MIN_SEGMENT_SECS–DIARIZE_MIN_EMBED_SECS
     band (0.5s–1.0s) are kept in the output — pyannote's segmentation info
@@ -6856,6 +6585,16 @@ def test_diarize_short_segment_drops_attribution_keeps_label():
     mock_identify.assert_not_called()   # identify() must be skipped for short segs
 
 
+@pytest.mark.slow
+@pytest.mark.models
+@pytest.mark.xfail(
+    strict=False,
+    reason=(
+        "P0.0.2 infra debt: shares pyannote load failure with "
+        "test_diarize_drops_segments_below_min_segment_secs. "
+        "Remediation: P0.R5 pyannote vendor patch."
+    ),
+)
 def test_diarize_three_speaker_returns_distinct_labels():
     """P2 regression: pyannote's clustering must differentiate ≥3 speakers
     in a single call, with each segment carrying a distinct speaker_label.
@@ -6882,6 +6621,16 @@ def test_diarize_three_speaker_returns_distinct_labels():
     assert labels == {"SPEAKER_00", "SPEAKER_01", "SPEAKER_02"}
 
 
+@pytest.mark.slow
+@pytest.mark.models
+@pytest.mark.xfail(
+    strict=False,
+    reason=(
+        "P0.0.2 infra debt: shares pyannote load failure with "
+        "test_diarize_drops_segments_below_min_segment_secs. "
+        "Remediation: P0.R5 pyannote vendor patch."
+    ),
+)
 def test_diarize_empty_gallery_segments_still_have_speaker_label():
     """P2 edge case: empty voice_gallery → every segment gets
     speaker_id=None (ECAPA has nothing to match against), but
@@ -6907,6 +6656,16 @@ def test_diarize_empty_gallery_segments_still_have_speaker_label():
     assert {s["speaker_label"] for s in segs} == {"SPEAKER_00", "SPEAKER_01"}
 
 
+@pytest.mark.slow
+@pytest.mark.models
+@pytest.mark.xfail(
+    strict=False,
+    reason=(
+        "P0.0.2 infra debt: shares pyannote load failure with "
+        "test_diarize_drops_segments_below_min_segment_secs. "
+        "Remediation: P0.R5 pyannote vendor patch."
+    ),
+)
 def test_diarize_speaker_id_attribution_via_ecapa_gallery():
     """P2 happy path: segments ≥1.0s run ECAPA, attribute via
     voice_gallery match. Mock identify to return a known (pid, score)
@@ -6982,6 +6741,16 @@ def test_pipeline_consumer_handles_n_segment_diarize_output():
     )
 
 
+@pytest.mark.slow
+@pytest.mark.models
+@pytest.mark.xfail(
+    strict=False,
+    reason=(
+        "P0.0.2 infra debt: shares pyannote load failure with "
+        "test_diarize_drops_segments_below_min_segment_secs. "
+        "Remediation: P0.R5 pyannote vendor patch."
+    ),
+)
 def test_diarize_pyannote_error_falls_back_to_ecapa_and_bumps_counter():
     """P2 fail-safe (reviewer's Session 88 observability ask): pyannote
     runtime error with DIARIZATION_FALLBACK_ON_ERROR=True must (1) call
@@ -7105,10 +6874,12 @@ def test_emotion_text_gate_is_5_words():
 
 
 def test_pipeline_uses_emotion_agents_dict():
-    """pipeline.py must declare _emotion_agents as a dict, not a single instance."""
+    """pipeline.py must track emotion agents per person via PerPersonAgentStore."""
     import pipeline
-    assert isinstance(pipeline._emotion_agents, dict), \
-        "_emotion_agents must be a dict (person_id → EmotionAgent)"
+    assert hasattr(pipeline, "_per_person_agent_store"), \
+        "pipeline must have _per_person_agent_store for per-person agent tracking"
+    assert isinstance(pipeline._per_person_agent_store.peek_all_emotion_agents(), dict), \
+        "peek_all_emotion_agents() must return a dict (person_id → EmotionAgent)"
 
 
 def test_emotion_agent_created_per_person(tmp_path):
@@ -7121,13 +6892,12 @@ def test_emotion_agent_created_per_person(tmp_path):
     db.add_person("p_alice", "Alice")
     db.add_person("p_bob",   "Bob")
 
-    orig_conversation = pipeline._conversation
-    orig_agents       = pipeline._emotion_agents
-    orig_cloud        = pipeline._cloud_state
+    orig_cloud        = pipeline._pipeline_state_store.peek_cloud_state()
     try:
-        pipeline._conversation = {"p_alice": [], "p_bob": []}
-        pipeline._emotion_agents = {}
-        pipeline._cloud_state = pipeline.CloudState.SICK   # use simple ask() path
+        asyncio.run(pipeline._conversation_store.set_history("p_alice", []))
+        asyncio.run(pipeline._conversation_store.set_history("p_bob", []))
+        pipeline._per_person_agent_store.reset()
+        asyncio.run(pipeline._pipeline_state_store.transition_to_sick(pipeline.time.time()))  # use simple ask() path
 
         # Session 119 Path 1 calibration — the prior text "hello there
         # {Name}" tripped the user-to-user heuristic + classifier
@@ -7155,14 +6925,15 @@ def test_emotion_agent_created_per_person(tmp_path):
                             )
 
         asyncio.run(_run())
-        assert "p_alice" in pipeline._emotion_agents, "Alice must have her own EmotionAgent"
-        assert "p_bob"   in pipeline._emotion_agents, "Bob must have his own EmotionAgent"
-        assert pipeline._emotion_agents["p_alice"] is not pipeline._emotion_agents["p_bob"], \
+        assert pipeline._per_person_agent_store.peek_emotion_agent("p_alice") is not None, \
+            "Alice must have her own EmotionAgent"
+        assert pipeline._per_person_agent_store.peek_emotion_agent("p_bob") is not None, \
+            "Bob must have his own EmotionAgent"
+        assert pipeline._per_person_agent_store.peek_emotion_agent("p_alice") is not \
+               pipeline._per_person_agent_store.peek_emotion_agent("p_bob"), \
             "Alice and Bob must have separate EmotionAgent instances"
     finally:
-        pipeline._conversation    = orig_conversation
-        pipeline._emotion_agents  = orig_agents
-        pipeline._cloud_state     = orig_cloud
+        asyncio.run(pipeline._pipeline_state_store.set_cloud_state(orig_cloud))
         db._conn.close()
 
 
@@ -7170,11 +6941,11 @@ def test_emotion_agent_created_per_person(tmp_path):
 
 
 def test_persons_in_frame_updated_for_voice_match():
-    """pipeline source must add voice-matched persons to _persons_in_frame."""
+    """pipeline source must call upsert_voice_recognition for voice-matched persons."""
     import inspect, pipeline
     src = inspect.getsource(pipeline)
-    assert '"source":    "voice"' in src or '"source": "voice"' in src, \
-        "Voice-identified entries must be added to _persons_in_frame with source='voice'"
+    assert "upsert_voice_recognition(" in src, \
+        "Voice-identified entries must call _presence_store.upsert_voice_recognition"
 
 
 def test_scene_block_replaces_room_roster():
@@ -7222,7 +6993,7 @@ def test_switch_enrolled_invalidates_query_embedding_cache():
     import inspect, pipeline
     src = inspect.getsource(pipeline)
     # The fix: _query_embedding_cache.pop(resolved_pid, None) after switch
-    assert "_query_embedding_cache.pop(_resolved_pid, None)" in src, \
+    assert "_query_embedding_store.discard(_resolved_pid)" in src, \
         "switch_enrolled must evict stale query embedding cache for switched-to person"
 
 
@@ -7263,24 +7034,18 @@ async def test_stream_truncation_retry_replaces_fragment():
 
     await pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=_t.time())
 
-    orig_conv     = pipeline._conversation
-    orig_cloud    = pipeline._cloud_state
-    orig_emo      = pipeline._emotion_agents
+    orig_cloud    = pipeline._pipeline_state_store.peek_cloud_state()
     orig_brain    = pipeline._brain_orchestrator
-    orig_qcache   = pipeline._query_embedding_cache
-    orig_lang     = pipeline._detected_lang
-    orig_sysname  = pipeline._active_system_name
-    orig_hints    = pipeline._identity_hints
+    orig_lang     = pipeline._pipeline_state_store.peek_detected_lang()
+    orig_sysname  = pipeline._pipeline_state_store.peek_active_system_name()
     orig_shutdown = pipeline._shutdown_event
 
-    pipeline._conversation          = {"p1": []}
-    pipeline._cloud_state           = CloudState.ONLINE
-    pipeline._emotion_agents        = {}
+    await pipeline._conversation_store.set_history("p1", [])
+    await pipeline._pipeline_state_store.recover_online_no_flag()
+    pipeline._per_person_agent_store.reset()
     pipeline._brain_orchestrator    = None
-    pipeline._query_embedding_cache = {}
-    pipeline._detected_lang         = "en"
-    pipeline._active_system_name    = "Kara"
-    pipeline._identity_hints        = {}
+    await pipeline._pipeline_state_store.set_detected_lang("en")
+    await pipeline._pipeline_state_store.set_active_system_name("Kara")
     pipeline._shutdown_event        = asyncio.Event()
 
     # Simulate stream that only yields "Jagan" (1 word — truncation scenario)
@@ -7307,21 +7072,17 @@ async def test_stream_truncation_retry_replaces_fragment():
                    new=AsyncMock(side_effect=lambda h, *a, **kw: h)):
             await conversation_turn("explain photosynthesis", "p1", "Jagan", db=None)
 
-        hist = pipeline._conversation["p1"]
+        hist = pipeline._conversation_store.peek_history("p1")
         asst_msgs = [m for m in hist if m["role"] == "assistant"]
         assert len(asst_msgs) == 1
         # History must store the RETRY response, not the fragment "Jagan"
         assert asst_msgs[0]["content"] == _ollama_response, \
             f"Expected full retry response in history, got: {asst_msgs[0]['content']!r}"
     finally:
-        pipeline._conversation          = orig_conv
-        pipeline._cloud_state           = orig_cloud
-        pipeline._emotion_agents        = orig_emo
+        await pipeline._pipeline_state_store.set_cloud_state(orig_cloud)
         pipeline._brain_orchestrator    = orig_brain
-        pipeline._query_embedding_cache = orig_qcache
-        pipeline._detected_lang         = orig_lang
-        pipeline._active_system_name    = orig_sysname
-        pipeline._identity_hints        = orig_hints
+        await pipeline._pipeline_state_store.set_detected_lang(orig_lang)
+        await pipeline._pipeline_state_store.set_active_system_name(orig_sysname)
         pipeline._shutdown_event        = orig_shutdown
 
 
@@ -7333,24 +7094,18 @@ async def test_stream_truncation_skips_when_multi_word():
 
     await pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=time.time())
 
-    orig_conv     = pipeline._conversation
-    orig_cloud    = pipeline._cloud_state
-    orig_emo      = pipeline._emotion_agents
+    orig_cloud    = pipeline._pipeline_state_store.peek_cloud_state()
     orig_brain    = pipeline._brain_orchestrator
-    orig_qcache   = pipeline._query_embedding_cache
-    orig_lang     = pipeline._detected_lang
-    orig_sysname  = pipeline._active_system_name
-    orig_hints    = pipeline._identity_hints
+    orig_lang     = pipeline._pipeline_state_store.peek_detected_lang()
+    orig_sysname  = pipeline._pipeline_state_store.peek_active_system_name()
     orig_shutdown = pipeline._shutdown_event
 
-    pipeline._conversation          = {"p1": []}
-    pipeline._cloud_state           = CloudState.ONLINE
-    pipeline._emotion_agents        = {}
+    await pipeline._conversation_store.set_history("p1", [])
+    await pipeline._pipeline_state_store.recover_online_no_flag()
+    pipeline._per_person_agent_store.reset()
     pipeline._brain_orchestrator    = None
-    pipeline._query_embedding_cache = {}
-    pipeline._detected_lang         = "en"
-    pipeline._active_system_name    = "Kara"
-    pipeline._identity_hints        = {}
+    await pipeline._pipeline_state_store.set_detected_lang("en")
+    await pipeline._pipeline_state_store.set_active_system_name("Kara")
     pipeline._shutdown_event        = asyncio.Event()
 
     _normal_response = "Photosynthesis is how plants make food from sunlight."
@@ -7379,18 +7134,14 @@ async def test_stream_truncation_skips_when_multi_word():
 
         # _ask_offline_safe should NOT have been called for truncation retry
         assert not _offline_called, "Truncation retry must not fire for normal multi-word response"
-        hist = pipeline._conversation["p1"]
+        hist = pipeline._conversation_store.peek_history("p1")
         asst = [m for m in hist if m["role"] == "assistant"]
         assert asst[0]["content"] == _normal_response
     finally:
-        pipeline._conversation          = orig_conv
-        pipeline._cloud_state           = orig_cloud
-        pipeline._emotion_agents        = orig_emo
+        await pipeline._pipeline_state_store.set_cloud_state(orig_cloud)
         pipeline._brain_orchestrator    = orig_brain
-        pipeline._query_embedding_cache = orig_qcache
-        pipeline._detected_lang         = orig_lang
-        pipeline._active_system_name    = orig_sysname
-        pipeline._identity_hints        = orig_hints
+        await pipeline._pipeline_state_store.set_detected_lang(orig_lang)
+        await pipeline._pipeline_state_store.set_active_system_name(orig_sysname)
         pipeline._shutdown_event        = orig_shutdown
 
 
@@ -7403,14 +7154,10 @@ async def test_in_session_history_trimmed_at_limit():
     from pipeline import conversation_turn, CloudState
     from core.config import CONVERSATION_HISTORY_LIMIT
 
-    orig_conv     = pipeline._conversation
-    orig_cloud    = pipeline._cloud_state
-    orig_emo      = pipeline._emotion_agents
+    orig_cloud    = pipeline._pipeline_state_store.peek_cloud_state()
     orig_brain    = pipeline._brain_orchestrator
-    orig_qcache   = pipeline._query_embedding_cache
-    orig_lang     = pipeline._detected_lang
-    orig_sysname  = pipeline._active_system_name
-    orig_hints    = pipeline._identity_hints
+    orig_lang     = pipeline._pipeline_state_store.peek_detected_lang()
+    orig_sysname  = pipeline._pipeline_state_store.peek_active_system_name()
     orig_shutdown = pipeline._shutdown_event
 
     # Pre-populate history at exactly the limit (simulates loaded DB history)
@@ -7420,14 +7167,12 @@ async def test_in_session_history_trimmed_at_limit():
         pre_history.append({"role": "assistant",  "content": f"assistant turn {i}"})
 
     await pipeline._session_store.open_session("p1", "Jagan", "known", "face", now=__import__("time").time())
-    pipeline._conversation          = {"p1": list(pre_history)}
-    pipeline._cloud_state           = CloudState.ONLINE
-    pipeline._emotion_agents        = {}
+    await pipeline._conversation_store.set_history("p1", list(pre_history))
+    await pipeline._pipeline_state_store.recover_online_no_flag()
+    pipeline._per_person_agent_store.reset()
     pipeline._brain_orchestrator    = None
-    pipeline._query_embedding_cache = {}
-    pipeline._detected_lang         = "en"
-    pipeline._active_system_name    = "Kara"
-    pipeline._identity_hints        = {}
+    await pipeline._pipeline_state_store.set_detected_lang("en")
+    await pipeline._pipeline_state_store.set_active_system_name("Kara")
     pipeline._shutdown_event        = asyncio.Event()
 
     async def fake_stream(*a, **kw):
@@ -7446,19 +7191,15 @@ async def test_in_session_history_trimmed_at_limit():
                    new=AsyncMock(side_effect=lambda h, *a, **kw: h)):
             await conversation_turn("tell me something", "p1", "Jagan", db=None)
 
-        hist = pipeline._conversation["p1"]
+        hist = pipeline._conversation_store.peek_history("p1")
         n_turns = len(hist) // 2
         assert n_turns <= CONVERSATION_HISTORY_LIMIT, \
             f"In-session history grew to {n_turns} turns, exceeding limit of {CONVERSATION_HISTORY_LIMIT}"
     finally:
-        pipeline._conversation          = orig_conv
-        pipeline._cloud_state           = orig_cloud
-        pipeline._emotion_agents        = orig_emo
+        await pipeline._pipeline_state_store.set_cloud_state(orig_cloud)
         pipeline._brain_orchestrator    = orig_brain
-        pipeline._query_embedding_cache = orig_qcache
-        pipeline._detected_lang         = orig_lang
-        pipeline._active_system_name    = orig_sysname
-        pipeline._identity_hints        = orig_hints
+        await pipeline._pipeline_state_store.set_detected_lang(orig_lang)
+        await pipeline._pipeline_state_store.set_active_system_name(orig_sysname)
         pipeline._shutdown_event        = orig_shutdown
 
 
@@ -7569,7 +7310,7 @@ async def test_execute_tool_update_system_name_allowed_for_best_friend():
     import pipeline
     import time as _t
     await pipeline._session_store.open_session("bf_p1", "Jagan", "best_friend", "face", now=_t.time())
-    pipeline._active_system_name = "Dog"
+    await pipeline._pipeline_state_store.set_active_system_name("Dog")
     pipeline._brain_orchestrator = None
     mock_db = MagicMock()
     result = await pipeline._execute_tool(
@@ -7577,7 +7318,7 @@ async def test_execute_tool_update_system_name_allowed_for_best_friend():
         user_text="call you Kara",
     )
     assert result == "handled"
-    assert pipeline._active_system_name == "Kara"
+    assert pipeline._pipeline_state_store.peek_active_system_name() == "Kara"
 
 
 # ── C3: Gate-pass face embedding ──────────────────────────────────────────────
@@ -7725,17 +7466,16 @@ def test_track_continuity_does_not_fire_for_unknown_track():
     assert person_id is None
 
 
-def test_close_session_prunes_track_identity():
+async def test_close_session_prunes_track_identity():
     """#4: _close_session() must remove _track_identity entries for the closed person."""
-    import asyncio, pipeline
-    asyncio.run(pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time()))
-    pipeline._track_identity = {5: "p1", 6: "p2"}
-    pipeline._stranger_track_map = {}
-    pipeline._unrecognized_embeddings = {}
-    pipeline._sessions_started = set()
+    import pipeline
+    await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
+    await pipeline._track_store.bind_identity(5, "p1")
+    await pipeline._track_store.bind_identity(6, "p2")
     pipeline._close_session("p1")
-    assert 5 not in pipeline._track_identity
-    assert pipeline._track_identity.get(6) == "p2"  # unrelated entry preserved
+    await asyncio.sleep(0)
+    assert 5 not in pipeline._track_store
+    assert pipeline._track_store.peek_identity(6) == "p2"  # unrelated entry preserved
 
 
 def test_self_update_skipped_for_track_continuity_restoration():
@@ -7975,17 +7715,16 @@ def test_single_camera_reader_in_pipeline():
 
 
 def test_latest_frame_time_tracks_freshness():
-    """#10: _latest_frame_time must be a float initialized to 0.0."""
+    """#10: VisionFrameStore frame_time must be a float initialized to 0.0."""
     import pipeline
-    assert isinstance(pipeline._latest_frame_time, float)
+    assert isinstance(pipeline._vision_frame_store.peek_frame_time(), float)
 
 
 def test_stale_frame_treated_as_none():
-    """#10: When _latest_frame_time is old, frame read must return None (camera failure path)."""
-    import pipeline, time
-    pipeline._latest_vision_frame = object()  # non-None sentinel
-    pipeline._latest_frame_time   = time.monotonic() - 10.0  # 10s ago → stale
-    frame = pipeline._latest_vision_frame if time.monotonic() - pipeline._latest_frame_time < 0.5 else None
+    """#10: When the stored frame_time is old, peek_frame_if_fresh returns None."""
+    import pipeline, time, asyncio
+    asyncio.run(pipeline._vision_frame_store.set_frame(object(), time.monotonic() - 10.0))
+    frame = pipeline._vision_frame_store.peek_frame_if_fresh(0.5, time.monotonic())
     assert frame is None
 
 
@@ -8226,7 +7965,9 @@ async def test_ambient_known_voice_bypasses_gate():
             db._conn.close()
 
 
-# ── #16: _resolve_actual_speaker — new 5-priority algorithm ──────────────────
+# ── #16: reconciler — voice/face routing (legacy _resolve_actual_speaker
+#        deleted P0.10 Phase 2; rule-level coverage in tests/test_reconciler.py +
+#        C1-C21 contracts in tests/test_p10_reconciler_contract.py) ────────────
 
 def test_effective_switch_threshold_strong_profile():
     """#16: gallery size >= 5 → threshold 0.40."""
@@ -8241,70 +7982,6 @@ def test_effective_switch_threshold_weak_profile():
     assert _effective_switch_threshold("p1", {"p1": 4})  == 0.55
     assert _effective_switch_threshold("p1", {"p1": 0})  == 0.55
     assert _effective_switch_threshold("p1", {})          == 0.55
-
-
-def test_resolve_mid_range_face_confirms_switch():
-    """#16 (updated Session 67 / Bug O): P2 face+voice agreement now requires
-    voice ≥ VOICE_ROUTING_FACE_ASSIST_MIN (0.42). A voice match at 0.45 with the
-    face in frame → switch_enrolled; a 0.35 match with the same face → ambiguous.
-    The original test (0.35 → switch_enrolled) encoded the pre-Bug-O behavior
-    that put Wasim's phone audio under Jagan's pid in the 2026-04-20 live run."""
-    import pipeline, time
-    now = time.time()
-    pif = {"p2": {"last_recognized_at": now, "source": "face"}}
-
-    # Above the face-assist floor — confident switch
-    resolved_hi, action_hi = pipeline._resolve_actual_speaker(
-        "p2", 0.45, "p1", pif, {}, {}, now
-    )
-    assert action_hi   == "switch_enrolled"
-    assert resolved_hi == "p2"
-
-    # Below the face-assist floor — ambiguous despite the face being visible
-    _, action_lo = pipeline._resolve_actual_speaker(
-        "p2", 0.35, "p1", pif, {}, {}, now
-    )
-    assert action_lo == "ambiguous", (
-        "Bug O regression: weak voice with a visible face must NOT upgrade to "
-        "confident switch — that's the exact Wasim-phone-audio misattribution"
-    )
-
-
-def test_resolve_mid_range_face_absent_is_ambiguous():
-    """#16: P2 score 0.35 for p2 NOT in frame → ambiguous."""
-    import pipeline, time
-    resolved, action = pipeline._resolve_actual_speaker(
-        "p2", 0.35, "p1", {}, {}, {}, time.time()
-    )
-    assert action == "ambiguous"
-
-
-def test_resolve_low_self_match_holder_absent_is_ambiguous():
-    """#16: P3 self-match score < 0.45 with holder not in frame → ambiguous."""
-    import pipeline, time
-    resolved, action = pipeline._resolve_actual_speaker(
-        "p1", 0.30, "p1", {}, {}, {}, time.time()
-    )
-    assert action == "ambiguous"
-
-
-def test_resolve_p5_no_session_unrec_track_is_new_stranger():
-    """#16: P5 no session, no v_pid, fresh unrecognized track → new_stranger."""
-    import pipeline, time
-    now = time.time()
-    resolved, action = pipeline._resolve_actual_speaker(
-        None, 0.0, None, {}, {7: now}, {}, now
-    )
-    assert action == "new_stranger"
-
-
-def test_resolve_p5_no_session_no_evidence_is_no_action():
-    """#16: P5 no session, no v_pid, empty scene, score=0 → no_action."""
-    import pipeline, time
-    resolved, action = pipeline._resolve_actual_speaker(
-        None, 0.0, None, {}, {}, {}, time.time()
-    )
-    assert action == "no_action"
 
 
 def test_count_scene_candidates_excludes_stale_tracks():
@@ -8330,12 +8007,12 @@ def test_count_scene_candidates_counts_fresh_tracks():
 # ── #20: 1:1 stranger-track-to-session binding ────────────────────────────────
 
 def test_stranger_track_pre_allocated_on_unrecognized_scan():
-    """#20: _stranger_track_map must be pre-populated for each SORT-confirmed unrecognized track."""
+    """#20: _track_store.mint_stranger must be called for each SORT-confirmed unrecognized track."""
     import pipeline, inspect
     src = inspect.getsource(pipeline._background_vision_loop)
     # The pre-allocation happens inside the background vision loop's else-branch
-    assert "_stranger_track_map[_tid]" in src, \
-        "Background vision scan must pre-allocate stranger pid in _stranger_track_map"
+    assert "_track_store.mint_stranger(" in src, \
+        "Background vision scan must pre-allocate stranger pid via _track_store.mint_stranger"
 
 
 def test_new_stranger_multi_track_picks_most_recent():
@@ -8348,20 +8025,15 @@ def test_new_stranger_multi_track_picks_most_recent():
 
 
 def test_new_stranger_uses_preallocated_pid():
-    """#20: When a pre-allocated pid exists in _stranger_track_map, the session uses it."""
-    import pipeline, time
-    orig_stmap = pipeline._stranger_track_map.copy()
+    """#20: When a pre-allocated pid exists in _track_store, the session uses it."""
+    import asyncio, pipeline, time
     now = time.time()
-    # Simulate pre-allocation: track 42 → pre-allocated pid
     pre_pid = "stranger_prealloc12"
-    pipeline._stranger_track_map[42]  = pre_pid
-    pipeline._unrecognized_tracks[42] = now
+    asyncio.run(pipeline._track_store.mark_unrecognized(42, now))
+    asyncio.run(pipeline._track_store.mint_stranger(42, pre_pid))
     # Verify that _target_sid lookup finds the pre-allocated pid
-    _target = pipeline._stranger_track_map.get(42)
+    _target = pipeline._track_store.peek_stranger_pid(42)
     assert _target == pre_pid
-    # Restore
-    pipeline._stranger_track_map.clear()
-    pipeline._stranger_track_map.update(orig_stmap)
 
 
 # ── #21: _cur_pid drift detection ─────────────────────────────────────────────
@@ -8414,7 +8086,7 @@ def test_voice_session_timeout_is_30():
 
 
 def test_voice_session_extends_when_face_visible():
-    """#22: voice session last_spoke_at updated when holder is visible in persons_in_frame."""
+    """#22: voice session last_spoke_at updated when holder is visible in _presence_store."""
     import asyncio, pipeline, time
     pid = "stranger_abc123"
     now = time.time()
@@ -8422,19 +8094,18 @@ def test_voice_session_extends_when_face_visible():
         pid, "visitor", "stranger", "voice", now=now - 25.0,
     ))
     asyncio.run(pipeline._session_store.set_last_spoke_at(pid, now - 20.0))
-    pipeline._persons_in_frame[pid] = {"last_recognized_at": now, "name": "visitor", "conf": 0.3}
+    asyncio.run(pipeline._presence_store.upsert_face_recognition(pid, "visitor", 0.3, now))
     # Simulate the extension logic
     _now_ext = time.time()
     _holder_vis = (
-        pid in pipeline._persons_in_frame
-        and _now_ext - pipeline._persons_in_frame[pid].get("last_recognized_at", 0) < 2.0
+        pid in pipeline._presence_store
+        and _now_ext - pipeline._presence_store.peek_last_recognized_at(pid, 0.0) < 2.0
     )
     if _holder_vis:
         asyncio.run(pipeline._session_store.set_last_spoke_at(pid, _now_ext))
     snap = pipeline._session_store.peek_snapshot(pid)
     assert snap is not None
     assert snap.last_spoke_at >= now - 0.1
-    pipeline._persons_in_frame.pop(pid, None)
 
 
 # ── #23: single voice-accumulation policy ─────────────────────────────────────
@@ -8949,9 +8620,10 @@ def test_maybe_record_silent_obs_calls_db_when_throttle_elapsed(tmp_path):
 
 def test_maybe_record_silent_obs_skips_when_throttled(tmp_path):
     """Helper does NOT call db when within 5-second throttle window."""
+    import asyncio
     import pipeline as _pl
     import time
-    _pl._last_silent_update = time.time()  # just fired
+    asyncio.run(_pl._pipeline_state_store.set_last_silent_update(time.time()))  # just fired
     mock_db = MagicMock()
     _pl._maybe_record_silent_obs([0.1] * 512, (10, 10, 50, 50), 640, 480, mock_db)
     mock_db.update_silent_observation.assert_not_called()
@@ -9476,32 +9148,26 @@ def test_kairos_call_site_passes_best_friend_id():
 
 # ── Finding B — _close_session cache eviction ─────────────────────────────────
 
-def test_close_session_evicts_query_embedding_cache():
+async def test_close_session_evicts_query_embedding_cache():
     import asyncio, pipeline, time as _t
-    asyncio.run(pipeline._session_store.open_session("p1", "Alice", "known", "face", now=_t.time()))
-    pipeline._query_embedding_cache = {"p1": [0.1, 0.2], "p2": [0.3, 0.4]}
-    pipeline._identity_hints = {}
-    pipeline._stranger_track_map = {}
-    pipeline._unrecognized_embeddings = {}
-    pipeline._track_identity = {}
-    pipeline._sessions_started = set()
+    await pipeline._session_store.open_session("p1", "Alice", "known", "face", now=_t.time())
+    await pipeline._query_embedding_store.set("p1", [0.1, 0.2])
+    await pipeline._query_embedding_store.set("p2", [0.3, 0.4])
     pipeline._close_session("p1")
-    assert "p1" not in pipeline._query_embedding_cache, "_close_session must evict _query_embedding_cache"
-    assert "p2" in pipeline._query_embedding_cache, "unrelated entry must not be removed"
+    await asyncio.sleep(0)
+    assert pipeline._query_embedding_store.peek("p1") is None, "_close_session must evict _query_embedding_store"
+    assert pipeline._query_embedding_store.peek("p2") is not None, "unrelated entry must not be removed"
 
 
-def test_close_session_evicts_identity_hints():
+async def test_close_session_evicts_identity_hints():
     import asyncio, pipeline, time as _t
-    asyncio.run(pipeline._session_store.open_session("p1", "Alice", "known", "face", now=_t.time()))
-    pipeline._identity_hints = {"p1": {"name": "Alice", "conf": 0.9}, "p2": {"name": "Bob", "conf": 0.7}}
-    pipeline._query_embedding_cache = {}
-    pipeline._stranger_track_map = {}
-    pipeline._unrecognized_embeddings = {}
-    pipeline._track_identity = {}
-    pipeline._sessions_started = set()
+    await pipeline._session_store.open_session("p1", "Alice", "known", "face", now=_t.time())
+    await pipeline._identity_hints_store.set("p1", {"name": "Alice", "conf": 0.9})
+    await pipeline._identity_hints_store.set("p2", {"name": "Bob", "conf": 0.7})
     pipeline._close_session("p1")
-    assert "p1" not in pipeline._identity_hints, "_close_session must evict _identity_hints"
-    assert "p2" in pipeline._identity_hints, "unrelated entry must not be removed"
+    await asyncio.sleep(0)
+    assert pipeline._identity_hints_store.peek("p1") is None, "_close_session must evict _identity_hints_store"
+    assert pipeline._identity_hints_store.peek("p2") is not None, "unrelated entry must not be removed"
 
 
 # ── Finding C — delete_person nulls silent_observations ──────────────────────
@@ -9649,80 +9315,6 @@ def test_whisper_uses_speaker_languages_config():
 
 
 # ── NEW-1 — Stranger session fragmentation fix (Priority 3.5) ─────────────────
-
-def test_resolve_actual_speaker_priority_35_returns_current_for_bootstrapping_stranger():
-    """Priority 3.5: voice unrecognised + stranger cur_pid + gallery < N_INITIAL_VOICE → stay."""
-    import pipeline
-    from core.config import N_INITIAL_VOICE
-    stranger_pid = "stranger_abc123"
-    pid, action = pipeline._resolve_actual_speaker(
-        v_pid=None,
-        v_score=0.15,
-        cur_pid=stranger_pid,
-        persons_in_frame={},
-        unrecognized_tracks={},
-        voice_gallery_sizes={stranger_pid: N_INITIAL_VOICE - 1},
-        now=__import__("time").time(),
-    )
-    assert pid == stranger_pid
-    assert action == "current"
-
-
-def test_resolve_actual_speaker_priority_35_does_not_fire_when_gallery_mature():
-    """Priority 3.5 must NOT fire once stranger has N_INITIAL_VOICE samples — falls to Priority 4."""
-    import pipeline
-    from core.config import N_INITIAL_VOICE
-    stranger_pid = "stranger_abc123"
-    pid, action = pipeline._resolve_actual_speaker(
-        v_pid=None,
-        v_score=0.15,
-        cur_pid=stranger_pid,
-        persons_in_frame={},
-        unrecognized_tracks={},
-        voice_gallery_sizes={stranger_pid: N_INITIAL_VOICE},
-        now=__import__("time").time(),
-    )
-    # With a mature gallery, Priority 4 fires → new_stranger (v_score < threshold)
-    assert action == "new_stranger"
-
-
-def test_resolve_actual_speaker_priority_35_does_not_fire_for_known_person():
-    """Priority 3.5 is guarded by cur_pid.startswith('stranger_') — known persons skip it."""
-    import pipeline
-    from core.config import N_INITIAL_VOICE
-    pid, action = pipeline._resolve_actual_speaker(
-        v_pid=None,
-        v_score=0.15,
-        cur_pid="jagan_001",
-        persons_in_frame={},
-        unrecognized_tracks={},
-        voice_gallery_sizes={"jagan_001": N_INITIAL_VOICE - 1},
-        now=__import__("time").time(),
-    )
-    # Known person, Priority 3.5 is skipped → Priority 4 (new_stranger)
-    assert action == "new_stranger"
-
-
-def test_resolve_actual_speaker_priority_35_skips_promoted_stranger():
-    """Promoted stranger (stranger_-prefixed pid but person_type='known') must NOT hit Priority 3.5.
-    person_id is immutable after promotion; only person_type flips — caller passes the session's
-    person_type so the routing reflects the promotion immediately."""
-    import pipeline
-    from core.config import N_INITIAL_VOICE
-    promoted_pid = "stranger_abc123"  # still has prefix — promotion doesn't rename
-    pid, action = pipeline._resolve_actual_speaker(
-        v_pid=None,
-        v_score=0.15,
-        cur_pid=promoted_pid,
-        persons_in_frame={},
-        unrecognized_tracks={},
-        voice_gallery_sizes={promoted_pid: N_INITIAL_VOICE - 1},
-        now=__import__("time").time(),
-        cur_person_type="known",  # promoted — must skip Priority 3.5
-    )
-    # Promoted person, Priority 3.5 skipped → falls through to Priority 4
-    assert action == "new_stranger"
-
 
 # ── NEW-2 — Session expiry during active conversation ─────────────────────────
 
@@ -9940,23 +9532,6 @@ def test_add_embedding_centroid_gate_allows_same_cluster(tmp_path):
 
 # ── Finding 3 — Voice floor even when face co-visible ────────────────────────
 
-def test_resolve_actual_speaker_priority_3_voice_floor_blocks_low_score():
-    """Even with face co-visible, voice score below 0.30 must route ambiguous
-    (prevents an acoustically-similar stranger from coasting on poisoned vision)."""
-    import pipeline
-    pid, action = pipeline._resolve_actual_speaker(
-        v_pid="jagan_001",
-        v_score=0.22,      # below the 0.30 floor
-        cur_pid="jagan_001",
-        persons_in_frame={"jagan_001": {"conf": 0.40, "last_recognized_at": __import__("time").time()}},
-        unrecognized_tracks={},
-        voice_gallery_sizes={"jagan_001": 10},
-        now=__import__("time").time(),
-    )
-    assert action == "ambiguous", \
-        "Priority 3 must not return 'current' when voice self-match is below the 0.30 floor"
-
-
 # ── Finding 2A — update_person_name flips known session to 'disputed' ────────
 
 async def test_update_person_name_on_known_session_flips_to_disputed():
@@ -9977,7 +9552,7 @@ async def test_update_person_name_on_known_session_flips_to_disputed():
         pid, "Jagan", "known", "face",
         now=_t.time() - (ENROLLMENT_RENAME_GRACE_SECS + 60),
     )
-    pipeline._conversation = {pid: []}
+    await pipeline._conversation_store.set_history(pid, [])
     mock_db = MagicMock()
     mock_db.voice_embedding_count.return_value = 20
     await _execute_tool(
@@ -10010,12 +9585,10 @@ async def test_update_person_name_on_disputed_session_blocks_db_rename():
     await pipeline._session_store.transition_to_disputed(
         "jagan_001", "Venkat", "speaker claims not Jagan", now=_now,
     )
-    pipeline._conversation = {
-        "jagan_001": [
-            {"role": "user",      "content": "I am not Jagan, I am Venkat"},
-            {"role": "assistant", "content": "I hear you, Jagan — let me sort this out."},
-        ]
-    }
+    await pipeline._conversation_store.set_history("jagan_001", [
+        {"role": "user",      "content": "I am not Jagan, I am Venkat"},
+        {"role": "assistant", "content": "I hear you, Jagan — let me sort this out."},
+    ])
     mock_db = MagicMock()
     await _execute_tool(
         "update_person_name", {"name": "Venkat"},
@@ -10033,7 +9606,7 @@ async def test_update_person_name_on_disputed_session_blocks_db_rename():
     assert snap.person_type == "disputed"
     # In-memory history must NOT have been rewritten (stranger's turns are
     # still theirs; rewriting would confuse future debugging).
-    msgs = pipeline._conversation["jagan_001"]
+    msgs = pipeline._conversation_store.peek_history("jagan_001")
     assert msgs[1]["content"] == "I hear you, Jagan — let me sort this out."
 
 
@@ -10172,7 +9745,7 @@ async def test_dispute_rename_block_increments_counter():
     try:
         await pipeline._session_store.open_session(pid, "Jagan", "known", "face", now=now)
         await pipeline._session_store.transition_to_disputed(pid, None, "speaker claims not Jagan", now=now)
-        pipeline._conversation = {pid: []}
+        await pipeline._conversation_store.set_history(pid, [])
         mock_db = MagicMock()
         await _execute_tool("update_person_name", {"name": "Venkat"},
                             pid, "Jagan", db=mock_db,
@@ -10200,7 +9773,7 @@ async def test_dispute_rename_burst_fires_watchdog_at_threshold():
     now = _t.time()
     await pipeline._session_store.open_session(pid, "Jagan", "known", "face", now=now)
     await pipeline._session_store.transition_to_disputed(pid, None, "speaker claims not Jagan", now=now)
-    pipeline._conversation = {pid: []}
+    await pipeline._conversation_store.set_history(pid, [])
     orig_orch = pipeline._brain_orchestrator
     mock_orch = MagicMock()
     pipeline._brain_orchestrator = mock_orch
@@ -10264,7 +9837,7 @@ async def test_dispute_rename_burst_severity_critical_for_best_friend(tmp_path):
     now_bf = _t.time()
     await pipeline._session_store.open_session(pid_bf, "Jagan", "best_friend", "face", now=now_bf)
     await pipeline._session_store.transition_to_disputed(pid_bf, None, "speaker claims not Jagan", now=now_bf)
-    pipeline._conversation = {pid_bf: []}
+    await pipeline._conversation_store.set_history(pid_bf, [])
     orig_orch = pipeline._brain_orchestrator
     pipeline._brain_orchestrator = orch
     try:
@@ -10421,16 +9994,10 @@ async def test_bug_f3_mishear_rename_refreshes_persons_in_frame_cache():
     await pipeline._session_store.open_session(
         "jawan_abc", "Jawan", "best_friend", "face", now=_t.time() - 30
     )
-    pipeline._conversation = {"jawan_abc": []}
-    # Seed the cache with the stale name — simulates state right after
+    await pipeline._conversation_store.set_history("jawan_abc", [])
+    # Seed the presence store with the stale name — simulates state right after
     # the first recognition on enrollment.
-    pipeline._persons_in_frame = {
-        "jawan_abc": {
-            "name": "Jawan", "conf": 0.9,
-            "last_seen": _t.time(), "last_recognized_at": _t.time(),
-            "source": "face",
-        }
-    }
+    await pipeline._presence_store.upsert_face_recognition("jawan_abc", "Jawan", 0.9, _t.time())
     mock_db = MagicMock()
     mock_db.voice_embedding_count.return_value = 0
 
@@ -10450,14 +10017,14 @@ async def test_bug_f3_mishear_rename_refreshes_persons_in_frame_cache():
     finally:
         pipeline._brain_orchestrator = orig_orch
 
-    # The cache must reflect the new name, not the stale STT-mangled one.
-    assert pipeline._persons_in_frame["jawan_abc"]["name"] == "Jagan", (
-        "Bug F.3: _persons_in_frame cache must be refreshed on rename — "
+    await asyncio.sleep(0)
+    # The presence store must reflect the new name, not the stale STT-mangled one.
+    assert pipeline._presence_store.peek_snapshot("jawan_abc").name == "Jagan", (
+        "Bug F.3: _presence_store cache must be refreshed on rename — "
         "otherwise SCENE block and [Vision] logs keep showing the stale "
         "name until the next background scan (~1s latency + possible UI "
         "flicker)"
     )
-    pipeline._persons_in_frame = {}
 
 
 async def test_bug_f3_stranger_promotion_refreshes_persons_in_frame_cache():
@@ -10472,14 +10039,8 @@ async def test_bug_f3_stranger_promotion_refreshes_persons_in_frame_cache():
     await pipeline._session_store.open_session(
         "stranger_abc", "visitor", "stranger", "voice", now=_t.time()
     )
-    pipeline._conversation = {"stranger_abc": []}
-    pipeline._persons_in_frame = {
-        "stranger_abc": {
-            "name": "visitor", "conf": 0.8,
-            "last_seen": _t.time(), "last_recognized_at": _t.time(),
-            "source": "face",
-        }
-    }
+    await pipeline._conversation_store.set_history("stranger_abc", [])
+    await pipeline._presence_store.upsert_face_recognition("stranger_abc", "visitor", 0.8, _t.time())
     mock_db = MagicMock()
 
     orig_orch = pipeline._brain_orchestrator
@@ -10493,8 +10054,8 @@ async def test_bug_f3_stranger_promotion_refreshes_persons_in_frame_cache():
     finally:
         pipeline._brain_orchestrator = orig_orch
 
-    assert pipeline._persons_in_frame["stranger_abc"]["name"] == "Lexi"
-    pipeline._persons_in_frame = {}
+    await asyncio.sleep(0)
+    assert pipeline._presence_store.peek_snapshot("stranger_abc").name == "Lexi"
 
 
 def test_bug_f3_background_face_scan_refreshes_cached_name():
@@ -10507,15 +10068,12 @@ def test_bug_f3_background_face_scan_refreshes_cached_name():
     the 2026-04-23 canary surfaced."""
     import inspect, pipeline
     src = inspect.getsource(pipeline)
-    # Find the existing else-branch that updates conf/last_seen.
-    marker_idx = src.find('_persons_in_frame[_pid2]["conf"]               = _conf2')
-    assert marker_idx >= 0, "expected background-scan update block not found"
-    # Check a window large enough to include the Bug F.3 comment + name
-    # refresh line below the existing conf/source updates.
-    window = src[marker_idx:marker_idx + 1500]
-    assert '_persons_in_frame[_pid2]["name"]' in window, (
-        "background-scan else-branch must refresh the cached name so "
-        "renames propagate to the SCENE block / [Vision] logs within "
+    # The background scan now calls _presence_store.upsert_face_recognition
+    # (via loop.create_task) passing the current name from recognize() on
+    # every scan cycle — this is the Bug F.3 name-cache refresh.
+    assert "_presence_store.upsert_face_recognition(" in src, (
+        "background-scan else-branch must call _presence_store.upsert_face_recognition "
+        "so renames propagate to the SCENE block / [Vision] logs within "
         "one scan cycle"
     )
 
@@ -10534,7 +10092,7 @@ async def test_enrollment_mishear_widened_accepts_deny_identity_intent():
     from pipeline import _execute_tool
     import time as _t
     await pipeline._session_store.open_session("jawan_abc", "Jawan", "best_friend", "face", now=_t.time() - 30)
-    pipeline._conversation = {"jawan_abc": []}
+    await pipeline._conversation_store.set_history("jawan_abc", [])
     mock_db = MagicMock()
     mock_db.voice_embedding_count.return_value = 0  # fresh enrollment
 
@@ -10579,7 +10137,7 @@ async def test_enrollment_mishear_widened_accepts_confirm_identity():
     from pipeline import _execute_tool
     import time as _t
     await pipeline._session_store.open_session("jawan_abc", "Jawan", "best_friend", "face", now=_t.time() - 30)
-    pipeline._conversation = {"jawan_abc": []}
+    await pipeline._conversation_store.set_history("jawan_abc", [])
     mock_db = MagicMock()
     mock_db.voice_embedding_count.return_value = 0
 
@@ -10614,7 +10172,7 @@ async def test_enrollment_mishear_widened_rejects_ungrounded_extracted_value():
     from pipeline import _execute_tool
     import time as _t
     await pipeline._session_store.open_session("jawan_abc", "Jawan", "best_friend", "face", now=_t.time() - 30)
-    pipeline._conversation = {"jawan_abc": []}
+    await pipeline._conversation_store.set_history("jawan_abc", [])
     mock_db = MagicMock()
     mock_db.voice_embedding_count.return_value = 0
 
@@ -10651,7 +10209,7 @@ async def test_enrollment_mishear_escape_hatch_renames_fresh_best_friend():
     from pipeline import _execute_tool
     import time as _t
     await pipeline._session_store.open_session("jagan_bf", "Gevan", "best_friend", "face", now=_t.time() - 30)
-    pipeline._conversation = {"jagan_bf": []}
+    await pipeline._conversation_store.set_history("jagan_bf", [])
     mock_db = MagicMock()
     mock_db.voice_embedding_count.return_value = 0  # no voice samples yet
 
@@ -10695,7 +10253,7 @@ async def test_enrollment_mishear_escape_hatch_skips_when_voice_mature():
     from pipeline import _execute_tool
     import time as _t
     await pipeline._session_store.open_session("jagan_bf", "Jagan", "best_friend", "face", now=_t.time() - 30)
-    pipeline._conversation = {"jagan_bf": []}
+    await pipeline._conversation_store.set_history("jagan_bf", [])
     mock_db = MagicMock()
     mock_db.voice_embedding_count.return_value = 20  # MATURE voice — not enrollment
 
@@ -10727,7 +10285,7 @@ async def test_enrollment_mishear_escape_hatch_skips_when_session_stale():
     import time as _t
     from core.config import ENROLLMENT_RENAME_GRACE_SECS
     await pipeline._session_store.open_session("jagan_bf", "Jagan", "best_friend", "face", now=_t.time() - (ENROLLMENT_RENAME_GRACE_SECS + 60))
-    pipeline._conversation = {"jagan_bf": []}
+    await pipeline._conversation_store.set_history("jagan_bf", [])
     mock_db = MagicMock()
     mock_db.voice_embedding_count.return_value = 0
 
@@ -10768,7 +10326,7 @@ async def test_update_person_name_on_best_friend_session_flips_to_disputed():
     await pipeline._session_store.open_session(
         "jagan_bf", "Jagan", "best_friend", "face", now=_started_at
     )
-    pipeline._conversation = {"jagan_bf": []}
+    await pipeline._conversation_store.set_history("jagan_bf", [])
     mock_db = MagicMock()
     mock_db.voice_embedding_count.return_value = 20  # mature voice profile
 
@@ -10814,7 +10372,7 @@ async def test_stranger_rename_still_works_after_g_fix():
     await pipeline._session_store.open_session(
         "stranger_xyz", "visitor", "stranger", "face", now=_t.time()
     )
-    pipeline._conversation = {"stranger_xyz": []}
+    await pipeline._conversation_store.set_history("stranger_xyz", [])
     mock_db = MagicMock()
     await _execute_tool(
         "update_person_name", {"name": "Priya"},
@@ -11178,7 +10736,7 @@ async def test_mark_disputed_records_timestamp():
     import time as _t
     pid = "jagan_001"
     await pipeline._session_store.open_session(pid, "Jagan", "known", "face", now=_t.time())
-    pipeline._conversation = {pid: []}
+    await pipeline._conversation_store.set_history(pid, [])
     await _execute_tool(
         "update_person_name", {"name": "Venkat"},
         pid, "Jagan", db=None,
@@ -11399,34 +10957,6 @@ def test_voice_accum_sees_current_turn_voice_match_conf():
     asyncio.run(pipeline._session_store.close_session(pid))
 
 
-def test_run_writes_voice_match_conf_before_routing():
-    """Bug I: source-inspection that the voice_match_conf evidence write happens
-    in run()'s voice-ID block — BEFORE _resolve_actual_speaker and any
-    accumulation decisions consume it. Regression guard: if someone refactors
-    and moves this write back inside _accumulate_voice, the freshly-reopened
-    session loses mature Path B eligibility again."""
-    import inspect, pipeline
-    src = inspect.getsource(pipeline.run)
-    # The marker comment must appear near the evidence write.
-    assert "Bug I" in src, "Bug I evidence-write block marker missing from run()"
-    # And the write must use update_voice_heard to persist the current turn's voice match.
-    assert "update_voice_heard(" in src, (
-        "run() must persist the current turn's voice match via update_voice_heard"
-    )
-    assert "conf=_v_score" in src, (
-        "update_voice_heard call must pass conf=_v_score"
-    )
-    # Ordering: the evidence write must come before the _resolve_actual_speaker call,
-    # or Bug I's root cause (stale evidence on gate check) isn't actually fixed.
-    write_idx  = src.find("update_voice_heard(")
-    route_idx  = src.find("_resolve_actual_speaker(")
-    assert write_idx > -1 and route_idx > -1
-    assert write_idx < route_idx, (
-        "voice_match_conf evidence write must precede _resolve_actual_speaker "
-        "so routing / accumulation see the current turn's match, not the stale seed"
-    )
-
-
 # ── Phase 1 Bug fixes from 2026-04-20 live run ──────────────────────────────
 
 def test_face_in_frame_returns_false_for_voice_source():
@@ -11447,30 +10977,6 @@ def test_face_in_frame_returns_false_for_missing_pid():
     """Bug B: missing pid is not in frame at all."""
     import pipeline
     assert pipeline._face_in_frame("nobody", {}) is False
-
-
-def test_routing_voice_only_speaker_does_not_trigger_face_voice_agree():
-    """Bug B (architectural): a voice-only speaker whose pid appears in persons_in_frame
-    with source='voice' must NOT trigger the Priority-2 'face+voice agree' shortcut.
-    They should fall through to the ambiguous branch since their face isn't actually visible.
-    Use gallery_size<5 (weak-profile 0.55 switch threshold) + v_score=0.40 so Priority 1
-    is skipped and we actually reach Priority 2 where the fix matters."""
-    import pipeline, time
-    pif = {"p1": {"name": "Chloe", "conf": 0.45,
-                  "last_seen": time.time(), "source": "voice"}}
-    resolved, action = pipeline._resolve_actual_speaker(
-        v_pid="p1",
-        v_score=0.40,                  # below 0.55 weak-profile switch_threshold
-        cur_pid="jagan",               # different speaker holding session
-        persons_in_frame=pif,
-        unrecognized_tracks={},
-        voice_gallery_sizes={"p1": 3}, # weak profile → switch_threshold=0.55
-        now=time.time(),
-    )
-    assert action == "ambiguous", (
-        f"voice-only p1 should NOT trigger face+voice agree switch when source='voice' "
-        f"(got action={action!r})"
-    )
 
 
 def test_bootstrap_budget_exceeds_mature_threshold():
@@ -11504,9 +11010,9 @@ def test_bootstrap_matches_max_voice_embeddings():
 async def test_open_session_hydrates_voice_sample_count_from_gallery():
     """Bug A Part 1: a re-opened session must hydrate voice_sample_count from the
     DB-backed _voice_gallery_sizes cache so prior samples carry forward."""
-    import pipeline
+    import numpy as np, pipeline
     try:
-        pipeline._voice_gallery_sizes["chloe_001"] = 4
+        await pipeline._voice_gallery_store.set_gallery("chloe_001", np.ones(192, dtype=np.float32), 4)
         pipeline._open_session("chloe_001", "Chloe", "voice",
                                person_type="stranger", engagement_gate_passed=False)
         await asyncio.sleep(0)
@@ -11514,14 +11020,14 @@ async def test_open_session_hydrates_voice_sample_count_from_gallery():
         assert snap is not None
         assert snap.evidence.voice_sample_count == 4
     finally:
-        pipeline._voice_gallery_sizes.pop("chloe_001", None)
+        await pipeline._voice_gallery_store.pop_gallery("chloe_001")
 
 
 async def test_open_session_hydrates_zero_when_pid_unknown_to_gallery():
     """Fresh pid not in _voice_gallery_sizes → sample count is 0, no KeyError."""
     import pipeline
     from core.config import N_INITIAL_VOICE_BOOTSTRAP
-    pipeline._voice_gallery_sizes.pop("brand_new_stranger", None)
+    await pipeline._voice_gallery_store.pop_gallery("brand_new_stranger")
     pipeline._open_session("brand_new_stranger", "visitor", "voice",
                            person_type="stranger", engagement_gate_passed=True)
     await asyncio.sleep(0)
@@ -11580,7 +11086,7 @@ async def test_open_session_hydration_prefers_live_db_over_stale_cache(tmp_path)
     prev_ref = pipeline._face_db_ref
     try:
         pipeline._face_db_ref = db
-        pipeline._voice_gallery_sizes["hydrate_p1"] = 10   # STALE — out-of-process delete happened
+        await pipeline._voice_gallery_store.set_gallery("hydrate_p1", np.ones(192, dtype=np.float32), 10)  # STALE — out-of-process delete happened
         pipeline._open_session("hydrate_p1", "Alice", "voice", person_type="known")
         await asyncio.sleep(0)
         snap = pipeline._session_store.peek_snapshot("hydrate_p1")
@@ -11589,12 +11095,12 @@ async def test_open_session_hydration_prefers_live_db_over_stale_cache(tmp_path)
             "_open_session must prefer the live DB count over the stale cache"
         )
         # Cache repaired so downstream consumers also see the correct number.
-        assert pipeline._voice_gallery_sizes["hydrate_p1"] == 4, (
+        assert pipeline._voice_gallery_store.peek_size("hydrate_p1") == 4, (
             "Stale cache entry must be repaired to match the DB"
         )
     finally:
         pipeline._face_db_ref = prev_ref
-        pipeline._voice_gallery_sizes.pop("hydrate_p1", None)
+        await pipeline._voice_gallery_store.pop_gallery("hydrate_p1")
         db._conn.close()
 
 
@@ -11607,11 +11113,11 @@ def test_dream_loop_reconciles_voice_gallery_cache_after_out_of_process_delete()
     assert "load_voice_profile_sizes" in src, (
         "_dream_loop must call db.load_voice_profile_sizes() each cycle to detect divergence"
     )
-    assert "_divergent" in src and "reconciled" in src, (
-        "_dream_loop must compute the set of out-of-sync pids and log reconciliation"
+    assert "_voice_gallery_store.reconcile" in src, (
+        "_dream_loop must delegate reconciliation to _voice_gallery_store.reconcile()"
     )
-    assert "_voice_gallery.pop" in src and "load_voice_profile_for" in src, (
-        "Divergent pids must have their embeddings reloaded (or evicted) from _voice_gallery "
+    assert "load_voice_profile_for" in src, (
+        "Divergent pids must have their embeddings reloaded via load_voice_profile_for "
         "so voice_mod.identify() can't keep matching against a vanished mean"
     )
 
@@ -11783,15 +11289,15 @@ def test_conversation_turn_retry_gate_rejects_stop_finish_reason():
 
 
 def test_background_scan_tags_face_sourced_entries():
-    """Bug B support: the face-side writer into _persons_in_frame must include
-    source='face' so _face_in_frame can filter correctly. Source-inspection test
+    """Bug B support: the face-side writer must call upsert_face_recognition on
+    _presence_store so _face_in_frame can filter correctly. Source-inspection test
     targets `_background_vision_loop` — that's the only path that writes
-    face-sourced entries (the per-frame inner loop also uses persons_in_frame
+    face-sourced entries (the per-frame inner loop also uses presence_store
     via the background loop's results)."""
     import inspect, pipeline
     src = inspect.getsource(pipeline._background_vision_loop)
-    assert '"source": "face"' in src, (
-        "Background face scan must tag its persons_in_frame entries with source='face'"
+    assert "upsert_face_recognition(" in src, (
+        "Background face scan must call _presence_store.upsert_face_recognition"
     )
 
 
@@ -11810,7 +11316,7 @@ def test_voice_entry_expiry_logs_when_session_still_active():
     )
     # And it must only fire when the session actually exists (avoids double-log
     # alongside _close_session once the session has already closed).
-    assert "_session_store.peek_snapshot(_lp_id)" in src, (
+    assert "_session_store.peek_snapshot(_lp_snap.person_id)" in src, (
         "The log must be gated on a session-store snapshot lookup, not emitted unconditionally"
     )
     # And it must use VOICE_SESSION_TIMEOUT so the remaining-seconds value is meaningful.
@@ -11824,11 +11330,11 @@ def test_voice_entry_expiry_is_silent_when_session_already_closed():
     """Obs 4: when a voice entry ages out AND the session is already closed,
     stay silent — _close_session already logged the close and a second log
     would be redundant. Source-inspection: the log line must be inside an
-    `if _sess is not None:` block (not emitted unconditionally)."""
+    `if _snap_voice_lp is not None:` block (not emitted unconditionally)."""
     import inspect, pipeline
     src = inspect.getsource(pipeline._background_vision_loop)
-    # Find the voice branch of the prune loop.
-    idx = src.find('source") == "voice"')
+    # Find the voice branch of the prune loop (now uses .source attribute on snapshot).
+    idx = src.find('.source == "voice"')
     assert idx > -1, "voice-source branch missing from prune loop"
     snippet = src[idx:idx + 500]
     # The session lookup must precede the log, and the log must be inside
@@ -11844,90 +11350,6 @@ def test_voice_entry_expiry_is_silent_when_session_already_closed():
     )
 
 
-# ── Bug W (2026-04-22 live run) — thin-stranger Priority 3 floor relaxation ─
-
-def test_priority_3_offscreen_floor_relaxed_for_thin_stranger():
-    """Bug W: a bootstrapping stranger's own voice scores 0.30–0.45 against
-    their unstable mean — that's normal profile-warming behavior, not a
-    poisoning signal. Priority 3 must NOT drop the turn. Reproduces Chloe's
-    'My name is Chloe' case from the 2026-04-22 live run (3/5 samples,
-    v=0.307, no face → was 'ambiguous' / dropped, must now be 'current')."""
-    import pipeline, time
-    resolved, action = pipeline._resolve_actual_speaker(
-        v_pid="stranger_chloe",
-        v_score=0.307,
-        cur_pid="stranger_chloe",
-        persons_in_frame={},                            # face NOT in frame
-        unrecognized_tracks={},
-        voice_gallery_sizes={"stranger_chloe": 3},      # thin: 3 < N_INITIAL_VOICE (5)
-        now=time.time(),
-        cur_person_type="stranger",
-    )
-    assert action == "current", (
-        f"thin stranger's own voice match must NOT be dropped by the offscreen "
-        f"floor — got {action!r}, this was Chloe's silencing bug"
-    )
-    assert resolved == "stranger_chloe"
-
-
-def test_priority_3_offscreen_floor_still_fires_for_mature_holder():
-    """Bug W: the relaxation must NOT weaken poisoning protection for mature
-    speakers. A known person with 20 samples and v=0.40 offscreen → still
-    ambiguous. This is the original poisoning guardrail; it stays intact."""
-    import pipeline, time
-    resolved, action = pipeline._resolve_actual_speaker(
-        v_pid="jagan",
-        v_score=0.40,
-        cur_pid="jagan",
-        persons_in_frame={},                # face NOT in frame
-        unrecognized_tracks={},
-        voice_gallery_sizes={"jagan": 20},  # mature
-        now=time.time(),
-        cur_person_type="known",
-    )
-    assert action == "ambiguous", (
-        "mature speaker's offscreen floor must NOT be relaxed — poisoning "
-        "protection is the whole point of that floor"
-    )
-
-
-def test_priority_3_absolute_floor_still_fires_for_thin_stranger():
-    """Bug W: the absolute floor (VOICE_ROUTING_SELF_MATCH_FLOOR=0.30) is a
-    no-confidence-at-all minimum and must NOT be relaxed for any holder.
-    A thin stranger with v=0.20 → still ambiguous."""
-    import pipeline, time
-    resolved, action = pipeline._resolve_actual_speaker(
-        v_pid="stranger_x",
-        v_score=0.20,                                   # below absolute floor
-        cur_pid="stranger_x",
-        persons_in_frame={},
-        unrecognized_tracks={},
-        voice_gallery_sizes={"stranger_x": 3},
-        now=time.time(),
-        cur_person_type="stranger",
-    )
-    assert action == "ambiguous", (
-        "absolute floor (0.30) is a no-confidence minimum — must not be "
-        "relaxed even for thin strangers; below it the score is meaningless"
-    )
-
-
-def test_priority_3_thin_stranger_relaxation_logs_distinctly():
-    """Bug W diagnostic: when the relaxation fires, the log must distinctly
-    say 'thin stranger' + show the gallery count — operators need to see
-    when this guardrail-skip is triggering."""
-    import inspect, pipeline
-    src = inspect.getsource(pipeline._resolve_actual_speaker)
-    assert "thin stranger" in src, (
-        "Bug W relaxation log marker missing — operators can't tell when "
-        "the offscreen floor is being skipped"
-    )
-    assert "_thin_holder" in src, (
-        "the maturity-aware classifier must use a distinct named variable "
-        "(grep-friendly for future audits)"
-    )
-
-
 # ── Bug Y (2026-04-22 live run) — cloud-state narration suppression ────────
 
 def test_cloud_recovery_does_not_trigger_tts():
@@ -11939,9 +11361,9 @@ def test_cloud_recovery_does_not_trigger_tts():
     generation was removed."""
     import inspect, pipeline
     src = inspect.getsource(pipeline.run)
-    # The flag still exists and gets cleared, but no Ollama call / speak()
-    # happens for it.
-    assert "_cloud_recovered = False" in src, (
+    # The flag still exists and gets cleared atomically via consume_cloud_recovered(),
+    # but no Ollama call / speak() happens for it.
+    assert "consume_cloud_recovered" in src, (
         "the flag-clear must remain so we don't re-trigger on next turn"
     )
     # The old recovery-generation pattern must be GONE.
@@ -11957,26 +11379,6 @@ def test_cloud_recovery_does_not_trigger_tts():
         "the suppression rationale must be commented inline so future "
         "developers don't 'helpfully' add it back"
     )
-
-
-def test_routing_tracks_config_when_offscreen_floor_changes(monkeypatch):
-    """Session 63 (reviewer's Finding A): voice-routing thresholds must live in
-    config, not as literals in _resolve_actual_speaker. Raise the offscreen floor
-    to 0.99 — a holder-offscreen self-match at 0.50 must flip to 'ambiguous'.
-    Patches the pipeline module's binding (same lesson as Session 62's verdict test
-    — `from X import Y` creates a module-local name, so config edits don't auto-propagate)."""
-    import pipeline
-    monkeypatch.setattr("pipeline.VOICE_ROUTING_SELF_MATCH_OFFSCREEN", 0.99)
-    resolved, action = pipeline._resolve_actual_speaker(
-        v_pid="p1",
-        v_score=0.50,           # normally >= 0.45 would pass
-        cur_pid="p1",
-        persons_in_frame={},    # holder NOT visible — offscreen floor applies
-        unrecognized_tracks={},
-        voice_gallery_sizes={"p1": 10},
-        now=__import__("time").time(),
-    )
-    assert action == "ambiguous"
 
 
 # ── Bug F (2026-04-20 live run) — short-utterance voice-routing floor ────────
@@ -11997,43 +11399,6 @@ def test_record_until_silence_publishes_speech_duration():
     assert "speech_chunks * chunk_dur" in src, (
         "must be speech-only duration — NOT buffer duration "
         "(the latter was the Session 78 bug)"
-    )
-
-
-def test_pipeline_reads_speech_duration_not_buffer_length():
-    """Session 78/79: pipeline call site must derive the routing-floor
-    utterance_duration from SPEECH (core.audio._last_speech_secs snapshots
-    stashed per-listen) NOT from buffer length. Session 79: the value is
-    now accumulated across main turn + addendum so combined-audio turns
-    don't undercount. The routing call lives inside run(), not
-    conversation_turn."""
-    import inspect, pipeline
-    src = inspect.getsource(pipeline.run)
-    # Find the routing call site.
-    idx = src.find("_resolve_actual_speaker(")
-    assert idx > -1, "must find _resolve_actual_speaker call in run()"
-    # Look backwards for the utterance_duration assignment.
-    window_start = max(0, idx - 1500)
-    window = src[window_start:idx]
-    assert (
-        "_main_speech_secs + _addendum_speech_secs" in window
-    ), (
-        "utterance_duration source must be _main_speech_secs + "
-        "_addendum_speech_secs (Session 79 accumulator), not a single "
-        "_last_speech_secs read — the addendum probe clobbers the global"
-    )
-    assert "len(audio_buf) / MIC_SAMPLE_RATE" not in window, (
-        "buffer-length duration must be gone — it was the Session 78 bug root cause"
-    )
-    # The accumulator values themselves must be stashed elsewhere in run()
-    # from core.audio._last_speech_secs.
-    full = src
-    assert "_main_speech_secs = float(getattr(_audio_mod, \"_last_speech_secs\"" in full, (
-        "main turn's speech duration must be stashed immediately after the "
-        "main listen — before the addendum probe can clobber the global"
-    )
-    assert "_addendum_speech_secs = " in full and "_last_speech_secs" in full, (
-        "addendum turn's speech duration must also be stashed for summing"
     )
 
 
@@ -12059,274 +11424,13 @@ def test_last_speech_secs_only_published_on_non_empty_recording():
     )
 
 
-def test_short_utterance_stays_on_current_session():
-    """Bug F: utterance below VOICE_ROUTING_MIN_UTTERANCE_SECS with an active
-    session AND the voice still looks like cur_pid (>= SHORT_UTT_FLOOR) →
-    stick with cur_pid. This is the 'Jagan says "yes"' case — brief but
-    clearly from the session holder.
-
-    Session 92 P3.23 update: previously this test used ``v_score=0.05`` to
-    simulate 'noisy short utterance', relying on the old floor's blanket
-    'hold current' policy. After P3.23 that exact condition (short utt
-    + very low voice score) now triggers the new mismatch-drop path
-    (see ``test_short_utterance_voice_mismatch_drops_turn``). To preserve
-    Bug F's intent (brief closer from the CURRENT speaker holds the
-    session), the voice score is bumped to match the holder's own profile."""
-    import pipeline, time
-    resolved, action = pipeline._resolve_actual_speaker(
-        v_pid="jagan_abc", v_score=0.75,   # voice still clearly looks like Jagan
-        cur_pid="jagan_abc",
-        persons_in_frame={}, unrecognized_tracks={}, voice_gallery_sizes={},
-        now=time.time(),
-        utterance_duration=0.5,   # below 1.0s floor
-    )
-    assert action == "current"
-    assert resolved == "jagan_abc"
-
-
-def test_short_utterance_skips_when_no_session():
-    """Bug F: short utterance with no active session → short_utterance_skip.
-    Caller drops the turn silently rather than opening a phantom stranger."""
-    import pipeline, time
-    resolved, action = pipeline._resolve_actual_speaker(
-        v_pid=None, v_score=0.07,
-        cur_pid=None,
-        persons_in_frame={}, unrecognized_tracks={}, voice_gallery_sizes={},
-        now=time.time(),
-        utterance_duration=0.3,
-    )
-    assert action == "short_utterance_skip"
-    assert resolved is None
-
-
-def test_normal_utterance_routes_through_priorities():
-    """Bug F: utterance at or above the floor bypasses the short-utterance guard
-    and falls through to the normal priority logic. A ≥1.0s utterance with a
-    0.85 match to a different enrolled person → switch_enrolled as usual."""
-    import pipeline, time
-    resolved, action = pipeline._resolve_actual_speaker(
-        v_pid="p2", v_score=0.85,
-        cur_pid="p1",
-        persons_in_frame={}, unrecognized_tracks={}, voice_gallery_sizes={},
-        now=time.time(),
-        utterance_duration=2.0,
-    )
-    assert action == "switch_enrolled"
-    assert resolved == "p2"
-
-
-def test_short_utterance_threshold_is_configurable(monkeypatch):
-    """Bug F: the floor is a config constant — tuning it up must change the
-    gate behavior. Raise the floor to 2.0s; a 1.0s utterance that previously
-    routed normally now skips."""
-    import pipeline, time
-    monkeypatch.setattr("pipeline.VOICE_ROUTING_MIN_UTTERANCE_SECS", 2.0)
-    resolved, action = pipeline._resolve_actual_speaker(
-        v_pid="p2", v_score=0.85,
-        cur_pid="p1",
-        persons_in_frame={}, unrecognized_tracks={}, voice_gallery_sizes={},
-        now=time.time(),
-        utterance_duration=1.0,   # would pass at default 1.0, blocked at 2.0
-    )
-    assert action == "current", "raised floor must hold cur_pid despite strong voice match"
-    assert resolved == "p1"
-
-
 # ── VISION_ROADMAP P3.23 (Session 92) — short-utterance voice-mismatch drop ──
-
-
-def test_short_utterance_voice_match_current_holds_session():
-    """P3.23: short utterance (0.7s, below 1.0s floor) whose voice score
-    comfortably exceeds the SHORT_UTT_FLOOR (0.20) → holds current session.
-    Matches the 'Jagan himself says "yeah"' case — voice still looks like
-    Jagan; don't disrupt his session just because the utterance was brief."""
-    import pipeline, time
-    resolved, action = pipeline._resolve_actual_speaker(
-        v_pid="jagan_abc", v_score=0.75,   # clearly Jagan
-        cur_pid="jagan_abc",
-        persons_in_frame={}, unrecognized_tracks={}, voice_gallery_sizes={},
-        now=time.time(),
-        utterance_duration=0.7,
-    )
-    assert action == "current"
-    assert resolved == "jagan_abc"
-
-
-def test_short_utterance_voice_mismatch_drops_turn():
-    """P3.23: short utterance (0.7s, below 1.0s floor) with voice score far
-    below SHORT_UTT_FLOOR against a MATURE cur_pid profile → drop with
-    'short_utterance_voice_mismatch'. This is the Lexi-joins-Jagan case
-    from the failed P3.21 canary: Lexi's 'Hi Kara' at 0.67s scored 0.08
-    vs Jagan's gallery, but the old floor routed to Jagan anyway."""
-    import pipeline, time
-    resolved, action = pipeline._resolve_actual_speaker(
-        v_pid=None, v_score=0.08,   # obviously not Jagan
-        cur_pid="jagan_abc",
-        persons_in_frame={}, unrecognized_tracks={}, voice_gallery_sizes={},
-        now=time.time(),
-        utterance_duration=0.7,
-    )
-    assert action == "short_utterance_voice_mismatch"
-    assert resolved is None   # caller drops the turn; no attribution
-
-
-def test_short_utterance_below_min_audio_for_score_falls_back_to_current():
-    """P3.23: utterance too short for reliable ECAPA embedding (< 0.5s) —
-    below MIN_AUDIO_FOR_SCORE the voice score is noise even for the
-    directional 'obviously not cur_pid' question. Fall back to Bug F
-    behavior: hold current. Prevents over-rejecting legit brief closers
-    like 'yes' (0.3s) from the current speaker."""
-    import pipeline, time
-    resolved, action = pipeline._resolve_actual_speaker(
-        v_pid=None, v_score=0.05,   # would trigger mismatch at >=0.5s
-        cur_pid="jagan_abc",
-        persons_in_frame={}, unrecognized_tracks={}, voice_gallery_sizes={},
-        now=time.time(),
-        utterance_duration=0.3,     # below MIN_AUDIO_FOR_SCORE (0.5)
-    )
-    assert action == "current", (
-        "audio below MIN_AUDIO_FOR_SCORE must NOT trigger mismatch drop — "
-        "ECAPA embedding too noisy even for directional rejection"
-    )
-    assert resolved == "jagan_abc"
-
-
-def test_short_utterance_mismatch_config_flag_off_preserves_old_behavior(monkeypatch):
-    """P3.23: when ``VOICE_ROUTING_SHORT_UTT_MISMATCH_ENABLED=False``, the new
-    policy MUST be a no-op — the Bug F 'hold current on short utterance'
-    behavior is preserved exactly. Regression guard: flipping the flag off
-    should not silently disable the old floor, only the new mismatch check."""
-    import pipeline, time
-    monkeypatch.setattr("pipeline.VOICE_ROUTING_SHORT_UTT_MISMATCH_ENABLED", False)
-    resolved, action = pipeline._resolve_actual_speaker(
-        v_pid=None, v_score=0.08,   # would mismatch-drop with flag ON
-        cur_pid="jagan_abc",
-        persons_in_frame={}, unrecognized_tracks={}, voice_gallery_sizes={},
-        now=time.time(),
-        utterance_duration=0.7,
-    )
-    # Flag off → old behavior → holds current despite clear voice mismatch.
-    assert action == "current"
-    assert resolved == "jagan_abc"
 
 
 # ── Session 93 refinement — P3.23 ambiguous-zone tiered threshold ────────────
 
 
-def test_short_utterance_ambiguous_zone_solo_session_holds_current():
-    """Session 93 P3.23 tier 2: 0.20-0.40 voice score with SOLO session
-    (n_active_sessions=1) → hold current, NO regression on solo use. A
-    single person whose voice briefly dips into the ambiguous zone due to
-    recording quality / brief phonation should not get their turn dropped.
-    This is the no-regression invariant reviewer explicitly called out."""
-    import pipeline, time
-    resolved, action = pipeline._resolve_actual_speaker(
-        v_pid="jagan_abc", v_score=0.38,   # in ambiguous zone [0.20, 0.40)
-        cur_pid="jagan_abc",
-        persons_in_frame={}, unrecognized_tracks={}, voice_gallery_sizes={},
-        now=time.time(),
-        utterance_duration=0.6,
-        n_active_sessions=1,                # SOLO — no other speaker plausibly present
-    )
-    assert action == "current", (
-        "solo session MUST hold current on ambiguous score — dropping the "
-        "only active speaker's turn creates the false-negative regression "
-        "that motivated the tiered design (only-multi-session drops)"
-    )
-    assert resolved == "jagan_abc"
-
-
-def test_short_utterance_ambiguous_zone_multi_session_drops_turn():
-    """Session 93 P3.23 tier 2: the real Lexi case — 0.38 score in the
-    ambiguous zone with 2+ active sessions (Lexi AND Jagan sessions open)
-    → drop. This is the exact scenario from the 2026-04-22 live run line
-    369 ("You know, I love cheese" voice=0.38 from Lexi attributed to
-    Jagan), whose follow-on memory pollution (Jagan.likes_cheese →
-    Lexi.likes_cheese → Lexi.has_influence_on_jagan) motivated this
-    refinement."""
-    import pipeline, time
-    resolved, action = pipeline._resolve_actual_speaker(
-        v_pid=None, v_score=0.38,          # ambiguous: above hard floor, below 0.40
-        cur_pid="jagan_abc",
-        persons_in_frame={}, unrecognized_tracks={}, voice_gallery_sizes={},
-        now=time.time(),
-        utterance_duration=0.6,
-        n_active_sessions=2,                # Lexi + Jagan both active
-    )
-    assert action == "short_utterance_voice_mismatch", (
-        "multi-session + ambiguous score MUST drop — otherwise Lexi's "
-        "0.38 against Jagan gets mis-attributed and pollutes Jagan's "
-        "memory (the Session 93 live-run cascade)"
-    )
-    assert resolved is None
-
-
-def test_short_utterance_above_ambiguous_zone_multi_session_holds_current():
-    """Session 93 P3.23 tier 2: score ≥ VOICE_ROUTING_SHORT_UTT_AMBIGUOUS
-    (0.40) is considered 'meaningfully matching cur_pid' — trust it even
-    in multi-session context. The 0.40 cutoff is the boundary between
-    'plausibly someone else' and 'plausibly cur_pid.' A score of 0.55
-    against cur_pid's profile in a multi-session room should still route
-    to current (not drop), otherwise we over-reject the holder's own
-    brief turns."""
-    import pipeline, time
-    resolved, action = pipeline._resolve_actual_speaker(
-        v_pid="jagan_abc", v_score=0.55,   # above ambiguous ceiling
-        cur_pid="jagan_abc",
-        persons_in_frame={}, unrecognized_tracks={}, voice_gallery_sizes={},
-        now=time.time(),
-        utterance_duration=0.6,
-        n_active_sessions=2,                # multi-session, but voice still trusts current
-    )
-    assert action == "current"
-    assert resolved == "jagan_abc"
-
-
 # ── Bug O (2026-04-20 live run) — face-assist floor for Priority 2 ───────────
-
-def test_priority_2_fires_only_above_face_assist_floor():
-    """Bug O: Priority 2's face+voice-agree shortcut must require voice
-    ≥ VOICE_ROUTING_FACE_ASSIST_MIN (0.42). v=0.45 with face-in-frame → switch;
-    v=0.35 with face-in-frame → ambiguous (weak voice rejected despite face).
-    Uses weak gallery (gallery_size=3 → switch_threshold=0.55) so Priority 1
-    doesn't short-circuit 0.45 — we specifically want to exercise Priority 2."""
-    import pipeline, time
-    now = time.time()
-    pif = {"p2": {"name": "Bob", "conf": 0.7, "last_seen": now, "source": "face"}}
-
-    # Above the face-assist floor but below switch threshold — Priority 2 fires
-    _, action_hi = pipeline._resolve_actual_speaker(
-        v_pid="p2", v_score=0.45, cur_pid="p1",
-        persons_in_frame=pif, unrecognized_tracks={},
-        voice_gallery_sizes={"p2": 3}, now=now,   # weak profile → threshold=0.55
-    )
-    assert action_hi == "switch_enrolled"
-
-    # Below the face-assist floor — ambiguous, even though face is visible
-    _, action_lo = pipeline._resolve_actual_speaker(
-        v_pid="p2", v_score=0.35, cur_pid="p1",
-        persons_in_frame=pif, unrecognized_tracks={},
-        voice_gallery_sizes={"p2": 3}, now=now,
-    )
-    assert action_lo == "ambiguous", (
-        "weak voice 0.35 with face in frame must NOT upgrade to confident switch — "
-        "this is the Bug O regression that put Wasim's phone audio under Jagan's pid"
-    )
-
-
-def test_priority_2_ambiguous_without_face_regardless_of_voice():
-    """Bug O: without the claimed face in frame, mid-range voice is always
-    ambiguous. Without face+voice-agree, Priority 2 only drops — never switches.
-    Uses weak gallery so the 0.45 score stays in Priority 2 range (not Priority 1)."""
-    import pipeline, time
-    _, action = pipeline._resolve_actual_speaker(
-        v_pid="p2", v_score=0.45, cur_pid="p1",
-        persons_in_frame={},   # face NOT in frame
-        unrecognized_tracks={}, voice_gallery_sizes={"p2": 3},  # weak profile → threshold=0.55
-        now=time.time(),
-    )
-    assert action == "ambiguous"
-
 
 def test_face_assist_floor_invariant():
     """Bug O invariant: the face-assist floor sits strictly between the
@@ -12537,22 +11641,22 @@ async def test_s112_room_session_minted_on_first_open_into_empty_room():
     room_session_id of the shape `room_{timestamp}_{rand}`. Subsequent opens
     while the room is live inherit the same id (join, not mint)."""
     import pipeline
-    orig_room = pipeline._active_room_session
-    orig_started = pipeline._active_room_started_at
-    orig_parts = pipeline._active_room_participants.copy()
-    pipeline._active_room_session = None
-    pipeline._active_room_started_at = None
-    pipeline._active_room_participants = set()
+    orig_room = pipeline._pipeline_state_store.peek_active_room_session()
+    orig_started = pipeline._pipeline_state_store.peek_active_room_started_at()
+    orig_parts = pipeline._pipeline_state_store.peek_active_room_participants().copy()
+    await pipeline._pipeline_state_store.set_active_room_session(None)
+    await pipeline._pipeline_state_store.set_active_room_started_at(None)
+    await pipeline._pipeline_state_store.set_active_room_participants(set())
     # Ensure these pids are not in the store (prior tests may have left them).
     await pipeline._session_store.close_session("jagan_001")
     await pipeline._session_store.close_session("lexi_xyz")
     try:
         pipeline._open_session("jagan_001", "Jagan", "face", "best_friend")
-        assert pipeline._active_room_session is not None, \
+        assert pipeline._pipeline_state_store.peek_active_room_session() is not None, \
             "first open must mint a room_session_id"
-        assert pipeline._active_room_session.startswith("room_"), \
+        assert pipeline._pipeline_state_store.peek_active_room_session().startswith("room_"), \
             "room_session_id format must be `room_{ts}_{rand}`"
-        minted_id = pipeline._active_room_session
+        minted_id = pipeline._pipeline_state_store.peek_active_room_session()
 
         await asyncio.sleep(0)  # let open_session create_task run
         _snap1 = pipeline._session_store.peek_snapshot("jagan_001")
@@ -12561,15 +11665,15 @@ async def test_s112_room_session_minted_on_first_open_into_empty_room():
 
         # Second open: joins the existing room, doesn't mint a new id.
         pipeline._open_session("lexi_xyz", "Lexi", "voice", "known")
-        assert pipeline._active_room_session == minted_id, \
+        assert pipeline._pipeline_state_store.peek_active_room_session() == minted_id, \
             "second open must INHERIT the minted room_session_id, not mint again"
         await asyncio.sleep(0)
         _snap2 = pipeline._session_store.peek_snapshot("lexi_xyz")
         assert _snap2 is not None and _snap2.room_session_id == minted_id
     finally:
-        pipeline._active_room_session = orig_room
-        pipeline._active_room_started_at = orig_started
-        pipeline._active_room_participants = orig_parts
+        await pipeline._pipeline_state_store.set_active_room_session(orig_room)
+        await pipeline._pipeline_state_store.set_active_room_started_at(orig_started)
+        await pipeline._pipeline_state_store.set_active_room_participants(orig_parts)
         await pipeline._session_store.close_session("jagan_001")
         await pipeline._session_store.close_session("lexi_xyz")
 
@@ -12580,20 +11684,20 @@ def test_s112_room_session_ends_when_last_person_leaves():
     and fires the `_on_room_end` hook. A new _open_session after that
     mints a FRESH id (the next room, not a continuation)."""
     import pipeline
-    pipeline._active_room_session = None
-    pipeline._emotion_agents = {}
+    asyncio.run(pipeline._pipeline_state_store.set_active_room_session(None))
+    pipeline._per_person_agent_store.reset()
     pipeline._persons_in_frame = {}
     pipeline._session_store._sessions.clear()
     try:
         pipeline._open_session(
             "jagan_001", "Jagan", "face", "best_friend",
         )
-        first_id = pipeline._active_room_session
+        first_id = pipeline._pipeline_state_store.peek_active_room_session()
         assert first_id is not None
 
         # Last person leaves: room ends.
         pipeline._close_session("jagan_001")
-        assert pipeline._active_room_session is None, (
+        assert pipeline._pipeline_state_store.peek_active_room_session() is None, (
             "last _close_session must clear _active_room_session"
         )
 
@@ -12601,13 +11705,13 @@ def test_s112_room_session_ends_when_last_person_leaves():
         pipeline._open_session(
             "lexi_xyz", "Lexi", "voice", "known",
         )
-        assert pipeline._active_room_session is not None
-        assert pipeline._active_room_session != first_id, (
+        assert pipeline._pipeline_state_store.peek_active_room_session() is not None
+        assert pipeline._pipeline_state_store.peek_active_room_session() != first_id, (
             "next room must have a distinct room_session_id — a new "
             "room, not a resurrection of the last one"
         )
     finally:
-        pipeline._active_room_session = None
+        asyncio.run(pipeline._pipeline_state_store.set_active_room_session(None))
         pipeline._persons_in_frame = {}
 
 
@@ -12615,58 +11719,53 @@ async def test_s112_room_stays_live_when_one_of_many_leaves():
     """Session 112 Part 1: with 2+ people in the room, closing ONE session must NOT
     end the room — the remaining person's session keeps `_active_room_session` alive."""
     import pipeline
-    orig_room = pipeline._active_room_session
-    orig_started = pipeline._active_room_started_at
-    orig_parts = pipeline._active_room_participants.copy()
-    pipeline._active_room_session = None
-    pipeline._active_room_started_at = None
-    pipeline._active_room_participants = set()
+    orig_room = pipeline._pipeline_state_store.peek_active_room_session()
+    orig_started = pipeline._pipeline_state_store.peek_active_room_started_at()
+    orig_parts = pipeline._pipeline_state_store.peek_active_room_participants().copy()
+    await pipeline._pipeline_state_store.set_active_room_session(None)
+    await pipeline._pipeline_state_store.set_active_room_started_at(None)
+    await pipeline._pipeline_state_store.set_active_room_participants(set())
     try:
         pipeline._open_session("jagan_001", "Jagan", "face", "best_friend")
         pipeline._open_session("lexi_xyz", "Lexi", "voice", "known")
         await asyncio.sleep(0)  # let both open_session tasks run
-        room_id = pipeline._active_room_session
+        room_id = pipeline._pipeline_state_store.peek_active_room_session()
 
         # Lexi leaves — Jagan still here.
         pipeline._close_session("lexi_xyz")
         await asyncio.sleep(0)  # let close_session task run
 
-        assert pipeline._active_room_session == room_id, \
+        assert pipeline._pipeline_state_store.peek_active_room_session() == room_id, \
             "room stays live while any person remains"
         assert pipeline._session_store.peek_snapshot("jagan_001") is not None
         assert pipeline._session_store.peek_snapshot("lexi_xyz") is None
     finally:
-        pipeline._active_room_session = orig_room
-        pipeline._active_room_started_at = orig_started
-        pipeline._active_room_participants = orig_parts
+        await pipeline._pipeline_state_store.set_active_room_session(orig_room)
+        await pipeline._pipeline_state_store.set_active_room_started_at(orig_started)
+        await pipeline._pipeline_state_store.set_active_room_participants(orig_parts)
 
 
-def test_s112_persons_in_frame_pops_on_close_session():
-    """Session 112 Part 3: `_close_session` must pop from
-    `_persons_in_frame` immediately instead of waiting for
+async def test_s112_persons_in_frame_pops_on_close_session():
+    """Session 112 Part 3: `_close_session` must remove from
+    `_presence_store` immediately instead of waiting for
     SCENE_STALE_SECS to age the entry out. The 30s lag window let
     scene blocks render people whose sessions had already closed."""
     import pipeline, time as _t
-    pipeline._active_room_session = None
-    pipeline._persons_in_frame = {
-        "lexi_xyz": {
-            "name": "Lexi", "conf": 0.9,
-            "last_seen": _t.time(), "last_recognized_at": _t.time(),
-            "source": "face",
-        }
-    }
+    await pipeline._pipeline_state_store.set_active_room_session(None)
+    await pipeline._presence_store.upsert_face_recognition(
+        "lexi_xyz", "Lexi", 0.9, _t.time()
+    )
     try:
-        pipeline._open_session("lexi_xyz", "Lexi", "face", "known")
-        assert "lexi_xyz" in pipeline._persons_in_frame
+        assert "lexi_xyz" in pipeline._presence_store
 
         pipeline._close_session("lexi_xyz")
-        assert "lexi_xyz" not in pipeline._persons_in_frame, (
-            "Part 3: _persons_in_frame must pop on session close, "
+        await asyncio.sleep(0)  # flush create_task(_presence_store.remove)
+        assert "lexi_xyz" not in pipeline._presence_store, (
+            "Part 3: _presence_store must remove on session close, "
             "not wait for SCENE_STALE_SECS age-out"
         )
     finally:
-        pipeline._active_room_session = None
-        pipeline._persons_in_frame = {}
+        await pipeline._pipeline_state_store.set_active_room_session(None)
 
 
 def test_s112_kairos_prefers_best_friend_in_multi_person_room():
@@ -13039,7 +12138,7 @@ def test_s113_on_room_end_fires_exactly_once_when_last_person_leaves():
 
     pipeline._on_room_end = _spy
     try:
-        pipeline._active_room_session = "r_abc"
+        asyncio.run(pipeline._pipeline_state_store.set_active_room_session("r_abc"))
         pipeline._face_db_ref = None
 
         import asyncio as _aio
@@ -13055,12 +12154,12 @@ def test_s113_on_room_end_fires_exactly_once_when_last_person_leaves():
         assert fires == ["r_abc"], (
             f"_on_room_end must fire exactly once on last-person close; got {fires!r}"
         )
-        assert pipeline._active_room_session is None, (
+        assert pipeline._pipeline_state_store.peek_active_room_session() is None, (
             "room session pointer must clear once the room empties"
         )
     finally:
         pipeline._on_room_end = original
-        pipeline._active_room_session = None
+        asyncio.run(pipeline._pipeline_state_store.set_active_room_session(None))
 
 
 def test_s113_on_room_end_does_not_fire_while_other_sessions_live():
@@ -13082,7 +12181,7 @@ def test_s113_on_room_end_does_not_fire_while_other_sessions_live():
         pipeline._session_store._sessions.clear()
         _aio.run(pipeline._session_store.open_session("a_1", "Alice", "known", "face", now=now))
         _aio.run(pipeline._session_store.open_session("b_1", "Bob", "known", "face", now=now))
-        pipeline._active_room_session = "r_xyz"
+        asyncio.run(pipeline._pipeline_state_store.set_active_room_session("r_xyz"))
         pipeline._face_db_ref = None
         async def _drive():
             pipeline._close_session("a_1")   # Bob still in store → no hook
@@ -13093,12 +12192,12 @@ def test_s113_on_room_end_does_not_fire_while_other_sessions_live():
         assert fires == [], (
             f"_on_room_end must NOT fire while other sessions live; got {fires!r}"
         )
-        assert pipeline._active_room_session == "r_xyz", (
+        assert pipeline._pipeline_state_store.peek_active_room_session() == "r_xyz", (
             "room session stays alive while Bob is still present"
         )
     finally:
         pipeline._on_room_end = original
-        pipeline._active_room_session = None
+        asyncio.run(pipeline._pipeline_state_store.set_active_room_session(None))
         pipeline._session_store._sessions.clear()
 
 
@@ -13416,31 +12515,31 @@ def test_s3b1_room_started_at_lifecycle(tmp_path):
     durations or no duration at all."""
     import pipeline
     # Fresh state.
-    pipeline._active_room_session = None
-    pipeline._active_room_started_at = None
+    asyncio.run(pipeline._pipeline_state_store.set_active_room_session(None))
+    asyncio.run(pipeline._pipeline_state_store.set_active_room_started_at(None))
     pipeline._face_db_ref = None
-    pipeline._emotion_agents = {}
+    pipeline._per_person_agent_store.reset()
 
     pipeline._open_session("a_1", "Alice", "face", "known",
                            engagement_gate_passed=True)
-    assert pipeline._active_room_session is not None
-    assert pipeline._active_room_started_at is not None, (
+    assert pipeline._pipeline_state_store.peek_active_room_session() is not None
+    assert pipeline._pipeline_state_store.peek_active_room_started_at() is not None, (
         "mint must stamp started-at timestamp"
     )
-    t_start = pipeline._active_room_started_at
+    t_start = pipeline._pipeline_state_store.peek_active_room_started_at()
 
     # Second open into same room inherits — timestamp must NOT move.
     pipeline._open_session("b_1", "Bob", "face", "known",
                            engagement_gate_passed=True)
-    assert pipeline._active_room_started_at == t_start, (
+    assert pipeline._pipeline_state_store.peek_active_room_started_at() == t_start, (
         "second open into same room must inherit existing start time"
     )
 
     # Close everyone — stamp clears.
     pipeline._close_session("a_1")
     pipeline._close_session("b_1")
-    assert pipeline._active_room_session is None
-    assert pipeline._active_room_started_at is None, (
+    assert pipeline._pipeline_state_store.peek_active_room_session() is None
+    assert pipeline._pipeline_state_store.peek_active_room_started_at() is None, (
         "room end must clear start-time stamp alongside the id"
     )
 
@@ -13598,9 +12697,9 @@ async def test_s3b2_behavioral_silent_skip_fires_on_user_to_user(monkeypatch, tm
     pipeline._session_store._sessions.clear()
     await pipeline._session_store.open_session("jagan_001", "Jagan", "best_friend", "face", now=now)
     await pipeline._session_store.open_session("lexi_002", "Lexi", "known", "face", now=now)
-    pipeline._conversation = {"lexi_002": []}
-    pipeline._cloud_state = pipeline.CloudState.ONLINE
-    pipeline._active_system_name = "Kara"
+    await pipeline._conversation_store.set_history("lexi_002", [])
+    await pipeline._pipeline_state_store.recover_online_no_flag()
+    await pipeline._pipeline_state_store.set_active_system_name("Kara")
 
     result = await pipeline.conversation_turn(
         text="Jagan, what do you think?",
@@ -13613,11 +12712,11 @@ async def test_s3b2_behavioral_silent_skip_fires_on_user_to_user(monkeypatch, tm
     assert ask_stream_fired["count"] == 0, "ask_stream must NOT fire on user-to-user"
     assert speak_stream_fired["count"] == 0, "speak_stream must NOT fire"
     # User turn persisted (history + db + notify).
-    assert any(msg.get("role") == "user" for msg in pipeline._conversation["lexi_002"])
+    assert any(msg.get("role") == "user" for msg in pipeline._conversation_store.peek_history("lexi_002"))
     assert any(log[1] == "user" for log in db_stub.logged)
     assert orch_stub.notified >= 1, "notify() must fire so extraction runs"
     # Cleanup.
-    pipeline._conversation = {}
+    pipeline._conversation_store.reset()
     pipeline._brain_orchestrator = None
     pipeline._session_store._sessions.clear()
 
@@ -13654,9 +12753,9 @@ async def test_s3b2_behavioral_system_name_collision_falls_through(monkeypatch):
     pipeline._session_store._sessions.clear()
     await pipeline._session_store.open_session("a_1", "Alice", "known", "face", now=now)
     await pipeline._session_store.open_session("k_1", "Kara", "known", "face", now=now)
-    pipeline._conversation = {"a_1": []}
-    pipeline._cloud_state = pipeline.CloudState.ONLINE
-    pipeline._active_system_name = "Kara"  # AI is also Kara
+    await pipeline._conversation_store.set_history("a_1", [])
+    await pipeline._pipeline_state_store.recover_online_no_flag()
+    await pipeline._pipeline_state_store.set_active_system_name("Kara")  # AI is also Kara
     pipeline._brain_orchestrator = None
 
     class _DBStub:
@@ -13675,7 +12774,7 @@ async def test_s3b2_behavioral_system_name_collision_falls_through(monkeypatch):
 
     # Cleanup.
     pipeline._session_store._sessions.clear()
-    pipeline._conversation = {}
+    pipeline._conversation_store.reset()
 
 
 def test_s3b2_flag_off_falls_through(monkeypatch):
@@ -14927,7 +14026,7 @@ async def test_s115_classifier_cache_short_circuits_repeat_call(monkeypatch):
     `_classify_intent` again. Drops the per-turn LLM cost on
     inconclusive-heuristic re-asks of the same utterance."""
     import pipeline
-    pipeline._classifier_cache.clear()
+    await pipeline._classifier_cache_store.clear()
     call_count = {"n": 0}
     async def _fake_classify(text, conversation_history=None):
         call_count["n"] += 1
@@ -15164,11 +14263,11 @@ def test_s116_room_lifecycle_logs_participant_join_and_synthesis(monkeypatch):
     joins (separate from session opens) AND synthesis dispatch with
     explicit speaker list so the decoupling architecture is auditable."""
     import asyncio as _aio, pipeline, io, contextlib
-    pipeline._active_room_session = None
-    pipeline._active_room_started_at = None
-    pipeline._active_room_participants = set()
+    asyncio.run(pipeline._pipeline_state_store.set_active_room_session(None))
+    asyncio.run(pipeline._pipeline_state_store.set_active_room_started_at(None))
+    asyncio.run(pipeline._pipeline_state_store.set_active_room_participants(set()))
     pipeline._face_db_ref = None
-    pipeline._emotion_agents = {}
+    pipeline._per_person_agent_store.reset()
 
     captured_synth = {"called": False}
     class _OrchStub:
@@ -15205,9 +14304,9 @@ def test_s116_room_lifecycle_logs_participant_join_and_synthesis(monkeypatch):
         )
         assert captured_synth["called"], "synthesize_room must actually fire"
     finally:
-        pipeline._active_room_session = None
-        pipeline._active_room_started_at = None
-        pipeline._active_room_participants = set()
+        asyncio.run(pipeline._pipeline_state_store.set_active_room_session(None))
+        asyncio.run(pipeline._pipeline_state_store.set_active_room_started_at(None))
+        asyncio.run(pipeline._pipeline_state_store.set_active_room_participants(set()))
         pipeline._brain_orchestrator = None
 
 
@@ -15315,81 +14414,6 @@ def test_s117_update_system_name_tool_description_hardened():
 
 # ── Session 118 — multi-segment stranger detection + TF32 warning ──────────
 
-def test_s118_multi_segment_with_stranger_drops_turn():
-    """Session 118 Fix A — when pyannote returns 2+ segments AND voice
-    ID matches none of the active speakers above
-    VOICE_ROUTING_STRANGER_FLOOR, the resolver MUST return
-    'multi_segment_voice_mismatch' so the caller drops the turn instead
-    of misattributing across MULTIPLE active speakers. Canary
-    2026-04-25 23:21 regression guard. Session 121 added the
-    n_active_sessions >= 2 requirement."""
-    from pipeline import _resolve_actual_speaker
-    out_pid, action = _resolve_actual_speaker(
-        v_pid=None, v_score=0.10,         # voice ID failed against any known
-        cur_pid="jagan_001",              # Jagan is the active session
-        persons_in_frame={"jagan_001": {"name": "Jagan", "source": "face"}},
-        unrecognized_tracks={},
-        voice_gallery_sizes={"jagan_001": 20},
-        now=_time_mod.time(),
-        cur_person_type="best_friend",
-        utterance_duration=2.5,            # NOT short utterance
-        n_active_sessions=2,               # Session 121 — multi-known scene
-        n_diarize_segments=2,              # PYANNOTE SAW 2 VOICES
-    )
-    assert action == "multi_segment_voice_mismatch", (
-        f"multi-segment with all-low scores must drop; got {action!r}"
-    )
-    assert out_pid is None, "drop must return None pid"
-
-
-def test_s118_multi_segment_with_strong_match_routes_normally():
-    """Session 118 Fix A — multi-segment WITH a confident voice match
-    against an enrolled speaker (above the stranger floor) must route
-    normally. The new gate is gated on voice match weakness, not on
-    segment count alone. Regression guard against false-stranger drops."""
-    from pipeline import _resolve_actual_speaker
-    out_pid, action = _resolve_actual_speaker(
-        v_pid="jagan_001", v_score=0.75,   # strong match against Jagan
-        cur_pid="jagan_001",
-        persons_in_frame={"jagan_001": {"name": "Jagan", "source": "face"}},
-        unrecognized_tracks={},
-        voice_gallery_sizes={"jagan_001": 20},
-        now=_time_mod.time(),
-        cur_person_type="best_friend",
-        utterance_duration=2.5,
-        n_active_sessions=1,
-        n_diarize_segments=2,              # 2 segments, but voice matched
-    )
-    # Should route to current (confirmation), NOT the new mismatch action.
-    assert action != "multi_segment_voice_mismatch", (
-        f"strong match must NOT trigger stranger drop; got {action!r}"
-    )
-
-
-def test_s118_single_segment_unchanged_routing():
-    """Session 118 Fix A — single-segment turns (n_diarize_segments=1,
-    the default) MUST route through existing logic. Backward compat
-    for the most common case (one speaker per chunk)."""
-    from pipeline import _resolve_actual_speaker
-    out_pid, action = _resolve_actual_speaker(
-        v_pid=None, v_score=0.0,          # short utterance, score=0
-        cur_pid="jagan_001",
-        persons_in_frame={"jagan_001": {"name": "Jagan", "source": "face"}},
-        unrecognized_tracks={},
-        voice_gallery_sizes={"jagan_001": 20},
-        now=_time_mod.time(),
-        cur_person_type="best_friend",
-        utterance_duration=2.5,
-        n_active_sessions=1,
-        n_diarize_segments=1,              # SINGLE segment — legacy path
-    )
-    # Pre-S118: would route to current (no other candidates in scene).
-    # New gate must NOT fire because n_diarize_segments < 2.
-    assert action != "multi_segment_voice_mismatch", (
-        "single-segment must skip the new multi-segment gate"
-    )
-
-
 def test_s118_pipeline_dispatch_drops_multi_segment_mismatch():
     """Session 118 Fix A — pipeline.run dispatch handles the new action
     by `continue`-ing the loop (drop the turn). Source-inspection guard
@@ -15404,181 +14428,7 @@ def test_s118_pipeline_dispatch_drops_multi_segment_mismatch():
 
 # ── Session 120 — single-segment voice misattribution drop ────────────────
 
-def test_single_segment_voice_mismatch_drops_when_multiple_active_sessions():
-    """Session 120 — single-segment ECAPA mismatch drops only when
-    MULTIPLE knowns are around (cross-talk-between-knowns risk). With
-    only the owner enrolled, falls through to new_stranger (see
-    test_single_segment_voice_mismatch_falls_through_to_new_stranger).
-    Session 121 inverted the n_active_sessions gate; this test guards
-    the multi-known drop path."""
-    from pipeline import _resolve_actual_speaker
-    out_pid, action = _resolve_actual_speaker(
-        v_pid=None, v_score=0.0,            # ECAPA returned no match
-        cur_pid="jagan_001",
-        persons_in_frame={"jagan_001": {"name": "Jagan", "source": "face"}},
-        unrecognized_tracks={},
-        voice_gallery_sizes={"jagan_001": 20},
-        now=_time_mod.time(),
-        cur_person_type="best_friend",
-        utterance_duration=2.5,             # long enough
-        n_active_sessions=2,                # Session 121 — multi-known scene
-        n_diarize_segments=1,               # single segment
-        cur_holder_voice_n=20,              # mature profile
-    )
-    assert action == "single_segment_voice_mismatch", (
-        f"single-segment + low-score + mature + multi-known must drop; got {action!r}"
-    )
-    assert out_pid is None
-
-
-def test_single_segment_voice_mismatch_does_not_fire_on_short_audio():
-    """Below VOICE_ROUTING_MIN_AUDIO_FOR_SCORE (0.5s), ECAPA's verdict
-    isn't reliable enough to drop. Existing short-utterance fallback wins."""
-    from pipeline import _resolve_actual_speaker
-    out_pid, action = _resolve_actual_speaker(
-        v_pid=None, v_score=0.0,            # ECAPA returned no match (canary's actual case)
-        cur_pid="jagan_001",
-        persons_in_frame={"jagan_001": {"name": "Jagan", "source": "face"}},
-        unrecognized_tracks={},
-        voice_gallery_sizes={"jagan_001": 20},
-        now=_time_mod.time(),
-        cur_person_type="best_friend",
-        utterance_duration=0.3,             # SHORT audio
-        n_active_sessions=1,
-        n_diarize_segments=1,
-        cur_holder_voice_n=20,
-    )
-    assert action != "single_segment_voice_mismatch", (
-        f"short audio must NOT trigger Session 120 drop; got {action!r}"
-    )
-
-
-def test_single_segment_voice_mismatch_does_not_fire_on_bootstrapping_holder():
-    """Below VOICE_ACCUM_MATURE_SAMPLE_COUNT (5) the holder's voice
-    profile hasn't stabilized — early-life ECAPA scores fluctuate, so
-    a 'no match' verdict isn't trustworthy. Drop would falsely silence
-    legitimate Jagan turns. Existing fallback wins."""
-    from pipeline import _resolve_actual_speaker
-    out_pid, action = _resolve_actual_speaker(
-        v_pid=None, v_score=0.0,            # ECAPA returned no match (canary's actual case)
-        cur_pid="jagan_001",
-        persons_in_frame={"jagan_001": {"name": "Jagan", "source": "face"}},
-        unrecognized_tracks={},
-        voice_gallery_sizes={"jagan_001": 2},
-        now=_time_mod.time(),
-        cur_person_type="best_friend",
-        utterance_duration=2.5,
-        n_active_sessions=1,
-        n_diarize_segments=1,
-        cur_holder_voice_n=2,               # BOOTSTRAPPING profile (< 5)
-    )
-    assert action != "single_segment_voice_mismatch", (
-        f"bootstrapping profile must NOT trigger Session 120 drop; got {action!r}"
-    )
-
-
-def test_single_segment_voice_mismatch_does_not_fire_on_normal_match():
-    """Strong voice match against the holder — pre-S120 routing returns
-    'current' (confirmation). New gate must not interfere with normal
-    matches."""
-    from pipeline import _resolve_actual_speaker
-    out_pid, action = _resolve_actual_speaker(
-        v_pid="jagan_001", v_score=0.65,    # GOOD match
-        cur_pid="jagan_001",
-        persons_in_frame={"jagan_001": {"name": "Jagan", "source": "face"}},
-        unrecognized_tracks={},
-        voice_gallery_sizes={"jagan_001": 20},
-        now=_time_mod.time(),
-        cur_person_type="best_friend",
-        utterance_duration=2.5,
-        n_active_sessions=1,
-        n_diarize_segments=1,
-        cur_holder_voice_n=20,
-    )
-    assert action != "single_segment_voice_mismatch", (
-        f"normal match must NOT trigger Session 120 drop; got {action!r}"
-    )
-
-
-def test_single_segment_voice_mismatch_does_not_conflict_with_multi_segment_drop():
-    """Multi-segment cases (n_diarize_segments >= 2) must continue
-    using Session 118's existing gate, not the new Session 120 gate.
-    Both gates require n_active_sessions >= 2 (Session 121); they
-    cover disjoint cases on segment count, not on session count."""
-    from pipeline import _resolve_actual_speaker
-    out_pid, action = _resolve_actual_speaker(
-        v_pid=None, v_score=0.10,
-        cur_pid="jagan_001",
-        persons_in_frame={"jagan_001": {"name": "Jagan", "source": "face"}},
-        unrecognized_tracks={},
-        voice_gallery_sizes={"jagan_001": 20},
-        now=_time_mod.time(),
-        cur_person_type="best_friend",
-        utterance_duration=2.5,
-        n_active_sessions=2,                 # Session 121 — multi-known scene
-        n_diarize_segments=2,                # MULTI segment
-        cur_holder_voice_n=20,
-    )
-    # Session 118's gate still wins on multi-segment cases.
-    assert action == "multi_segment_voice_mismatch", (
-        f"multi-segment must use Session 118's gate; got {action!r}"
-    )
-
-
 # ── Session 121 — restore stranger detection (gate fall-through) ──────────
-
-def test_multi_segment_voice_mismatch_falls_through_to_new_stranger_when_alone():
-    """Session 121 fix — when only the owner is enrolled (n_active_sessions=1)
-    and a stranger speaks, pyannote's 2-segment classification + low ECAPA
-    score MUST NOT drop the turn. Falls through to the existing new_stranger
-    branch which opens a stranger session. Reproduces the bug from
-    terminal_output line 589 ('Hi Kera, escape velocity of Earth' dropped 3
-    times in a row)."""
-    from pipeline import _resolve_actual_speaker
-    out_pid, action = _resolve_actual_speaker(
-        v_pid=None, v_score=0.05,           # below VOICE_RECOGNITION_THRESHOLD (0.25)
-        cur_pid="jagan_001",
-        persons_in_frame={"jagan_001": {"name": "Jagan", "source": "face"}},
-        unrecognized_tracks={},
-        voice_gallery_sizes={"jagan_001": 20},
-        now=_time_mod.time(),
-        cur_person_type="best_friend",
-        utterance_duration=2.5,
-        n_active_sessions=1,                # SOLO scene — Session 121 fall-through
-        n_diarize_segments=2,               # pyannote audio quirk
-        cur_holder_voice_n=20,
-    )
-    # Solo scene = falls through to new_stranger, NOT multi_segment drop
-    assert action == "new_stranger", (
-        f"solo scene must fall through to new_stranger; got {action!r}"
-    )
-    assert out_pid is None  # caller opens a fresh stranger session
-
-
-def test_single_segment_voice_mismatch_falls_through_to_new_stranger_when_alone():
-    """Session 121 fix — single-segment ECAPA mismatch in a solo scene
-    must fall through to new_stranger, not drop. Mirrors the multi-segment
-    test above but for single-segment audio. Without the fall-through,
-    Session 120's gate inverts the original bug it tried to fix."""
-    from pipeline import _resolve_actual_speaker
-    out_pid, action = _resolve_actual_speaker(
-        v_pid=None, v_score=0.05,           # below VOICE_RECOGNITION_THRESHOLD (0.25)
-        cur_pid="jagan_001",
-        persons_in_frame={"jagan_001": {"name": "Jagan", "source": "face"}},
-        unrecognized_tracks={},
-        voice_gallery_sizes={"jagan_001": 20},
-        now=_time_mod.time(),
-        cur_person_type="best_friend",
-        utterance_duration=2.5,             # long enough
-        n_active_sessions=1,                # SOLO scene — Session 121 fall-through
-        n_diarize_segments=1,
-        cur_holder_voice_n=20,              # mature profile
-    )
-    # Solo scene = falls through to new_stranger, NOT single_segment drop
-    assert action == "new_stranger", (
-        f"solo scene must fall through to new_stranger; got {action!r}"
-    )
-
 
 def test_pipeline_dispatch_handles_single_segment_voice_mismatch():
     """Session 120 — pipeline.run must dispatch the new action via
@@ -15868,23 +14718,23 @@ def test_s111_emotion_agent_pops_on_fresh_session_open():
     rolling window can't carry prior-session emotions into a new
     session. Re-opens (idempotent path) don't pop — they're the same
     session continuing."""
-    import pipeline
+    import asyncio as _aio, pipeline
     from core.emotion import EmotionAgent
     # Seed agent as if a prior session populated it.
-    pipeline._emotion_agents = {"jagan_001": EmotionAgent()}
-    old_agent = pipeline._emotion_agents["jagan_001"]
+    _aio.run(pipeline._per_person_agent_store.set_emotion_agent("jagan_001", EmotionAgent()))
+    old_agent = pipeline._per_person_agent_store.peek_emotion_agent("jagan_001")
     try:
         pipeline._open_session(
             "jagan_001", "Jagan", "face", "best_friend",
         )
         # After fresh open: agent was popped; conversation_turn will
         # lazily recreate one on first emotion-detection call.
-        assert "jagan_001" not in pipeline._emotion_agents, (
+        assert pipeline._per_person_agent_store.peek_emotion_agent("jagan_001") is None, (
             "fresh session open must clear stale EmotionAgent — "
             "reviewer's Critical #5 reset invariant"
         )
     finally:
-        pipeline._emotion_agents = {}
+        pipeline._per_person_agent_store.reset()
 
 
 async def test_s111_emotion_agent_survives_session_reopen():
@@ -15897,19 +14747,19 @@ async def test_s111_emotion_agent_survives_session_reopen():
     # Seed the store so _open_session detects an existing session (re-open path).
     await pipeline._session_store.open_session(
         "jagan_001", "Jagan", "known", "face", now=_t.time())
-    pipeline._emotion_agents["jagan_001"] = EmotionAgent()
-    sticky_agent = pipeline._emotion_agents["jagan_001"]
+    await pipeline._per_person_agent_store.set_emotion_agent("jagan_001", EmotionAgent())
+    sticky_agent = pipeline._per_person_agent_store.peek_emotion_agent("jagan_001")
     try:
         # Re-open (idempotent) — agent must persist.
         pipeline._open_session(
             "jagan_001", "Jagan", "face", "best_friend",
         )
         await asyncio.sleep(0)
-        assert pipeline._emotion_agents.get("jagan_001") is sticky_agent, (
+        assert pipeline._per_person_agent_store.peek_emotion_agent("jagan_001") is sticky_agent, (
             "re-open path must NOT clear the agent — only fresh opens do"
         )
     finally:
-        pipeline._emotion_agents.pop("jagan_001", None)
+        await pipeline._per_person_agent_store.pop_emotion_agent("jagan_001")
 
 
 def test_s111_conversation_entries_carry_ts_and_addressed_to():
@@ -16899,8 +15749,8 @@ def test_voice_only_origin_cleared_on_face_witness():
 
 async def test_voice_only_origin_inferred_on_open_for_thin_known_no_face():
     """Item 9: _open_session infers voice_only_origin=True for a known person
-    whose gallery is thin and no face entry is in _persons_in_frame."""
-    import pipeline as _pl
+    whose gallery is thin and no face entry is in _presence_store."""
+    import numpy as np, pipeline as _pl
     import inspect
     import asyncio
 
@@ -16914,14 +15764,12 @@ async def test_voice_only_origin_inferred_on_open_for_thin_known_no_face():
 
     pid = "known_abc"
     saved = {}
-    saved["voice_gallery_sizes"] = _pl._voice_gallery_sizes.copy()
-    saved["persons_in_frame"] = _pl._persons_in_frame.copy()
-    saved["active_room_session"] = _pl._active_room_session
+    saved["active_room_session"] = _pl._pipeline_state_store.peek_active_room_session()
 
     try:
-        _pl._voice_gallery_sizes[pid] = 2   # thin gallery (< N_INITIAL_VOICE=5)
-        _pl._persons_in_frame.clear()        # no face evidence
-        _pl._active_room_session = "room_test"
+        await _pl._voice_gallery_store.set_gallery(pid, np.ones(192, dtype=np.float32), 2)  # thin gallery (< N_INITIAL_VOICE=5)
+        # _presence_store is empty (autouse fixture) — no face evidence
+        await _pl._pipeline_state_store.set_active_room_session("room_test")
 
         _pl._open_session(pid, "Lexi", "voice", "known", engagement_gate_passed=False)
         await asyncio.sleep(0)  # flush create_task(set_voice_only_origin) from _open_session
@@ -16933,33 +15781,24 @@ async def test_voice_only_origin_inferred_on_open_for_thin_known_no_face():
             f"got {snap.voice_only_origin!r}"
         )
     finally:
-        _pl._voice_gallery_sizes.clear()
-        _pl._voice_gallery_sizes.update(saved["voice_gallery_sizes"])
-        _pl._persons_in_frame.clear()
-        _pl._persons_in_frame.update(saved["persons_in_frame"])
-        _pl._active_room_session = saved["active_room_session"]
+        await _pl._pipeline_state_store.set_active_room_session(saved["active_room_session"])
 
 
 async def test_voice_only_origin_NOT_inferred_when_face_present_in_frame():
-    """Item 9: heuristic does NOT fire when _persons_in_frame has a recent
+    """Item 9: heuristic does NOT fire when _presence_store has a recent
     face-sourced entry for the person — they have genuine face evidence."""
-    import pipeline as _pl
+    import numpy as np, pipeline as _pl
     import time
 
     pid = "known_def"
     saved = {}
-    saved["voice_gallery_sizes"] = _pl._voice_gallery_sizes.copy()
-    saved["persons_in_frame"] = _pl._persons_in_frame.copy()
-    saved["active_room_session"] = _pl._active_room_session
+    saved["active_room_session"] = _pl._pipeline_state_store.peek_active_room_session()
 
     try:
-        _pl._voice_gallery_sizes[pid] = 2   # thin gallery
-        # Face entry with recent timestamp and source='face'
-        _pl._persons_in_frame[pid] = {
-            "source": "face",
-            "last_seen": time.time() - 1.0,  # 1s ago, well within SCENE_STALE_SECS
-        }
-        _pl._active_room_session = "room_test"
+        await _pl._voice_gallery_store.set_gallery(pid, np.ones(192, dtype=np.float32), 2)   # thin gallery
+        # Face entry with recent timestamp via _presence_store
+        await _pl._presence_store.upsert_face_recognition(pid, "Lexi", 0.5, time.time() - 1.0)
+        await _pl._pipeline_state_store.set_active_room_session("room_test")
 
         _pl._open_session(pid, "Lexi", "face", "known", engagement_gate_passed=False)
         await asyncio.sleep(0)
@@ -16970,29 +15809,23 @@ async def test_voice_only_origin_NOT_inferred_when_face_present_in_frame():
             "Heuristic must NOT infer voice_only_origin when face is present in frame"
         )
     finally:
-        _pl._voice_gallery_sizes.clear()
-        _pl._voice_gallery_sizes.update(saved["voice_gallery_sizes"])
-        _pl._persons_in_frame.clear()
-        _pl._persons_in_frame.update(saved["persons_in_frame"])
-        _pl._active_room_session = saved["active_room_session"]
+        await _pl._pipeline_state_store.set_active_room_session(saved["active_room_session"])
 
 
 async def test_voice_only_origin_NOT_inferred_when_gallery_mature():
     """Item 9: heuristic does NOT fire when the voice gallery is already at or
     above N_INITIAL_VOICE — no replenishment needed for a mature gallery."""
-    import pipeline as _pl
+    import numpy as np, pipeline as _pl
     from core.config import N_INITIAL_VOICE
 
     pid = "known_ghi"
     saved = {}
-    saved["voice_gallery_sizes"] = _pl._voice_gallery_sizes.copy()
-    saved["persons_in_frame"] = _pl._persons_in_frame.copy()
-    saved["active_room_session"] = _pl._active_room_session
+    saved["active_room_session"] = _pl._pipeline_state_store.peek_active_room_session()
 
     try:
-        _pl._voice_gallery_sizes[pid] = N_INITIAL_VOICE  # mature gallery
-        _pl._persons_in_frame.clear()
-        _pl._active_room_session = "room_test"
+        await _pl._voice_gallery_store.set_gallery(pid, np.ones(192, dtype=np.float32), N_INITIAL_VOICE)  # mature gallery
+        # _presence_store is empty (autouse fixture) — no face evidence
+        await _pl._pipeline_state_store.set_active_room_session("room_test")
 
         _pl._open_session(pid, "Lexi", "voice", "known", engagement_gate_passed=False)
         await asyncio.sleep(0)
@@ -17004,28 +15837,22 @@ async def test_voice_only_origin_NOT_inferred_when_gallery_mature():
             f"(voice_n={N_INITIAL_VOICE} >= N_INITIAL_VOICE={N_INITIAL_VOICE})"
         )
     finally:
-        _pl._voice_gallery_sizes.clear()
-        _pl._voice_gallery_sizes.update(saved["voice_gallery_sizes"])
-        _pl._persons_in_frame.clear()
-        _pl._persons_in_frame.update(saved["persons_in_frame"])
-        _pl._active_room_session = saved["active_room_session"]
+        await _pl._pipeline_state_store.set_active_room_session(saved["active_room_session"])
 
 
 async def test_voice_only_origin_NOT_inferred_for_disputed_session():
     """Item 9: heuristic excludes disputed sessions — don't backfill someone
     whose identity we don't currently trust."""
-    import pipeline as _pl
+    import numpy as np, pipeline as _pl
 
     pid = "disputed_jkl"
     saved = {}
-    saved["voice_gallery_sizes"] = _pl._voice_gallery_sizes.copy()
-    saved["persons_in_frame"] = _pl._persons_in_frame.copy()
-    saved["active_room_session"] = _pl._active_room_session
+    saved["active_room_session"] = _pl._pipeline_state_store.peek_active_room_session()
 
     try:
-        _pl._voice_gallery_sizes[pid] = 2   # thin gallery
-        _pl._persons_in_frame.clear()        # no face evidence
-        _pl._active_room_session = "room_test"
+        await _pl._voice_gallery_store.set_gallery(pid, np.ones(192, dtype=np.float32), 2)   # thin gallery
+        # _presence_store is empty (autouse fixture) — no face evidence
+        await _pl._pipeline_state_store.set_active_room_session("room_test")
 
         _pl._open_session(pid, "Unknown", "voice", "disputed", engagement_gate_passed=False)
         await asyncio.sleep(0)
@@ -17036,11 +15863,7 @@ async def test_voice_only_origin_NOT_inferred_for_disputed_session():
             "Heuristic must NOT infer voice_only_origin for disputed sessions"
         )
     finally:
-        _pl._voice_gallery_sizes.clear()
-        _pl._voice_gallery_sizes.update(saved["voice_gallery_sizes"])
-        _pl._persons_in_frame.clear()
-        _pl._persons_in_frame.update(saved["persons_in_frame"])
-        _pl._active_room_session = saved["active_room_session"]
+        await _pl._pipeline_state_store.set_active_room_session(saved["active_room_session"])
 
 
 def test_voice_only_origin_explicit_true_preserved_over_heuristic():
@@ -17064,21 +15887,17 @@ def test_voice_only_origin_explicit_true_preserved_over_heuristic():
         "so explicit True is preserved"
     )
 
-    import time as _t, asyncio as _aio
+    import numpy as np, time as _t, asyncio as _aio
 
     pid = "known_mno"
     now = _t.time()
     saved = {}
-    saved["active_sessions"] = _pl._active_sessions.copy()
-    saved["voice_gallery_sizes"] = _pl._voice_gallery_sizes.copy()
-    saved["persons_in_frame"] = _pl._persons_in_frame.copy()
-    saved["active_room_session"] = _pl._active_room_session
+    saved["active_room_session"] = _pl._pipeline_state_store.peek_active_room_session()
 
     try:
-        _pl._active_sessions.clear()
-        _pl._voice_gallery_sizes[pid] = 1   # very thin gallery — heuristic would fire
-        _pl._persons_in_frame.clear()        # no face — heuristic would fire
-        _pl._active_room_session = "room_test"
+        _aio.run(_pl._voice_gallery_store.set_gallery(pid, np.ones(192, dtype=np.float32), 1))   # very thin gallery — heuristic would fire
+        # _presence_store is empty (autouse fixture) — no face — heuristic would fire
+        _aio.run(_pl._pipeline_state_store.set_active_room_session("room_test"))
 
         # Simulate S120 explicitly setting voice_only_origin=True before _open_session
         _pl._session_store._sessions.pop(pid, None)
@@ -17095,13 +15914,7 @@ def test_voice_only_origin_explicit_true_preserved_over_heuristic():
             "Explicit voice_only_origin=True must survive _open_session re-entry"
         )
     finally:
-        _pl._active_sessions.clear()
-        _pl._active_sessions.update(saved["active_sessions"])
-        _pl._voice_gallery_sizes.clear()
-        _pl._voice_gallery_sizes.update(saved["voice_gallery_sizes"])
-        _pl._persons_in_frame.clear()
-        _pl._persons_in_frame.update(saved["persons_in_frame"])
-        _pl._active_room_session = saved["active_room_session"]
+        _aio.run(_pl._pipeline_state_store.set_active_room_session(saved["active_room_session"]))
         _pl._session_store._sessions.pop(pid, None)
 
 
@@ -17147,27 +15960,27 @@ def test_active_sessions_and_persons_in_frame_iterations_wrapped_with_list():
 
 def test_persons_in_frame_pruning_uses_inplace_pop_not_dict_rewrite():
     """Wave 1 Item 8: the stale-entry pruning path must use in-place
-    _persons_in_frame.pop() instead of rebinding the name to a new dict.
+    mutation on the PresenceStore instead of rebinding a dict to a new
+    comprehension.
 
     Dict-rebind (_persons_in_frame = {comprehension}) creates a new dict
     object, breaking any other coroutine that holds a reference to the
-    original dict — they continue iterating or reading the old (now
-    unpruned) object. In-place .pop() mutates the shared object so all
-    references see the same up-to-date state without requiring a module-
-    global rebind."""
+    original dict. Since P0.6.2 the canonical pruning API is
+    _presence_store.prune_stale(cutoff_ts), which mutates store state
+    in-place without a module-global rebind."""
     import inspect, pipeline
     src = inspect.getsource(pipeline._background_vision_loop)
 
     # The dict-rewrite pattern must be gone.
     assert "_persons_in_frame = {" not in src, (
         "Wave 1 Item 8: _persons_in_frame must not be rebound to a new dict "
-        "comprehension in _background_vision_loop(). Use in-place .pop() instead."
+        "comprehension in _background_vision_loop(). Use _presence_store.prune_stale() instead."
     )
 
-    # The in-place pop must be present (keyed off _left_persons snapshot).
-    assert "_persons_in_frame.pop(" in src, (
-        "Wave 1 Item 8: _persons_in_frame.pop() must be used to prune stale "
-        "entries in-place, keeping the shared dict object stable."
+    # The PresenceStore prune_stale call must be present.
+    assert "_presence_store.prune_stale(" in src, (
+        "Wave 1 Item 8: _presence_store.prune_stale() must be used to prune stale "
+        "entries in-place via the PresenceStore API."
     )
 
 

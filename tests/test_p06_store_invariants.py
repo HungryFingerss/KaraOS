@@ -29,32 +29,37 @@ CONFTEST_TESTS = TESTS_DIR / "conftest.py"
 # Store module names (snake_case) added by each sub-PR.
 # P0.6.1: only store_base. Sub-PRs add their store here AND in conftest.
 _STORE_MODULES: list[str] = [
-    # "presence_store",         # P0.6.2
-    # "track_store",            # P0.6.2
-    # "conversation_store",     # P0.6.3
-    # "voice_gallery_store",    # P0.6.4
-    # "per_person_agent_store", # P0.6.4
-    # "cache_store",            # P0.6.5
-    # "pipeline_state_store",   # P0.6.6
+    "presence_store",           # P0.6.2
+    "track_store",              # P0.6.2
+    "conversation_store",       # P0.6.3
+    "voice_gallery_store",      # P0.6.4
+    "per_person_agent_store",   # P0.6.4
+    "cache_store",             # P0.6.5
+    "pipeline_state_store",   # P0.6.6
+    "vision_frame_store",     # P0.6.7v2
 ]
 
 # Mapping: store module → pipeline attribute name expected in conftest loop.
 # Updated in lock-step with _STORE_MODULES by each sub-PR.
 _STORE_PIPELINE_ATTR: dict[str, str] = {
-    # "presence_store":         "_presence_store",
-    # "track_store":            "_track_store",
-    # "conversation_store":     "_conversation_store",
-    # "voice_gallery_store":    "_voice_gallery_store",
-    # "per_person_agent_store": "_per_person_agent_store",
-    # "cache_store":            "_cache_store",       # or 4 instances — see P0.6.5
-    # "pipeline_state_store":   "_pipeline_state_store",
+    "presence_store":           "_presence_store",
+    "track_store":              "_track_store",
+    "conversation_store":       "_conversation_store",
+    "voice_gallery_store":      "_voice_gallery_store",
+    "per_person_agent_store":   "_per_person_agent_store",
+    "cache_store_identity_hints":    "_identity_hints_store",     # P0.6.5
+    "cache_store_query_embedding":   "_query_embedding_store",    # P0.6.5
+    "cache_store_scene_block":       "_scene_block_store",        # P0.6.5
+    "cache_store_classifier":        "_classifier_cache_store",   # P0.6.5
+    "pipeline_state_store":   "_pipeline_state_store",
+    "vision_frame_store":     "_vision_frame_store",
 }
 
 # Sync-method allowlist: Store methods that ARE allowed to be sync
 # (peek_*, reset, __init__, __repr__, __str__, __len__, __contains__,
 #  dunder methods, is_* predicate helpers).
 _SYNC_ALLOWLIST_RE = re.compile(
-    r"^(?:reset|peek_.+|is_.+|get_.+|__\w+__)$"
+    r"^(?:reset|get|peek|peek_.+|is_.+|get_.+|__\w+__)$"
 )
 
 

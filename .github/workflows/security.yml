@@ -1,0 +1,75 @@
+name: security
+
+# P0.0 — weekly dependency + filesystem security scan.
+# Catches new CVEs in transitive deps + secrets accidentally committed.
+#
+# Triggers:
+#   - schedule: every Sunday at 04:00 UTC (after slow.yml completes nightly)
+#   - workflow_dispatch: manual trigger
+#   - push to main: defensive — catches deps added without review
+
+on:
+  schedule:
+    - cron: "0 4 * * 0"
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+    paths:
+      - "requirements.txt"
+      - "dog-ai-dashboard/package.json"
+      - "dog-ai-dashboard/package-lock.json"
+
+permissions:
+  contents: read
+  security-events: write   # for trivy SARIF upload
+
+concurrency:
+  group: security-${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: pip-audit (CVE scan on requirements.txt)
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          # Audit the pinned requirements file directly. Non-strict mode
+          # reports findings but does not fail the build — first-pass
+          # baseline. Tighten to strict mode in a follow-up PR after the
+          # initial CVE backlog is triaged.
+          pip-audit --requirement requirements.txt --strict || true
+
+  trivy-fs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-fs.sarif
+          severity: CRITICAL,HIGH
+          # Scan finds + reports; does NOT fail the build during initial
+          # rollout. Triage findings via the Security tab.
+          exit-code: 0
+
+      - name: Upload Trivy results to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs.sarif

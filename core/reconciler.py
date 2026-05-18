@@ -181,6 +181,9 @@ def _p0_short_utterance_hard_mismatch(
     return None
 
 
+_p0_short_utterance_hard_mismatch.LOWER_BOUND = VOICE_ROUTING_MIN_AUDIO_FOR_SCORE
+
+
 def _p0_short_utterance_ambiguous_multi_session(
     claim: IdentityClaim, presence: PresenceState, session: SessionState
 ) -> Optional[RoutingDecision]:
@@ -211,6 +214,9 @@ def _p0_short_utterance_ambiguous_multi_session(
     return None
 
 
+_p0_short_utterance_ambiguous_multi_session.LOWER_BOUND = VOICE_ROUTING_MIN_AUDIO_FOR_SCORE
+
+
 def _p0_pure_noise_hold_current(
     claim: IdentityClaim, presence: PresenceState, session: SessionState
 ) -> Optional[RoutingDecision]:
@@ -235,6 +241,41 @@ def _p0_pure_noise_hold_current(
     return None
 
 
+_p0_pure_noise_hold_current.LOWER_BOUND = 0.0
+
+
+def _p0_short_utterance_gap_hold_current(
+    claim: IdentityClaim, presence: PresenceState, session: SessionState
+) -> Optional[RoutingDecision]:
+    """P0.10 Bug-W fix: hold current for utterance in the 0.3-0.5s gap band.
+
+    Gap-fill rule covering the 0.3-0.5s utterance band where neither
+    _p0_pure_noise_hold_current (< 0.3s) nor _p0_short_utterance_*_mismatch
+    (>= 0.5s) fires.  Without this, Bug-W falls through every P0/P1/P2/P3
+    rule and lands on _p4_new_stranger_low_match → phantom stranger.
+
+    Same shape as legacy router's P0c catch-all (pipeline.py:1233) but
+    narrowed to the actual coverage gap (not legacy's 1.0s blanket floor —
+    existing P0 rules at >= 0.5s were designed correctly per Phase 4 cutover).
+    """
+    if (claim.utterance_duration >= VOICE_ROUTING_NOISE_FLOOR_SECS
+            and claim.utterance_duration < VOICE_ROUTING_MIN_AUDIO_FOR_SCORE
+            and session.cur_pid is not None):
+        return RoutingDecision(
+            pid=session.cur_pid,
+            action="current",
+            reasoning=(
+                f"utterance {claim.utterance_duration:.2f}s in 0.3-0.5s gap band — "
+                f"hold current session ({session.cur_pid}); audio too short for "
+                f"voice-ID decision but above pure-noise floor"
+            ),
+        )
+    return None
+
+
+_p0_short_utterance_gap_hold_current.LOWER_BOUND = VOICE_ROUTING_NOISE_FLOOR_SECS
+
+
 def _p0_short_utterance_no_session(
     claim: IdentityClaim, presence: PresenceState, session: SessionState
 ) -> Optional[RoutingDecision]:
@@ -256,6 +297,9 @@ def _p0_short_utterance_no_session(
             ),
         )
     return None
+
+
+_p0_short_utterance_no_session.LOWER_BOUND = 0.0
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -794,10 +838,11 @@ def _last_resort_ambiguous(
 # invariants.
 
 _CASCADE = (
-    _p0_short_utterance_hard_mismatch,
-    _p0_short_utterance_ambiguous_multi_session,
-    _p0_pure_noise_hold_current,
-    _p0_short_utterance_no_session,
+    _p0_pure_noise_hold_current,                  # band: utt < 0.3, requires cur_pid
+    _p0_short_utterance_no_session,               # band: utt < 0.3, requires no cur_pid
+    _p0_short_utterance_gap_hold_current,         # ★ P0.10 Bug-W: 0.3 ≤ utt < 0.5
+    _p0_short_utterance_hard_mismatch,            # band: 0.5 ≤ utt < 1.0
+    _p0_short_utterance_ambiguous_multi_session,  # band: 0.5 ≤ utt < 1.0
     _p1_confident_voice_switch,
     _p2_midrange_face_assist_switches,
     _p2_midrange_face_assist_below_floor,
@@ -835,21 +880,76 @@ def reconcile(
     return None — currently impossible once #176 lands rule bodies, but
     kept here for correctness during the skeleton phase).
     """
+    _final_decision: Optional[RoutingDecision] = None
     for rule in _CASCADE:
         decision = rule(claim, presence, session)
         if decision is not None:
-            return dataclasses.replace(decision, rule_fired=rule.__name__)
-    return RoutingDecision(
-        pid=None,
-        action="no_action",
-        reasoning="no rule matched (degenerate state)",
-        rule_fired="",
+            _final_decision = dataclasses.replace(decision, rule_fired=rule.__name__)
+            break
+    if _final_decision is None:
+        _final_decision = RoutingDecision(
+            pid=None,
+            action="no_action",
+            reasoning="no rule matched (degenerate state)",
+            rule_fired="",
+        )
+
+    # P0.0.7 H5 — emit routing_decision event via safe_emit_sync.
+    # utt_band tag (Block C of P0.10) drives replay reconstruction of the
+    # gap-band watch. Single P0.4-annotated except lives in safe_emit_sync.
+    _utt = float(claim.utterance_duration or 0.0)
+    if _utt < VOICE_ROUTING_NOISE_FLOOR_SECS:
+        _band = "noise"
+    elif _utt < VOICE_ROUTING_MIN_AUDIO_FOR_SCORE:
+        _band = "gap"
+    elif _utt < VOICE_ROUTING_MIN_UTTERANCE_SECS:
+        _band = "short_hard"
+    else:
+        _band = "normal"
+    from core.event_log import safe_emit_sync, RoutingDecisionPayload
+    safe_emit_sync(
+        "routing_decision",
+        RoutingDecisionPayload(decision=_final_decision, utt_band=_band),
+        session_id=session.cur_pid,
     )
+    return _final_decision
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Band → expected rule mapping (P0.10.1 F2 — moved here from pipeline.py)
+# ──────────────────────────────────────────────────────────────────────────
+#
+# Co-located with the rules so the mapping evolves alongside the cascade.
+# Consumed by the Reconciler-Shadow band-divergence trigger in pipeline.py:
+#   if utt_band ∈ {gap, short_hard} and rule_fired not in EXPECTED_RULES_BY_BAND[band]:
+#       emit divergence log
+#
+# Boundary semantics (short_hard): rules from the adjacent bands (gap and
+# pure-noise) are accepted because utterance_duration measurements can
+# round across MIN_AUDIO_FOR_SCORE (0.5s) or NOISE_FLOOR_SECS (0.3s) — a
+# turn that nominally lands in short_hard might fire a gap-rule due to
+# precision loss in the float comparison. Treating both as legitimate
+# prevents false-positive divergence noise during the validation window.
+#
+# Structural invariant: every rule name in this mapping must exist in
+# _CASCADE — guarded by `test_expected_rules_by_band_references_existing_rules`.
+
+EXPECTED_RULES_BY_BAND: dict[str, tuple[str, ...]] = {
+    "gap": ("_p0_short_utterance_gap_hold_current",),
+    "short_hard": (
+        "_p0_short_utterance_hard_mismatch",
+        "_p0_short_utterance_ambiguous_multi_session",
+        # Boundary cases — see comment above.
+        "_p0_short_utterance_gap_hold_current",
+        "_p0_pure_noise_hold_current",
+    ),
+}
 
 
 __all__ = [
     "reconcile",
     "_CASCADE",
+    "EXPECTED_RULES_BY_BAND",
     "VALID_ACTIONS",
     "_build_routing_inputs",
     "_effective_switch_threshold",

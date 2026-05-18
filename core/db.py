@@ -40,10 +40,24 @@ VALID_EMBEDDING_SOURCES: frozenset[str] = frozenset({
 
 
 class FaceDB:
+    # P0.9.2 Phase 2: retrofit migrations live in core/faces_db_migrations.py
+    # to keep this file focused on FaceDB behavior.  Each entry is a 5-tuple
+    # (version, description, apply_fn, verify_post_fn, verify_present_fn) —
+    # every migration carries BOTH verify companions (Item 1 invariant).
+    from core.faces_db_migrations import MIGRATIONS as _M
+    MIGRATIONS: list = _M
+    del _M
+
     def __init__(self, db_path: str = None, faiss_path: "Path | str | None" = None):
         path = db_path if db_path is not None else str(DB_PATH)
         self._db_path = path
-        self._conn = sqlite3.connect(path, check_same_thread=False)
+        # P0.9.1 Imp-1: isolation_level="IMMEDIATE" makes Python's implicit
+        # auto-BEGIN take an IMMEDIATE write lock (instead of DEFERRED),
+        # which prevents conflict with the explicit BEGIN IMMEDIATE used
+        # by FaceDB.transaction() and core.schema_migrations.apply_migrations.
+        self._conn = sqlite3.connect(
+            path, check_same_thread=False, isolation_level="IMMEDIATE",
+        )
         self._index_lock = threading.RLock()
         # Wave 3 Item 15 — async rebuild state
         self._rebuild_in_progress: bool = False
@@ -54,6 +68,24 @@ class FaceDB:
         self._faiss_path: Path = Path(faiss_path) if faiss_path is not None else FAISS_INDEX_PATH
         self._faiss_degraded: bool = False
         self._init_tables()
+        # P0.9.1 Phase 1: ledger + pending-migration runner.  Order matters:
+        # (1) init_ledger creates schema_migrations table if absent (and
+        #     adds is_initial column to pre-P0.9 ledgers in place).
+        # (2) bootstrap_ledger_if_unversioned stamps v=1 on legacy DBs.
+        # (3) apply_migrations runs any v>=2 entries in MIGRATIONS (empty
+        #     in Phase 1; Phase 2 populates).
+        from core.schema_migrations import (
+            init_ledger as _il, bootstrap_ledger_if_unversioned as _bl,
+            apply_migrations as _am,
+        )
+        _il(self._conn)
+        _bl(
+            self._conn,
+            baseline_description="faces.db initial baseline (pre-P0.9)",
+            migrations=self.MIGRATIONS,
+            db_label="faces.db",
+        )
+        _am(self._conn, self.MIGRATIONS, db_label="faces.db")
         self._load_faiss()
 
     def _init_tables(self):
@@ -101,17 +133,11 @@ class FaceDB:
                 FOREIGN KEY (person_id) REFERENCES persons(id)
             );
         """)
-        # Schema migration: add provenance columns to existing databases
-        for _col, _defn in (
-            ("source",             "TEXT NOT NULL DEFAULT 'legacy_unknown'"),
-            ("confidence_at_write", "REAL NOT NULL DEFAULT 0.0"),
-        ):
-            for _tbl in ("embeddings", "voice_embeddings"):
-                try:
-                    self._conn.execute(f"ALTER TABLE {_tbl} ADD COLUMN {_col} {_defn}")
-                except sqlite3.OperationalError:
-                    pass  # column already exists
         self._conn.commit()
+        # P0.9.3: provenance-column legacy ALTERs (embeddings/voice_embeddings
+        # source + confidence_at_write) retrofitted as migration v=6 — handled
+        # by core.schema_migrations.apply_migrations now.  Inline ALTER loop
+        # removed (defense-in-depth no longer needed post-validation).
 
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS system_identity (
@@ -146,72 +172,18 @@ class FaceDB:
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_log_person ON conversation_log(person_id, ts)"
         )
-        # Drop legacy table that was replaced by brain.db (idempotent).
-        self._conn.execute("DROP TABLE IF EXISTS conversation_memory")
-
-        # Migrate existing DBs: add columns if they don't exist yet.
-        # SQLite doesn't support ALTER TABLE ADD COLUMN IF NOT EXISTS,
-        # so we attempt each and swallow the error if already present.
-        for col_sql in (
-            "ALTER TABLE persons ADD COLUMN last_seen REAL",
-            "ALTER TABLE persons ADD COLUMN preferred_language TEXT NOT NULL DEFAULT 'en'",
-            "ALTER TABLE embeddings ADD COLUMN vector BLOB",
-            "ALTER TABLE persons ADD COLUMN person_type TEXT NOT NULL DEFAULT 'known'",
-            # Session 107 Phase 3A.6 Part 3 — Q3 hybrid history columns.
-            # room_session_id groups turns by room/group context (3B
-            # RoomOrchestrator uses it to retrieve "what was discussed
-            # in this room session"). audience_ids is a JSON array of
-            # person_ids who can see the turn — consumed by 3B
-            # visibility filtering at retrieval time. Additive, nullable;
-            # not wired into any retrieval path yet.
-            "ALTER TABLE conversation_log ADD COLUMN room_session_id TEXT",
-            "ALTER TABLE conversation_log ADD COLUMN audience_ids TEXT",
-        ):
-            try:
-                self._conn.execute(col_sql)
-            except sqlite3.OperationalError:
-                pass  # column already exists
-
-        # Session 107 Phase 3A.6 Part 3 — index for room-history retrieval.
-        # (room_session_id, ts DESC) covers the typical 3B query pattern
-        # "most recent N turns in this room session." No effect until
-        # room_session_id is populated; harmless to create now.
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_conv_log_room "
-            "ON conversation_log(room_session_id, ts DESC)"
-        )
-
-        # Session 107 Phase 3A.6 Part 3 — one-shot backfill for rows
-        # that predate the schema addition. Deterministic defaults
-        # preserve single-person semantics: each pre-migration turn
-        # gets a synthetic room_session_id keyed by (person_id,
-        # first-turn ts) and audience_ids = [person_id] so the turn is
-        # visible only to that person. No-op after first run (WHERE
-        # clause catches nothing once populated).
-        _null_room = self._conn.execute(
-            "SELECT COUNT(*) FROM conversation_log WHERE room_session_id IS NULL"
-        ).fetchone()[0]
-        if _null_room:
-            import json as _json_bfill
-            # Compute per-person first turn ts (used as session marker).
-            _first_ts_rows = self._conn.execute(
-                "SELECT person_id, MIN(ts) FROM conversation_log "
-                "WHERE room_session_id IS NULL GROUP BY person_id"
-            ).fetchall()
-            for _pid, _first_ts in _first_ts_rows:
-                _rsid = f"{_pid}_{int(_first_ts or 0)}"
-                _aud  = _json_bfill.dumps([_pid])
-                self._conn.execute(
-                    "UPDATE conversation_log "
-                    "SET room_session_id = ?, audience_ids = ? "
-                    "WHERE person_id = ? AND room_session_id IS NULL",
-                    (_rsid, _aud, _pid),
-                )
-            print(
-                f"[FaceDB] Backfilled conversation_log for {len(_first_ts_rows)} "
-                f"person(s) — added room_session_id + audience_ids to "
-                f"{_null_room} legacy row(s)"
-            )
+        # P0.9.3: all post-baseline legacy ALTERs (persons.last_seen /
+        # preferred_language / person_type, embeddings.vector,
+        # conversation_log room_session_id + audience_ids), idx_conv_log_room,
+        # the room_session_id deterministic backfill, AND the
+        # DROP TABLE IF EXISTS conversation_memory legacy cleanup have all
+        # been retrofitted as MIGRATIONS entries v=2 through v=10 in
+        # core.faces_db_migrations.  core.schema_migrations.apply_migrations
+        # runs them (or bootstrap stamps them is_initial=1 on legacy DBs
+        # where they already landed via the pre-P0.9 inline path).  The
+        # inline calls that used to live here are now redundant by
+        # construction — Phase 2's validation against Jagan's prod DBs
+        # confirmed the bootstrap+runner path handles legacy state.
         self._conn.commit()
         if CONVERSATION_ARCHIVE_ENABLED:
             self._init_conversation_archive()
@@ -236,10 +208,18 @@ class FaceDB:
                 yield
                 self._conn.execute("COMMIT")
             except Exception:
+                # P0.9.1 Imp-2: tightened rollback — re-raise unexpected
+                # OperationalErrors instead of swallowing every Exception.
+                # Only the S65 "no transaction is active" race is suppressed
+                # (SQLite auto-rolled the failed COMMIT before our explicit
+                # ROLLBACK could run).
                 try:
                     self._conn.execute("ROLLBACK")
-                except Exception:
-                    pass  # RACE: S65 — ROLLBACK fails if commit auto-rolled
+                except sqlite3.OperationalError as _rbe:
+                    if "no transaction is active" not in str(_rbe).lower():
+                        print(f"[FaceDB] rollback failed unexpectedly: {_rbe!r}")
+                        raise
+                    # else: # RACE: S65 — known race, suppress
                 raise
         finally:
             self._conn.isolation_level = prev_isolation
@@ -252,7 +232,11 @@ class FaceDB:
     def _init_conversation_archive(self) -> None:
         """Create (or migrate) the conversation archive database (Wave 6 Item 21)."""
         archive_path = self._archive_db_path()
-        _ac = sqlite3.connect(str(archive_path), check_same_thread=False)
+        # P0.9.1 Imp-1: IMMEDIATE isolation for all SQLite connections in core.
+        _ac = sqlite3.connect(
+            str(archive_path), check_same_thread=False,
+            isolation_level="IMMEDIATE",
+        )
         try:
             _ac.execute("PRAGMA journal_mode=WAL")
             _ac.execute("""
@@ -313,10 +297,17 @@ class FaceDB:
             )
             self._conn.execute("COMMIT")
         except Exception:
+            # P0.9.1 Imp-2: tightened rollback — re-raise unexpected
+            # OperationalErrors instead of swallowing every Exception.
+            # Only the S65 "no transaction is active" race is suppressed
+            # (ROLLBACK raises if BEGIN EXCLUSIVE failed before).
             try:
                 self._conn.execute("ROLLBACK")
-            except Exception:
-                pass  # RACE: S65 _safe_commit no-active-transaction race — ROLLBACK raises if BEGIN EXCLUSIVE failed
+            except sqlite3.OperationalError as _rbe:
+                if "no transaction is active" not in str(_rbe).lower():
+                    print(f"[FaceDB] archive rollback failed unexpectedly: {_rbe!r}")
+                    raise
+                # else: # RACE: S65 — known race, suppress
             raise
         finally:
             try:
@@ -1139,6 +1130,21 @@ class FaceDB:
             (person_id, role, content, room_session_id, _aud_json),
         )
         self._conn.commit()
+        # P0.0.7 H8 — emit memory_write event after successful INSERT via
+        # safe_emit_sync (single P0.4-annotated except lives inside helper).
+        from core.event_log import safe_emit_sync, MemoryWritePayload
+        safe_emit_sync(
+            "memory_write",
+            MemoryWritePayload(
+                person_id=person_id,
+                role=role,
+                text=content,
+                room_session_id=room_session_id,
+                audience_ids=tuple(audience_ids) if audience_ids is not None else None,
+            ),
+            session_id=person_id,
+            room_session_id=room_session_id,
+        )
 
     def load_conversation_history(self, person_id: str) -> list[dict]:
         """Load the most recent CONVERSATION_HISTORY_LIMIT turns, oldest first.
@@ -1159,7 +1165,10 @@ class FaceDB:
         archive_path = self._archive_db_path()
         if CONVERSATION_ARCHIVE_ENABLED and archive_path.exists():
             try:
-                _ac = sqlite3.connect(str(archive_path), check_same_thread=False)
+                _ac = sqlite3.connect(
+                    str(archive_path), check_same_thread=False,
+                    isolation_level="IMMEDIATE",  # P0.9.1 Imp-1
+                )
                 arch_rows = _ac.execute(
                     "SELECT role, content, ts FROM conversation_log WHERE person_id = ? "
                     "ORDER BY ts DESC LIMIT ?",
@@ -1301,7 +1310,10 @@ class FaceDB:
         archive_path = self._archive_db_path()
         if CONVERSATION_ARCHIVE_ENABLED and archive_path.exists():
             try:
-                _ac = sqlite3.connect(str(archive_path), check_same_thread=False)
+                _ac = sqlite3.connect(
+                    str(archive_path), check_same_thread=False,
+                    isolation_level="IMMEDIATE",  # P0.9.1 Imp-1
+                )
                 arch_rows = _ac.execute(
                     "SELECT role, content, ts FROM conversation_log "
                     "WHERE person_id = ? AND LOWER(content) LIKE LOWER(?) "

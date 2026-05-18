@@ -1,0 +1,80 @@
+name: slow
+
+# P0.0 — nightly + manual full-suite workflow. Runs the heavy-model tests
+# (pyannote, SpeechBrain, Whisper, ECAPA-TDNN, Kokoro) + network tests
+# (Together.ai / Tavily — opt-in via secret), and caches HF model downloads
+# so subsequent nightly runs stay fast.
+#
+# Triggers:
+#   - schedule: every night at 03:30 UTC
+#   - workflow_dispatch: manual trigger from the Actions tab
+
+on:
+  schedule:
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: slow-${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  slow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60         # full-suite + model downloads can be slow
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Cache HuggingFace model artifacts
+        # Whisper, pyannote, SpeechBrain ECAPA-TDNN, E5 — all live under
+        # ~/.cache/huggingface. Caching here avoids the ~5-minute model
+        # download on every nightly. Keyed on requirements.txt because
+        # version bumps may invalidate cached artifacts.
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface
+            ~/.cache/torch
+            ~/.cache/speechbrain
+            pretrained_models
+          key: hf-models-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            hf-models-${{ runner.os }}-
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          # CPU-only torch — nightly CI doesn't have GPU.
+          pip install --index-url https://download.pytorch.org/whl/cpu \
+            torch torchvision torchaudio || true
+          pip install -r requirements.txt
+
+      - name: Pytest — full suite (slow + models + network)
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUNBUFFERED: "1"
+          # Live API calls — only fire when secrets are present (forks won't
+          # have them, so network tests skip silently in untrusted contexts).
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -n "$TOGETHER_API_KEY" ]; then
+            echo "Running full suite with --run-network"
+            pytest tests/ --run-network -q
+          else
+            echo "TOGETHER_API_KEY not set — running full suite without network tests"
+            pytest tests/ -q
+          fi

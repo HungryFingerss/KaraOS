@@ -23,24 +23,42 @@ class HealthSnapshot:
     unresolved_watchdog_alerts: int
     last_dream_run_seconds_ago: "float | None"
     thin_voice_galleries: "list[tuple[str, int]]"  # [(person_id, count)] for known persons with voice_n < 5
+    # P0.0.7 D5 / D8.1 — event_log subsystem health.
+    # `event_log_drops`: count of envelopes dropped due to bounded-queue
+    #     backpressure since process start. Non-zero → consumer (writer
+    #     task) falling behind; investigate writer-loop or DB lock.
+    # `event_log_emit_failures`: count of exceptions swallowed by
+    #     safe_emit_sync since process start. Non-zero → producer-hook
+    #     bug (serialization failure / closed connection / etc.); check
+    #     the [EventLog] WARN lines for the type+message of the first 3.
+    # **No `event_log_dropped` event is emitted in the queue** (D5
+    # circular-dependency guard) — these counters ARE the observability
+    # signal; an event-about-a-dropped-event could itself be dropped.
+    event_log_drops: int = 0
+    event_log_emit_failures: int = 0
 
 
 def gather_health_snapshot(
     db: Any,
     brain_orchestrator: Any,
-    active_sessions: dict,
+    active_sessions: "list | tuple",
     cloud_state: Any,
     last_dream_run_at: "float | None",
 ) -> HealthSnapshot:
     """Gather all metrics in one pass. Each query is a fast SELECT COUNT(*).
     Total wall-clock budget: <100ms. Run in executor — never on the event loop.
+
+    P0.7 adaptation: `active_sessions` is now a list/tuple of `SessionSnapshot`
+    dataclasses (from `SessionStore.peek_all_snapshots()`), NOT the legacy
+    `_active_sessions` dict.  Iterate directly + attribute-access for
+    `person_type`.
     """
     now = time.time()
 
     # Sessions by type
     by_type: dict[str, int] = {"best_friend": 0, "known": 0, "stranger": 0, "disputed": 0}
-    for s in active_sessions.values():
-        pt = s.get("person_type", "stranger")
+    for s in active_sessions:
+        pt = getattr(s, "person_type", "stranger")
         by_type[pt] = by_type.get(pt, 0) + 1
 
     # Active disputes are just disputed sessions
@@ -97,6 +115,24 @@ def gather_health_snapshot(
     except Exception:
         scen_active, scen_quar = -1, -1
 
+    # P0.0.7 D8.1 — pull event_log degradation counters. Imported lazily
+    # to keep gather_health_snapshot side-effect-free when event_log is
+    # disabled (EVENT_LOG_ENABLED=0): the producer module is still
+    # importable but its counters are zeros — no DB hit, no async work.
+    try:
+        from core.event_log.producer import (
+            get_drop_count as _get_evlog_drops,
+            get_safe_emit_failure_count as _get_evlog_emit_failures,
+        )
+        evlog_drops = int(_get_evlog_drops())
+        evlog_emit_failures = int(_get_evlog_emit_failures())
+    except Exception:
+        # OPTIONAL: event_log module unavailable (early boot before producer
+        # imported, or tests that mock out the package). Counters default
+        # to 0 so the health line stays clean rather than emitting an alert.
+        evlog_drops = 0
+        evlog_emit_failures = 0
+
     return HealthSnapshot(
         timestamp=now,
         active_sessions=len(active_sessions),
@@ -112,6 +148,8 @@ def gather_health_snapshot(
         unresolved_watchdog_alerts=watchdog_unresolved,
         last_dream_run_seconds_ago=((now - last_dream_run_at) if last_dream_run_at is not None else None),
         thin_voice_galleries=thin,
+        event_log_drops=evlog_drops,
+        event_log_emit_failures=evlog_emit_failures,
     )
 
 
@@ -141,6 +179,18 @@ def format_health_line(s: HealthSnapshot) -> str:
     else:
         dream_str = f"{int(s.last_dream_run_seconds_ago / 3600)}h_ago"
 
+    # P0.0.7 D8.2 — surface event_log degradation only when non-zero.
+    # Steady-state runs (both counters 0) keep the health line clean;
+    # any non-zero count tags the specific counter so operators can
+    # grep for the right surface ("event_log_drops" vs
+    # "event_log_emit_failures").
+    evlog_parts: list[str] = []
+    if s.event_log_drops > 0:
+        evlog_parts.append(f"event_log_drops={s.event_log_drops}")
+    if s.event_log_emit_failures > 0:
+        evlog_parts.append(f"event_log_emit_failures={s.event_log_emit_failures}")
+    evlog_str = (" | " + " ".join(evlog_parts)) if evlog_parts else ""
+
     return (
         f"[Health] {time_str} | sessions={sess_str} | "
         f"faces={s.persons_count}({s.total_face_embeddings}emb) | "
@@ -148,6 +198,7 @@ def format_health_line(s: HealthSnapshot) -> str:
         f"classifier={s.classifier_scenarios_active}act,{s.classifier_scenarios_quarantined}quar | "
         f"cloud={s.cloud_state} | disputes={s.active_disputes} | "
         f"alerts={s.unresolved_watchdog_alerts} | dream={dream_str}"
+        f"{evlog_str}"
     )
 
 
@@ -182,6 +233,27 @@ def format_health_alerts(s: HealthSnapshot, brain_orchestrator: Any) -> "list[st
         from core.config import HEALTH_THIN_VOICE_MAX
         for pid, n in s.thin_voice_galleries[:HEALTH_THIN_VOICE_MAX]:
             alerts.append(f"[Health-Alert] Voice gallery thin: {pid} at {n}/5 samples")
+
+    # P0.0.7 D8.3 — event_log subsystem degradation alerts. Either
+    # counter being non-zero means the event-log producer is shedding
+    # signal; the alert names the specific counter so operators
+    # investigate the right surface. Drops = bounded-queue full
+    # (consumer falling behind); emit_failures = exceptions swallowed by
+    # safe_emit_sync (producer-hook bug — check the [EventLog] WARN
+    # lines for type+message of the first 3).
+    if s.event_log_drops > 0:
+        alerts.append(
+            f"[Health-Alert] event_log_drops={s.event_log_drops} — "
+            f"writer task falling behind; bounded queue (10000) shedding "
+            f"envelopes. Investigate writer-loop / DB lock / disk-full."
+        )
+    if s.event_log_emit_failures > 0:
+        alerts.append(
+            f"[Health-Alert] event_log_emit_failures={s.event_log_emit_failures} "
+            f"— safe_emit_sync swallowed exception(s) from a producer hook. "
+            f"Grep `[EventLog] WARN` in terminal_output for the type+message "
+            f"of the first 3 (rate-limited)."
+        )
 
     return alerts
 

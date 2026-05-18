@@ -210,7 +210,7 @@ async def identify_speaker(
         )
     else:
         reason = f"matched {pid!r} at score {float(score):.3f}"
-    return IdentityClaim(
+    _claim = IdentityClaim(
         pid=pid,
         confidence=float(score),
         n_diarize_segments=n_segments,
@@ -218,3 +218,14 @@ async def identify_speaker(
         reasoning=reason,
         raw_segment_scores=tuple(raw_scores),
     )
+    # P0.0.7 H3 — emit identity_claim on the success path via
+    # safe_emit_sync (single P0.4-annotated except lives in helper).
+    # Early-return failures (empty buf, empty gallery, exception) emit
+    # no event; replay infers their absence from the audio_in event
+    # having no natural-pair child within the session.
+    from core.event_log import safe_emit_sync, IdentityClaimPayload
+    safe_emit_sync(
+        "identity_claim",
+        IdentityClaimPayload(claim=_claim),
+    )
+    return _claim

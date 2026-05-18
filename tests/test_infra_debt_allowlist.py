@@ -7,10 +7,22 @@ must also update INFRA_DEBT_CAP — making the trade-off visible in the diff.
 
 Remediation notes per entry tell the reviewer exactly what unblocks deletion.
 
+**P0.0.2 disposition (2026-05-17):** every test in `INFRA_DEBT_FAILURES`
+also carries `@pytest.mark.xfail(strict=False, reason=...)` so the slow
+CI workflow shows the test as XFAIL instead of FAILED.  `strict=False`
+means an unexpected PASS surfaces as XPASS (notable) without breaking
+CI — the signal the infra debt was resolved.
+
+The two artifacts are intentionally redundant:
+  - The allowlist is the human-readable rationale registry (this file).
+  - The xfail decorators control what pytest reports per test.
+`test_xfail_decorators_align_with_allowlist` keeps them in sync.
+
 To delete an entry after fixing:
   1. Remove the tuple from INFRA_DEBT_FAILURES.
   2. Decrement INFRA_DEBT_CAP.
-  3. Confirm the test is now green in the full suite.
+  3. Remove the `@pytest.mark.xfail(...)` decorator from the test body.
+  4. Confirm the test is now green in the full suite (passes, not xpasses).
 """
 
 INFRA_DEBT_FAILURES = frozenset({
@@ -93,4 +105,67 @@ def test_infra_debt_entries_have_rationale():
         )
         assert isinstance(rationale, str) and len(rationale) > 20, (
             f"Rationale too short (must explain WHY and HOW to fix): {rationale!r}"
+        )
+
+
+def test_xfail_decorators_align_with_allowlist():
+    """P0.0.2 structural lock: every test in `INFRA_DEBT_FAILURES` must
+    carry `@pytest.mark.xfail` so slow CI reports XFAIL instead of FAILED.
+
+    Keeps the two artifacts in sync — if a future maintainer fixes one
+    test, the cleanup steps (remove allowlist entry + remove xfail
+    decorator) MUST happen together. Catching half-fixes here is what
+    the structural-invariant pattern is for.
+
+    AST-scans `test_pipeline.py` for each test function named in
+    `INFRA_DEBT_FAILURES`; asserts each carries a `pytest.mark.xfail`
+    decorator. Failure mode: a future maintainer removes the decorator
+    without removing the allowlist entry (or vice versa).
+    """
+    import ast
+    import pathlib
+
+    src = pathlib.Path(__file__).resolve().parent.parent / "test_pipeline.py"
+    tree = ast.parse(src.read_text(encoding="utf-8"))
+
+    # Build name -> function-node lookup
+    funcs_by_name: dict[str, ast.FunctionDef] = {
+        n.name: n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef)
+    }
+
+    for test_id, _rationale in INFRA_DEBT_FAILURES:
+        # test_id is "test_pipeline.py::test_<name>"
+        _, _, func_name = test_id.partition("::")
+        assert func_name in funcs_by_name, (
+            f"{test_id} is in INFRA_DEBT_FAILURES but the function "
+            f"is missing from test_pipeline.py. Either the test was "
+            f"renamed (update the allowlist) or deleted (remove the "
+            f"allowlist entry + decrement INFRA_DEBT_CAP)."
+        )
+
+        func = funcs_by_name[func_name]
+        has_xfail = any(
+            (
+                isinstance(deco, ast.Call)
+                and isinstance(deco.func, ast.Attribute)
+                and deco.func.attr == "xfail"
+            )
+            or (
+                isinstance(deco, ast.Attribute)
+                and deco.attr == "xfail"
+            )
+            for deco in func.decorator_list
+        )
+        assert has_xfail, (
+            f"{test_id} is in INFRA_DEBT_FAILURES but the function "
+            f"body lacks a @pytest.mark.xfail decorator. P0.0.2 disposition "
+            f"requires both artifacts to stay in sync:\n"
+            f"  - allowlist entry → declares the infra debt is accepted\n"
+            f"  - xfail decorator → tells pytest to report XFAIL not FAILED\n"
+            f"If the test is now genuinely fixed: remove from allowlist "
+            f"AND decrement INFRA_DEBT_CAP AND remove the decorator (all "
+            f"three steps). If the decorator was accidentally dropped: "
+            f"restore it."
         )

@@ -101,18 +101,64 @@ from core.log_utils import _now_log_ts
 # ── Shared utilities ───────────────────────────────────────────────────────────
 
 def _parse_json(raw: str) -> dict | None:
-    """Parse JSON with automatic salvage of the first {…} block on failure."""
+    """Parse JSON with automatic salvage of the first {…} block on failure.
+
+    Returns a dict on success, or None on any failure.  P0.12: also returns
+    None when `json.loads` succeeds but produces a non-dict JSON value
+    (e.g. raw input `"0"`, `"[1,2,3]"`, `"true"`).  Type annotation said
+    `dict | None` but the pre-P0.12 implementation returned whatever
+    json.loads returned — Hypothesis surfaced the contract violation
+    (falsifying input: `raw="0"` → returned `int(0)`).  Callers do
+    `parsed.get(...)` assuming dict; a non-dict return would raise
+    AttributeError at runtime.
+
+    Also catches `RecursionError` from pathological deeply-nested JSON.
+    """
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
+        result = json.loads(raw)
+    except (json.JSONDecodeError, RecursionError, ValueError):
         start = raw.find("{")
         end   = raw.rfind("}") + 1
         if start >= 0 and end > start:
             try:
-                return json.loads(raw[start:end])
-            except json.JSONDecodeError:
+                result = json.loads(raw[start:end])
+            except (json.JSONDecodeError, RecursionError, ValueError):
                 return None
-        return None
+        else:
+            return None
+    return result if isinstance(result, dict) else None
+
+
+def _parse_json_array(raw: str) -> list | None:
+    """Parse JSON expecting a top-level array.  Returns list OR None.
+
+    Sibling to ``_parse_json`` (P0.12.1 follow-up): some agent prompts
+    legitimately expect a top-level JSON array (e.g. SocialGraphAgent's
+    "list of person mentions") even when ``response_format={"type":
+    "json_object"}`` is set — practical LLMs occasionally ignore the
+    object-only constraint and return a raw array.  Pre-P0.12, the
+    permissive ``_parse_json`` returned the list and the caller's
+    ``isinstance(data, list)`` branch caught it.  P0.12 narrowed
+    ``_parse_json`` to ``dict | None`` for type-contract correctness;
+    this sibling restores explicit list-shape parsing for the small set
+    of call sites that need it WITHOUT re-broadening the main parser.
+
+    Same brace-salvage discipline but with ``[``/``]`` markers.  Catches
+    the same DoS exceptions as ``_parse_json``.
+    """
+    try:
+        result = json.loads(raw)
+    except (json.JSONDecodeError, RecursionError, ValueError):
+        start = raw.find("[")
+        end   = raw.rfind("]") + 1
+        if start >= 0 and end > start:
+            try:
+                result = json.loads(raw[start:end])
+            except (json.JSONDecodeError, RecursionError, ValueError):
+                return None
+        else:
+            return None
+    return result if isinstance(result, list) else None
 
 
 def _valid_until(is_temporal: bool, valid_for_hours: float | None, now: float) -> float | None:
@@ -725,11 +771,40 @@ class BrainDB:
     by the brain agent without touching the main pipeline's DB connection.
     """
 
+    # P0.9.2 Phase 2: retrofit migrations live in core/brain_db_migrations.py.
+    # Each entry is a 5-tuple (version, description, apply_fn,
+    # verify_post_fn, verify_present_fn).
+    from core.brain_db_migrations import MIGRATIONS as _M
+    MIGRATIONS: list = _M
+    del _M
+
     def __init__(self, path: Path = BRAIN_DB_PATH):
-        self._conn = sqlite3.connect(str(path), check_same_thread=False)
+        # P0.9.1 Imp-1: IMMEDIATE isolation prevents Python auto-BEGIN
+        # (DEFERRED by default) from clashing with explicit BEGIN IMMEDIATE
+        # used by BrainDB.transaction() and core.schema_migrations runner.
+        self._conn = sqlite3.connect(
+            str(path), check_same_thread=False,
+            isolation_level="IMMEDIATE",
+        )
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._init_tables()
         self._migrate()
+        # P0.9.1 Phase 1: ledger + pending-migration runner.  The existing
+        # _migrate() above handles the ad-hoc PRAGMA-guarded ALTERs (Phase 2
+        # converts these to versioned MIGRATIONS entries).  This block adds
+        # the schema_migrations ledger so future migrations land there.
+        from core.schema_migrations import (
+            init_ledger as _il, bootstrap_ledger_if_unversioned as _bl,
+            apply_migrations as _am,
+        )
+        _il(self._conn)
+        _bl(
+            self._conn,
+            baseline_description="brain.db initial baseline (pre-P0.9)",
+            migrations=self.MIGRATIONS,
+            db_label="brain.db",
+        )
+        _am(self._conn, self.MIGRATIONS, db_label="brain.db")
 
     def _safe_commit(self) -> None:
         """Commit only when a transaction is actually open.
@@ -771,10 +846,16 @@ class BrainDB:
                 yield
                 self._conn.execute("COMMIT")
             except Exception:
+                # P0.9.1 Imp-2: tightened rollback — re-raise unexpected
+                # OperationalErrors instead of swallowing every Exception.
+                # Only the S65 "no transaction is active" race is suppressed.
                 try:
                     self._conn.execute("ROLLBACK")
-                except Exception:
-                    pass  # RACE: S65 — ROLLBACK fails if commit auto-rolled
+                except sqlite3.OperationalError as _rbe:
+                    if "no transaction is active" not in str(_rbe).lower():
+                        print(f"[BrainDB] rollback failed unexpectedly: {_rbe!r}")
+                        raise
+                    # else: # RACE: S65 — known race, suppress
                 raise
         finally:
             self._conn.isolation_level = prev_isolation
@@ -1428,107 +1509,28 @@ class BrainDB:
         ]
 
     # ── Migration ──────────────────────────────────────────────────────────────
+    # P0.9.3: the former `_migrate()` method body (10 PRAGMA-guarded ALTERs
+    # spanning knowledge.embedding/valid_at/last_confirmed_at/privacy_level,
+    # schema_catalog.embedding, prompt_prefs.friction_count/embedding,
+    # brain_state.graph_schema_version, shadow_persons.mention_count,
+    # intent_divergences.mode, plus the privacy_level NULL/legacy 'private'
+    # remediation) has been retrofitted as MIGRATIONS entries v=2 through
+    # v=11 in core.brain_db_migrations.  core.schema_migrations.apply_migrations
+    # runs them (or bootstrap stamps them is_initial=1 on legacy DBs where
+    # they already landed via the pre-P0.9 inline path).  The inline code
+    # that used to live here is now redundant by construction — Phase 2's
+    # validation against Jagan's prod DBs confirmed the bootstrap+runner
+    # path handles legacy state.  _migrate() now exists only as a stub
+    # so the __init__ call site stays trivially correct.
 
     def _migrate(self) -> None:
-        """Safe additive migrations — ALTER TABLE ADD COLUMN only (never destructive)."""
-        for table in ("knowledge", "schema_catalog"):
-            cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})").fetchall()}
-            if "embedding" not in cols:
-                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN embedding BLOB")
+        """No-op stub — retrofitted into core.brain_db_migrations.MIGRATIONS.
 
-        # Item 3: temporal validity — when did this fact become true?
-        # valid_at = when the fact became true in the real world (valid time start)
-        # Backfill: created_at is the best proxy for existing rows.
-        k_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(knowledge)").fetchall()}
-        if "valid_at" not in k_cols:
-            self._conn.execute("ALTER TABLE knowledge ADD COLUMN valid_at REAL")
-            self._conn.execute("UPDATE knowledge SET valid_at = created_at WHERE valid_at IS NULL")
-
-        # Item 6: SM-2 confirmation anchor — resets the decay clock when user confirms a fact
-        if "last_confirmed_at" not in k_cols:
-            self._conn.execute("ALTER TABLE knowledge ADD COLUMN last_confirmed_at REAL")
-
-        # Phase 5: friction_count on prompt_prefs — escalates injection language
-        pp_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(prompt_prefs)").fetchall()}
-        if "friction_count" not in pp_cols:
-            self._conn.execute(
-                "ALTER TABLE prompt_prefs ADD COLUMN friction_count INTEGER NOT NULL DEFAULT 0"
-            )
-
-        # Session 69 / Bug L: embedding BLOB for semantic dedup at pref activation.
-        # Stored as float32 bytes from EmbeddingAgent (1024-dim). NULL for
-        # pre-migration rows → the activation gate re-embeds them on first use.
-        if "embedding" not in pp_cols:
-            self._conn.execute("ALTER TABLE prompt_prefs ADD COLUMN embedding BLOB")
-
-        # Graph schema version — used to detect when Kuzu RELATES_TO schema changed and
-        # the graph needs a forced wipe + rebuild from SQLite.
-        bs_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(brain_state)").fetchall()}
-        if "graph_schema_version" not in bs_cols:
-            self._conn.execute(
-                "ALTER TABLE brain_state ADD COLUMN graph_schema_version INTEGER NOT NULL DEFAULT 0"
-            )
-
-        # Session 97 Fix 3: shadow_persons.mention_count — integer counter
-        # bumped on every upsert_shadow_person update. Surfaces to retention
-        # pruning (frequently-mentioned shadows outlive one-offs) + gives
-        # dashboard a signal for "how often has this person been talked
-        # about" without re-counting from known_via JSON each render.
-        sp_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(shadow_persons)").fetchall()}
-        if "mention_count" not in sp_cols:
-            self._conn.execute(
-                "ALTER TABLE shadow_persons ADD COLUMN mention_count INTEGER NOT NULL DEFAULT 1"
-            )
-
-        # G7b: privacy level — 'public' | 'private' (tagged at write time from attribute name)
-        k_cols2 = {r[1] for r in self._conn.execute("PRAGMA table_info(knowledge)").fetchall()}
-        if "privacy_level" not in k_cols2:
-            self._conn.execute(
-                "ALTER TABLE knowledge ADD COLUMN privacy_level TEXT NOT NULL DEFAULT 'public'"
-            )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_knowledge_privacy_person "
-            "ON knowledge(privacy_level, person_id)"
-        )
-
-        # Phase 5 (Session 119) — `intent_divergences.mode` column. Production
-        # gate writes 'gate' (default for backward-compat); 1% canary shadow
-        # samples write 'shadow'. Lets the weekly review separate gate-fired
-        # rejections from passive observability samples without a second
-        # table. Idempotent — column add via PRAGMA-guarded ALTER.
-        id_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(intent_divergences)").fetchall()}
-        if "mode" not in id_cols:
-            self._conn.execute(
-                "ALTER TABLE intent_divergences ADD COLUMN mode TEXT NOT NULL DEFAULT 'gate'"
-            )
-
-        # VISION_ROADMAP Phase 3A.4 — one-shot legacy privacy_level backfill.
-        # Two disjoint legacy states need remediation before _visibility_clause
-        # goes live:
-        #   (1) NULL rows — shouldn't exist because ADD COLUMN has a DEFAULT,
-        #       but run the backfill anyway as a belt-and-braces safety net
-        #       against hand-edits / older schema edges.
-        #   (2) 'private' rows — produced by the legacy 2-tier _privacy_level()
-        #       classifier (owner-only semantics). Map 1:1 to new 4-tier
-        #       'personal' so those rows remain visible to their owners under
-        #       the new visibility_clause (which has NO predicate matching
-        #       'private' and would hide them from everyone, including owners).
-        # Both migrations converge on PRIVACY_LEVEL_DEFAULT='personal' (fail-closed).
-        # After the first run these UPDATEs are no-ops.
-        cur_null = self._conn.execute(
-            "UPDATE knowledge SET privacy_level = ? WHERE privacy_level IS NULL",
-            (PRIVACY_LEVEL_DEFAULT,),
-        )
-        if cur_null.rowcount:
-            print(f"[BrainDB] Backfilled {cur_null.rowcount} NULL privacy_level row(s) -> {PRIVACY_LEVEL_DEFAULT!r}")
-        cur_legacy = self._conn.execute(
-            "UPDATE knowledge SET privacy_level = ? WHERE privacy_level = 'private'",
-            (PRIVACY_LEVEL_DEFAULT,),
-        )
-        if cur_legacy.rowcount:
-            print(f"[BrainDB] Migrated {cur_legacy.rowcount} legacy 'private' row(s) -> {PRIVACY_LEVEL_DEFAULT!r}")
-
-        self._conn.commit()
+        Kept as a stub (rather than removed entirely) so the existing
+        __init__ call chain reads cleanly without conditional branches.
+        The migration runner does the real work via apply_migrations.
+        """
+        return
 
     # ── Embedding storage ──────────────────────────────────────────────────────
 
@@ -5370,13 +5372,19 @@ class SocialGraphAgent:
         )
         if raw is None:
             return []
+        # P0.12.1 follow-up: P0.12 narrowed _parse_json to dict|None, which
+        # silently dropped LLM responses that non-comply with json_object
+        # response_format and return a raw top-level array.  Try the dict-
+        # wrapper shape first (matches what response_format=json_object asks
+        # for), then fall back to _parse_json_array for raw-array responses.
         data = _parse_json(raw)
-        if isinstance(data, list):
-            return [m for m in data if isinstance(m, dict) and m.get("name")]
         if isinstance(data, dict):
             for v in data.values():
                 if isinstance(v, list):
                     return [m for m in v if isinstance(m, dict) and m.get("name")]
+        arr = _parse_json_array(raw)
+        if isinstance(arr, list):
+            return [m for m in arr if isinstance(m, dict) and m.get("name")]
         return []
 
 
@@ -6211,7 +6219,10 @@ class BrainOrchestrator:
         self._graph_db     = GraphDB(self._graph_db_path)
         # Separate read-only connection to faces.db — WAL mode allows this
         # to coexist safely with pipeline writes.
-        self._faces_conn   = sqlite3.connect(self._faces_db_path, check_same_thread=False)
+        self._faces_conn   = sqlite3.connect(
+            self._faces_db_path, check_same_thread=False,
+            isolation_level="IMMEDIATE",  # P0.9.1 Imp-1
+        )
         self._http         = httpx.AsyncClient(timeout=20.0)
         self._triage          = TriageAgent()
         self._extractor       = ExtractionAgent(self._http)
@@ -8084,7 +8095,10 @@ class BrainOrchestrator:
         self._brain_db   = BrainDB(self._brain_db_path)
         self._brain_db.wipe()          # safety net: clear any rows written during the race window
         self._graph_db   = GraphDB(self._graph_db_path)
-        self._faces_conn = sqlite3.connect(self._faces_db_path, check_same_thread=False)
+        self._faces_conn = sqlite3.connect(
+            self._faces_db_path, check_same_thread=False,
+            isolation_level="IMMEDIATE",  # P0.9.1 Imp-1
+        )
         # Patch all agents that hold direct DB references
         self._schema_norm    = SchemaNormAgent(self._brain_db, self._embed_agent)
         self._spatial_memory = SpatialMemoryAgent(self._brain_db)

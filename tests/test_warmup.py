@@ -10,7 +10,11 @@ import pytest
 import core.voice as voice_mod
 
 
+@pytest.mark.slow
+@pytest.mark.models
 class TestWarmupModels:
+    """Marked slow+models: triggers `core.voice` import + monkeypatches real
+    pyannote/SpeechBrain loaders. Fast CI skips; nightly CI runs."""
 
     def setup_method(self):
         # Ensure executor is clean so tests don't share state

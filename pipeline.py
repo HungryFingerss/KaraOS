@@ -213,6 +213,7 @@ from core.config import (
     BRIEFING_MIN_ABSENCE,
     ANTISPOOFING_ENABLED, ANTISPOOFING_THRESHOLD,
     HISTORY_OVERRIDE_TOOLS, TOOL_REPEAT_MAX_CONSECUTIVE,
+    TOOL_TIMEOUT_SECS, TOOL_TIMEOUT_OVERRIDES,
     CONVERSATION_HISTORY_LIMIT,
     FACE_QUALITY_PRESENCE, FACE_QUALITY_RECOGNITION, FACE_QUALITY_ENROLLMENT, FACE_QUALITY_SELF_UPDATE,
 )
@@ -224,7 +225,7 @@ from core.vision  import (
 )
 from core.db      import FaceDB, wipe_all
 from core.brain   import ask, ask_offline, ask_retry_text, ask_stream, ping_together, generate_greeting, autocompact_history, choose_greeting_order, render_session_stable_prefix
-from core.config  import CLOUD_OFFLINE_TIMEOUT, CLOUD_RETRY_INTERVAL, DREAM_IDLE_MINUTES, DREAM_COOLDOWN, DREAM_MAX_INTERVAL, KAIROS_SILENCE_THRESHOLD, KAIROS_COOLDOWN, STRANGER_REQUIRE_SYSTEM_NAME, SCENE_STALE_SECS, SCENE_BLOCK_ENABLED, SCENE_VOICE_STALE, STRANGER_TTL_DAYS, STRANGER_VOICE_TTL_DAYS, DISPUTE_MAX_DURATION, DISPUTE_RENAME_BLOCK_THRESHOLD, VALID_PERSON_TYPES, TOOL_PRIVILEGES, N_INITIAL_VOICE_BOOTSTRAP, VOICE_ACCUM_FACE_WITNESS_MIN_CONF, VOICE_ACCUM_FACE_WITNESS_MAX_AGE_SEC, VOICE_ACCUM_VOICE_SELF_MATCH_MIN, VOICE_ACCUM_MATURE_SAMPLE_COUNT, VOICE_ROUTING_MIDRANGE_SWITCH_MIN, VOICE_ROUTING_FACE_ASSIST_MIN, VOICE_ROUTING_SELF_MATCH_FLOOR, VOICE_ROUTING_SELF_MATCH_OFFSCREEN, VOICE_ROUTING_MIN_UTTERANCE_SECS, VOICE_ROUTING_SHORT_UTT_MISMATCH_ENABLED, VOICE_ROUTING_SHORT_UTT_FLOOR, VOICE_ROUTING_MIN_AUDIO_FOR_SCORE, VOICE_ROUTING_SHORT_UTT_AMBIGUOUS, VOICE_ROUTING_STRANGER_FLOOR, VOICE_ROUTING_SINGLE_SEGMENT_MISMATCH_ENABLED, VISION_SHADOW_INTERVAL_SECS, MEMORY_SPARSE_THRESHOLD, SYSTEM_NAME_ASSIGN_PATTERNS, PERSON_NAME_ASSIGN_PATTERNS, IDENTITY_DENIAL_PATTERNS, DISPUTE_AUTO_CLEAR_VOICE_MIN, DISPUTE_AUTO_CLEAR_VOICE_SOLO_MIN, DISPUTE_AUTO_CLEAR_CONSECUTIVE_TURNS, ENROLLMENT_RENAME_GRACE_SECS, ENROLLMENT_RENAME_VOICE_THRESHOLD, SCENE_VISITOR_RECENCY_SECS, KAIROS_PREFER_BEST_FRIEND, BATCH_GREETING_ENABLED, BATCH_GREETING_MIN_PEOPLE, BATCH_GREETING_LLM_TIMEOUT_SECS, ROOM_BLOCK_ENABLED, ROOM_BLOCK_TURN_CAP, ROUTING_USE_RECONCILER, STRANGER_IDENTITY_BLOCK_MIN_TURNS, SCENE_BLOCK_CACHE_ENABLED, SCENE_BLOCK_CACHE_MAX_ENTRIES
+from core.config  import CLOUD_OFFLINE_TIMEOUT, CLOUD_RETRY_INTERVAL, DREAM_IDLE_MINUTES, DREAM_COOLDOWN, DREAM_MAX_INTERVAL, KAIROS_SILENCE_THRESHOLD, KAIROS_COOLDOWN, STRANGER_REQUIRE_SYSTEM_NAME, SCENE_STALE_SECS, SCENE_BLOCK_ENABLED, SCENE_VOICE_STALE, STRANGER_TTL_DAYS, STRANGER_VOICE_TTL_DAYS, DISPUTE_MAX_DURATION, DISPUTE_RENAME_BLOCK_THRESHOLD, VALID_PERSON_TYPES, TOOL_PRIVILEGES, N_INITIAL_VOICE_BOOTSTRAP, VOICE_ACCUM_FACE_WITNESS_MIN_CONF, VOICE_ACCUM_FACE_WITNESS_MAX_AGE_SEC, VOICE_ACCUM_VOICE_SELF_MATCH_MIN, VOICE_ACCUM_MATURE_SAMPLE_COUNT, VOICE_ROUTING_MIDRANGE_SWITCH_MIN, VOICE_ROUTING_FACE_ASSIST_MIN, VOICE_ROUTING_SELF_MATCH_FLOOR, VOICE_ROUTING_SELF_MATCH_OFFSCREEN, VOICE_ROUTING_MIN_UTTERANCE_SECS, VOICE_ROUTING_SHORT_UTT_MISMATCH_ENABLED, VOICE_ROUTING_SHORT_UTT_FLOOR, VOICE_ROUTING_MIN_AUDIO_FOR_SCORE, VOICE_ROUTING_SHORT_UTT_AMBIGUOUS, VOICE_ROUTING_NOISE_FLOOR_SECS, VOICE_ROUTING_STRANGER_FLOOR, VOICE_ROUTING_SINGLE_SEGMENT_MISMATCH_ENABLED, VISION_SHADOW_INTERVAL_SECS, MEMORY_SPARSE_THRESHOLD, SYSTEM_NAME_ASSIGN_PATTERNS, PERSON_NAME_ASSIGN_PATTERNS, IDENTITY_DENIAL_PATTERNS, DISPUTE_AUTO_CLEAR_VOICE_MIN, DISPUTE_AUTO_CLEAR_VOICE_SOLO_MIN, DISPUTE_AUTO_CLEAR_CONSECUTIVE_TURNS, ENROLLMENT_RENAME_GRACE_SECS, ENROLLMENT_RENAME_VOICE_THRESHOLD, SCENE_VISITOR_RECENCY_SECS, KAIROS_PREFER_BEST_FRIEND, BATCH_GREETING_ENABLED, BATCH_GREETING_MIN_PEOPLE, BATCH_GREETING_LLM_TIMEOUT_SECS, ROOM_BLOCK_ENABLED, ROOM_BLOCK_TURN_CAP, ROUTING_USE_RECONCILER, STRANGER_IDENTITY_BLOCK_MIN_TURNS, SCENE_BLOCK_CACHE_ENABLED, SCENE_BLOCK_CACHE_MAX_ENTRIES
 import core.config as config
 from core         import voice as voice_mod
 from core.audio   import record_until_silence, transcribe, speak, speak_stream, listen_and_transcribe, preload_models, stop_audio, play_filler, set_lip_active
@@ -237,8 +238,16 @@ from core.pipeline_invariants import (
     ALLOWED_REPEAT_GUARD_FUNCS,
 )
 from core.brain_agent  import BrainOrchestrator, _infer_location_zone as _brain_infer_zone
-from core.session_state import SessionStore
-from core.emotion      import EmotionAgent
+from core.session_state       import SessionStore
+from core.presence_store      import PresenceStore
+from core.track_store         import TrackStore
+from core.conversation_store  import ConversationStore
+from core.voice_gallery_store import VoiceGalleryStore
+from core.per_person_agent_store import PerPersonAgentStore
+from core.cache_store import CacheStore, CACHE_MISS
+from core.pipeline_state_store import PipelineStateStore
+from core.vision_frame_store import VisionFrameStore
+from core.emotion        import EmotionAgent
 from core import state
 import jellyfish
 
@@ -280,7 +289,7 @@ _yolo_executor: "concurrent.futures.ThreadPoolExecutor | None" = None
 
 # Identity hypothesis accumulator — updated each stranger turn by IdentityAgent.
 # person_id → {name, relationship, confidence, matched_attrs, source_person_id}
-_identity_hints: dict[str, dict] = {}
+_identity_hints_store: "CacheStore" = CacheStore("identity_hints")
 
 async def _lip_tracking_loop(camera: Camera) -> None:
     """
@@ -289,7 +298,7 @@ async def _lip_tracking_loop(camera: Camera) -> None:
     avoids racing with the background loop on the same VideoCapture object).
     """
     while True:
-        frame = _latest_vision_frame
+        frame = _vision_frame_store.peek_frame()
         if frame is not None and _last_active_bbox is not None:
             moving = lip_tracker.update(frame, _last_active_bbox)
             set_lip_active(moving)
@@ -383,19 +392,19 @@ def _face_in_frame(pid: str, persons_in_frame: dict) -> bool:
 
 
 def _has_recent_face_evidence(person_id: str) -> bool:
-    """True iff ``_persons_in_frame`` has a recent face-source entry for person_id.
+    """True iff ``_presence_store`` has a recent face-source entry for person_id.
 
     Voice-only entries (source='voice') do NOT count — distinguishing them is the
     entire point of the Bug B fix (Session 64). Used by the Wave 2 Item 9 heuristic
     to decide whether a thin-gallery known/best_friend session was originally
     voice-only.
     """
-    entry = _persons_in_frame.get(person_id)
-    if not entry:
+    source = _presence_store.peek_source(person_id, "")
+    if not source:
         return False
-    if entry.get("source") == "voice":
+    if source == "voice":
         return False
-    last_seen = entry.get("last_seen", 0.0)
+    last_seen = _presence_store.peek_last_seen(person_id, 0.0)
     return (time.time() - last_seen) < SCENE_STALE_SECS
 
 
@@ -744,12 +753,6 @@ class PipelineState(Enum):
     SPEAKING     = auto()  # TTS playing
     ENROLLING    = auto()  # enrollment flow
 
-_last_greeted:          dict[str, float]      = {}
-_last_self_update:      dict[str, float]      = {}
-_ambient_wake_pending:  set[str]              = set()  # person_ids whose wake signal is in-flight (debounce)
-_voice_gallery:         dict                  = {}   # person_id → mean L2-normalized voice embedding
-_voice_gallery_sizes:   dict                  = {}   # person_id → sample count (for profile-strength gating)
-_sessions_started:      set[str]             = set() # person_ids with an active session (guards one-time setup)
 _face_db_ref:           "FaceDB | None"       = None # Obs 1: module-level reference to FaceDB instance, set in run() — gives module-level helpers (e.g. _open_session) authoritative DB access for voice count fallback when the in-memory cache may be stale.
 
 # ── Cloud health state ─────────────────────────────────────────────────────────
@@ -758,21 +761,8 @@ class CloudState(Enum):
     SICK    = auto()   # First failure — grace period, trying to recover
     OFFLINE = auto()   # >2 min failure — Ollama Q&A mode active
 
-_cloud_state:         CloudState        = CloudState.ONLINE
-_cloud_failed_at:     float             = 0.0
-_cloud_recovered:     bool              = False   # flag: announce recovery on next turn
-_cloud_monitor_task:  asyncio.Task | None = None
-
 _last_dream_run_at:   "float | None"    = None   # Wave 5 Item 19: timestamp of last dream() completion
 _health_log_task:     asyncio.Task | None = None  # background health log loop
-
-_active_system_name: str = DEFAULT_SYSTEM_NAME   # loaded from system_identity at startup
-
-
-def _prune_dict(d: dict, max_size: int = 100) -> None:
-    """Evict the oldest-timestamp entry when dict exceeds max_size."""
-    if len(d) > max_size:
-        del d[min(d, key=d.get)]
 
 
 def _infer_zone(bbox: tuple, frame_w: int, frame_h: int) -> str:
@@ -784,38 +774,19 @@ def _infer_zone(bbox: tuple, frame_w: int, frame_h: int) -> str:
 
 
 def _maybe_record_silent_obs(emb, bbox: tuple, frame_w: int, frame_h: int, db) -> None:
-    global _last_silent_update
-    if time.time() - _last_silent_update < 5.0:
+    if time.time() - _pipeline_state_store.peek_last_silent_update() < 5.0:
         return
-    _last_silent_update = time.time()
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_pipeline_state_store.set_last_silent_update(time.time()))
+    except RuntimeError:
+        pass  # OPTIONAL: no running loop in sync test contexts
     zone = _infer_zone(bbox, frame_w, frame_h)
     db.update_silent_observation(emb, zone=zone)
 
-_conversation:       dict                  = {}
-_pipeline_state:     PipelineState         = PipelineState.WATCHING
-_compact_pids:       set[str]              = set() # pids with a background compaction in flight
-_session_store: SessionStore = SessionStore()  # P0.7 — typed session state (single source of truth)
+_session_store:      SessionStore      = SessionStore()        # P0.7 — typed session state
+_conversation_store: ConversationStore = ConversationStore()   # P0.6.3 — conversation history + timestamps
 
-# Session 112 Part 1 — room-session lifecycle. `_active_room_session` holds a
-# single room_{timestamp}_{rand} identifier for as long as ANY person has an
-# active session. Minted by the first _open_session call when no room is
-# live; cleared by _close_session when the last person leaves. Wired into
-# conversation_log.room_session_id (Session 107 Phase 3A.6 Part 3 column)
-# via log_turn plumbing, and consumed by downstream room-scoped retrieval
-# that arrives in 3B. Explicitly module-level so _open_session/_close_session
-# can read-modify-write as globals.
-_active_room_session: "str | None" = None
-# Phase 3B.1 — wall-clock timestamp when the current room session was minted.
-# Paired with _active_room_session lifecycle: set on mint in _open_session,
-# cleared on room end in _close_session. Drives the "Room session started
-# Xm ago" line in the <<<ROOM>>> block. None when no room is live.
-_active_room_started_at: "float | None" = None
-# Phase 3B.6 — accumulated set of person_ids who have participated in the
-# current room session. Every _open_session into the live room adds to
-# this set; cleared when the room ends. Drives synthesize_room's
-# speaker_pids arg so the orchestrator knows who was there WITHOUT
-# reading back _session_store at room-end time.
-_active_room_participants: "set[str]" = set()
 # Session 115 Fix 2 — best_friend row cache. db.get_best_friend() returns
 # the same row every call until update_person_name fires (rare). Cached
 # value short-circuits ~10ms per turn × 5+ call sites. Invalidated on
@@ -825,42 +796,39 @@ _cached_bf_row: "dict | None" = None
 _cached_bf_db_id: "int | None" = None
 _last_active_bbox:   tuple | None          = None
 lip_tracker =        LipTracker()
-_detected_lang:      str                   = "en"
-_last_face_seen:     float                 = 0.0
-_latest_vision_frame: "np.ndarray | None"  = None  # updated by background vision task
-_latest_frame_time:   float                 = 0.0   # monotonic timestamp of last good frame
 # Created inside run() once the event loop is running; stored here so
 # signal handlers (which fire outside the loop) can reference it.
 _shutdown_event:     asyncio.Event | None      = None
 _brain_orchestrator:    "BrainOrchestrator | None" = None  # set in run() after event loop starts
-_emotion_agents:        dict                       = {}    # person_id → EmotionAgent; kept alive across sessions
 _anti_spoof_checker:    "AntiSpoofChecker | None"  = None  # set in run(); None when ANTISPOOFING_ENABLED=False
-_query_embedding_cache: dict                       = {}    # person_id → embedding from previous turn
+_query_embedding_store: "CacheStore"               = CacheStore("query_embedding")  # person_id → embedding from previous turn
 _voice_tasks:           "set[asyncio.Task]"         = set() # pending fire-and-forget voice accumulation tasks
-_last_user_speech_at:   float                       = 0.0   # epoch time of user's most recent utterance (KAIROS)
-_last_silent_update:    float                       = 0.0   # throttle: write silent obs at most every 5s
-_persons_in_frame:      dict[str, dict]             = {}    # person_id → {name, conf, last_seen} — all faces currently visible
+_presence_store:        "PresenceStore"             = PresenceStore()  # replaces _persons_in_frame
+_track_store:           "TrackStore"               = TrackStore()     # replaces _unrecognized_tracks/_embeddings/_stranger_track_map/_track_identity
+_voice_gallery_store:   "VoiceGalleryStore"         = VoiceGalleryStore()   # P0.6.4 — replaces _voice_gallery + _voice_gallery_sizes
+_per_person_agent_store: "PerPersonAgentStore"      = PerPersonAgentStore() # P0.6.4 — replaces _emotion_agents + _sessions_started + _ambient_wake_pending
+_vision_frame_store:    "VisionFrameStore"          = VisionFrameStore()    # P0.6.7v2 — replaces _latest_vision_frame + _latest_frame_time + _vision_prev_det_count
 _vision_face_scan_last: float                       = 0.0   # throttle: secondary face recognition in background vision loop
-_vision_prev_det_count: int                         = 0     # face count from previous frame — spike triggers immediate scan
-_last_kairos_at:        float                       = 0.0   # epoch time of most recent KAIROS proactive tick
-_unrecognized_tracks:      dict = {}   # SORT track_id -> last_seen epoch; one entry per unrecognized face in frame
-_unrecognized_embeddings:  dict = {}   # SORT track_id -> latest face embedding (np.ndarray), for gate-pass enrollment
-_stranger_track_map:       dict = {}   # SORT track_id -> stranger_pid; stable face->session binding across turns
-_track_identity:           dict = {}   # SORT track_id -> person_id; confirmed identity per live track (replaces soft-match)
 _last_vision_report_str: str  = ""   # last emitted [Vision] line; suppresses duplicate emissions
 # Wave 6 Item 23: scene_block string cache.
-_scene_block_cache:        "dict[tuple, str]" = {}
-_scene_block_cache_hits:   int                = 0
-_scene_block_cache_misses: int                = 0
+_scene_block_store: "CacheStore" = CacheStore("scene_block", max_entries=SCENE_BLOCK_CACHE_MAX_ENTRIES)
+_pipeline_state_store: "PipelineStateStore" = PipelineStateStore(
+    initial_pipeline_state=PipelineState.WATCHING,
+    initial_cloud_state=CloudState.ONLINE,
+)
 
 
 
 def _set_state(new_state: PipelineState, person_name: str = None):
-    global _pipeline_state
-    if new_state == _pipeline_state:
+    _cur = _pipeline_state_store.peek_pipeline_state()
+    if new_state == _cur:
         return
-    print(f"[Pipeline] State: {_pipeline_state.name} -> {new_state.name}")
-    _pipeline_state = new_state
+    print(f"[Pipeline] State: {_cur.name if _cur is not None else 'None'} -> {new_state.name}")
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_pipeline_state_store.set_pipeline_state(new_state))
+    except RuntimeError:
+        pass  # OPTIONAL: no running loop in sync test contexts
     mode_map = {
         PipelineState.WATCHING:    "watching",
         PipelineState.LISTENING:   "listening",
@@ -1071,7 +1039,7 @@ def _user_to_user_heuristic(
 # limit. Cleared opportunistically on insert when size exceeds limit.
 _CLASSIFIER_CACHE_TTL_SECS = 5.0
 _CLASSIFIER_CACHE_MAX_SIZE = 64
-_classifier_cache: "dict[tuple, tuple]" = {}
+_classifier_cache_store: "CacheStore" = CacheStore("classifier", ttl=_CLASSIFIER_CACHE_TTL_SECS, max_entries=_CLASSIFIER_CACHE_MAX_SIZE)
 
 
 async def _classify_intent_cached(
@@ -1083,30 +1051,19 @@ async def _classify_intent_cached(
 
     Cache key normalizes text (lowercase + stripped) plus the active
     session pid set so a turn classified under one room scope doesn't
-    leak into a different room. 5-second TTL bounds staleness.
+    leak into a different room. TTL and LRU eviction managed by CacheStore.
     """
     key = (text.strip().lower() if text else "", active_session_pids)
-    now = time.time()
-    cached = _classifier_cache.get(key)
-    if cached is not None:
-        sidecar, ts = cached
-        if now - ts < _CLASSIFIER_CACHE_TTL_SECS:
-            return sidecar
-        # Expired — drop stale entry.
-        _classifier_cache.pop(key, None)
+    cached = _classifier_cache_store.peek(key, default=CACHE_MISS)
+    if cached is not CACHE_MISS:
+        return cached
     # Spec 2 wiring: route through `_classify_intent_smart` so the
     # graph classifier runs in parallel under shadow mode (default).
     # In shadow mode, smart returns the LLM result so behavior is
     # unchanged; in primary/retired modes, smart returns graph results.
     from core.brain import _classify_intent_smart
     sidecar = await _classify_intent_smart(text, conversation_history=history)
-    # Insert + opportunistic LRU trim (drop oldest by insertion order).
-    _classifier_cache[key] = (sidecar, now)
-    if len(_classifier_cache) > _CLASSIFIER_CACHE_MAX_SIZE:
-        # Evict the oldest 25% of entries to amortize the trim cost.
-        _evict_n = max(1, len(_classifier_cache) // 4)
-        for old_key in list(_classifier_cache.keys())[:_evict_n]:
-            _classifier_cache.pop(old_key, None)
+    await _classifier_cache_store.set(key, sidecar)
     return sidecar
 
 
@@ -1187,277 +1144,14 @@ def _count_scene_candidates(
     return known + unrec
 
 
-def _resolve_actual_speaker(
-    v_pid:              str | None,
-    v_score:            float,
-    cur_pid:            str | None,
-    persons_in_frame:   dict,
-    unrecognized_tracks: dict,
-    voice_gallery_sizes: dict,
-    now:                float,
-    cur_person_type:    str | None = None,
-    *,
-    utterance_duration: float | None = None,
-    n_active_sessions:  int = 1,
-    n_diarize_segments: int = 1,
-    cur_holder_voice_n: int = 0,
-) -> tuple[str | None, str]:
-    """Determine the actual speaker using voice + face signals.
-
-    Returns (resolved_person_id, action) where action is one of:
-      "switch_enrolled"                — switch to v_pid (confident different-person match)
-      "current"                        — stay with cur_pid (confirmed)
-      "new_stranger"                   — unrecognized speaker; caller opens stranger session
-      "ambiguous"                      — cannot determine; caller logs and skips attribution
-      "no_action"                      — nothing to do; caller drops the turn
-      "short_utterance_skip"           — utterance too brief for reliable voice ID; drop
-      "short_utterance_voice_mismatch" — utt < 1.0s BUT voice score says obviously
-                                          not cur_pid (Session 92 P3.23) — drop
-      "multi_segment_voice_mismatch"   — pyannote saw 2+ voices in the chunk BUT
-                                          voice ID matched none of them confidently
-                                          (Session 118 Fix A) — drop, prevents
-                                          stranger's words being attributed to
-                                          the visible owner.
-      "single_segment_voice_mismatch"  — pyannote saw 1 voice, ECAPA confidently
-                                          says it's NOT the holder (mature profile,
-                                          adequate audio, score below stranger
-                                          floor), but no other candidates in scene.
-                                          Session 120 — drop instead of silently
-                                          misattributing to current.
-
-    ``utterance_duration`` (Bug F, 2026-04-20 live run): seconds of recorded
-    audio the voice ID ran against. Below ``VOICE_ROUTING_MIN_UTTERANCE_SECS``
-    (1.0s), ECAPA-TDNN embeddings are too noisy to drive session changes —
-    stick with current session, or drop the turn if none. When ``None``, the
-    check is skipped (for legacy tests; production callers must supply it).
-    """
-    # Priority 0 — Short-utterance floor. Below this, voice ID is noise; ignore
-    # the score entirely and either hold the current session or drop the turn.
-    # This prevents phantom stranger sessions from short social closers
-    # ("Thank you", "Yes", "Hey") and the downstream visitor_log / Briefing
-    # cascade that led to Bug N confabulation.
-    #
-    # Session 92 P3.23 refinement: the blanket "route to current" broke the
-    # Lexi-joins-Jagan-session case — Lexi's "Hi Kara" at 0.67s (voice=0.08 vs
-    # Jagan's mature gallery) was routed to Jagan, so a new stranger session
-    # never formed. ECAPA on 0.5-1.0s audio is noisy BUT directional: "is this
-    # obviously NOT cur_pid?" is answerable even when "is this definitely X?"
-    # isn't. If v_score falls below SHORT_UTT_FLOOR when we have at least
-    # MIN_AUDIO_FOR_SCORE of audio, treat as mismatch and drop — the caller
-    # doesn't attribute, the user/other-speaker repeats with a longer utterance
-    # which then routes correctly through the normal (non-floor) path.
-    if utterance_duration is not None and utterance_duration < VOICE_ROUTING_MIN_UTTERANCE_SECS:
-        if (VOICE_ROUTING_SHORT_UTT_MISMATCH_ENABLED
-                and cur_pid is not None
-                and utterance_duration >= VOICE_ROUTING_MIN_AUDIO_FOR_SCORE):
-            # Tier 1 — hard mismatch (Session 92 P3.23 original).
-            if v_score < VOICE_ROUTING_SHORT_UTT_FLOOR:
-                print(
-                    f"[Voice] {_now_log_ts()} Routing: short_utterance_voice_mismatch "
-                    f"(utt={utterance_duration:.2f}s, score={v_score:.3f} < "
-                    f"{VOICE_ROUTING_SHORT_UTT_FLOOR} hard floor vs cur_pid={cur_pid})"
-                )
-                return None, "short_utterance_voice_mismatch"
-            # Tier 2 — ambiguous zone (Session 93 refinement). The 0.20-0.40 band
-            # is too noisy to trust AND too noisy to reject outright. Drop only
-            # when the room plausibly has another speaker (multiple active
-            # sessions); solo case keeps Bug F's "hold current" to avoid false-
-            # negative drops on the holder's own voice dipping briefly.
-            if (v_score < VOICE_ROUTING_SHORT_UTT_AMBIGUOUS
-                    and n_active_sessions >= 2):
-                print(
-                    f"[Voice] {_now_log_ts()} Routing: short_utterance_voice_mismatch "
-                    f"(utt={utterance_duration:.2f}s, score={v_score:.3f} in ambiguous "
-                    f"zone [{VOICE_ROUTING_SHORT_UTT_FLOOR}, {VOICE_ROUTING_SHORT_UTT_AMBIGUOUS}) "
-                    f"with {n_active_sessions} active sessions — drop to prevent "
-                    f"mis-attribution to cur_pid={cur_pid})"
-                )
-                return None, "short_utterance_voice_mismatch"
-        if cur_pid is not None:
-            print(f"[Voice] {_now_log_ts()} Routing: current (short utterance {utterance_duration:.2f}s < {VOICE_ROUTING_MIN_UTTERANCE_SECS}s floor)")
-            return cur_pid, "current"
-        print(f"[Voice] {_now_log_ts()} Routing: skip (short utterance {utterance_duration:.2f}s, no session)")
-        return None, "short_utterance_skip"
-
-    switch_threshold = _effective_switch_threshold(v_pid, voice_gallery_sizes)
-
-    # Priority 1 — Confident voice match for a DIFFERENT person
-    if v_pid and v_pid != cur_pid and v_score >= switch_threshold:
-        print(f"[Voice] {_now_log_ts()} Routing: switch_enrolled → {v_pid} (score={v_score:.3f})")
-        return v_pid, "switch_enrolled"
-
-    # Priority 2 — Mid-range different-person match (VOICE_ROUTING_MIDRANGE_SWITCH_MIN–switch_threshold)
-    if v_pid and v_pid != cur_pid and v_score >= VOICE_ROUTING_MIDRANGE_SWITCH_MIN:
-        if _face_in_frame(v_pid, persons_in_frame) and v_score >= VOICE_ROUTING_FACE_ASSIST_MIN:
-            # Voice AND face agree AND voice is strong enough to be credible on
-            # its own — confident switch. Bug B: must use _face_in_frame so a
-            # voice-only speaker doesn't falsely trigger this shortcut. Bug O
-            # (2026-04-20): added the VOICE_ROUTING_FACE_ASSIST_MIN floor —
-            # below 0.42, face-agreement isn't strong enough corroboration. The
-            # visible face isn't necessarily the speaker (multi-person, phone
-            # audio, background speaker) and a weak voice match shouldn't be
-            # upgraded to "confident" just because a claimed face is in frame.
-            print(f"[Voice] {_now_log_ts()} Routing: switch_enrolled (face+voice agree) → {v_pid} (score={v_score:.3f})")
-            return v_pid, "switch_enrolled"
-        if _face_in_frame(v_pid, persons_in_frame):
-            # Face in frame but voice below VOICE_ROUTING_FACE_ASSIST_MIN — log
-            # for diagnostics so Bug O regressions are visible.
-            print(f"[Voice] {_now_log_ts()} Routing: ambiguous — weak voice {v_score:.3f} for {v_pid} despite face in frame (below {VOICE_ROUTING_FACE_ASSIST_MIN} floor)")
-            return None, "ambiguous"
-        print(f"[Voice] {_now_log_ts()} Routing: ambiguous — mid-range score {v_score:.3f} for {v_pid} not in frame")
-        return None, "ambiguous"
-
-    # Priority 3 — Voice matches current session holder (confirmation)
-    if v_pid is not None and v_pid == cur_pid:
-        # Unconditional floor: voice must clear a minimum even when face is co-visible.
-        # Without this, a poisoned face match lets any acoustically-similar stranger
-        # coast through on vision alone (fluctuating 0.3–0.6 scores were the smoking gun).
-        if v_score < VOICE_ROUTING_SELF_MATCH_FLOOR:
-            print(f"[Voice] {_now_log_ts()} Routing: ambiguous — voice self-match {v_score:.3f} below floor")
-            return None, "ambiguous"
-
-        # Bug W (2026-04-22 live run): the offscreen floor is a poisoning
-        # protection calibrated for MATURE speakers — a stranger with a face
-        # match where voice scored 0.30–0.45 was the smoking-gun pattern. But
-        # a bootstrapping stranger's OWN voice routinely scores 0.30–0.45
-        # against their unstable mean (3 samples isn't enough for a tight
-        # cosine cluster) — that's normal profile-warming behavior, not a
-        # poisoning signal. Applying the floor here silences thin strangers:
-        # Chloe said "My name is Chloe" at v=0.307 with 3/5 samples and her
-        # turn was dropped, then every subsequent attempt also dropped because
-        # the gates prevented her from accumulating more samples. Profile-
-        # maturity-aware gating mirrors what _effective_switch_threshold
-        # already does for Priority 1.
-        _is_stranger_holder = (
-            cur_person_type == "stranger"
-            if cur_person_type is not None
-            else bool(cur_pid and cur_pid.startswith("stranger_"))
-        )
-        _holder_gallery_n = voice_gallery_sizes.get(cur_pid, 0)
-        _thin_holder = _is_stranger_holder and _holder_gallery_n < N_INITIAL_VOICE
-
-        if v_score < VOICE_ROUTING_SELF_MATCH_OFFSCREEN and not _face_in_frame(cur_pid, persons_in_frame):
-            # Bug B: symmetric with Priority 2 — voice-sourced entries in
-            # persons_in_frame don't count as "holder visible".
-            if _thin_holder:
-                # Skip the floor for thin strangers — log the relaxation so
-                # debugging is visible.
-                print(
-                    f"[Voice] {_now_log_ts()} Routing: current "
-                    f"(thin stranger {_holder_gallery_n}/{N_INITIAL_VOICE}, "
-                    f"offscreen floor skipped, score={v_score:.3f})"
-                )
-                return cur_pid, "current"
-            print(f"[Voice] {_now_log_ts()} Routing: ambiguous — low self-match {v_score:.3f} and holder not visible")
-            return None, "ambiguous"
-        print(f"[Voice] {_now_log_ts()} Routing: current — {cur_pid} (score={v_score:.3f})")
-        return cur_pid, "current"
-
-    # Priority 3.5 — Voice unrecognised but cur_pid is a bootstrapping stranger.
-    # A thin profile (< N_INITIAL_VOICE samples) can't reliably self-match, so
-    # identify() returns (None, low_score).  Don't fragment into a new session —
-    # stay with the existing one so the profile can accumulate toward maturity.
-    # NOTE: person_id keeps the "stranger_" prefix after promotion (only person_type
-    # flips to "known"), so the prefix alone is not a reliable stranger signal.
-    # We prefer the session's person_type when the caller supplied it.
-    _is_stranger = (
-        cur_person_type == "stranger"
-        if cur_person_type is not None
-        else bool(cur_pid and cur_pid.startswith("stranger_"))
-    )
-    if v_pid is None and cur_pid is not None and _is_stranger:
-        gallery_count = voice_gallery_sizes.get(cur_pid, 0)
-        if gallery_count < N_INITIAL_VOICE:
-            print(f"[Voice] {_now_log_ts()} Routing: current (stranger bootstrapping — {gallery_count}/{N_INITIAL_VOICE} voice samples)")
-            return cur_pid, "current"
-
-    # Priority 4 — Voice unrecognized, active session exists
-    if v_pid is None and cur_pid is not None:
-        # Session 118 Fix A — multi-segment stranger guard. When pyannote
-        # detected 2+ voices AND voice ID couldn't match any enrolled
-        # speaker AND there are MULTIPLE active sessions, that's the
-        # cross-talk-between-knowns case where misattribution is the real
-        # risk. Drop the turn so the stranger doesn't get assigned to
-        # whichever known speaker happens to be cur_pid.
-        #
-        # Session 121 (2026-04-28) refinement: only fires when
-        # `n_active_sessions >= 2`. The original Session 118 author
-        # assumed "the stranger / user repeats with cleaner audio, next
-        # iteration routes through normal new_stranger logic" — that
-        # turned out wrong: pyannote keeps returning 2 segments (audio
-        # quirk, not a transient artifact), so the drop loop never
-        # broke. With only the owner enrolled and no other candidates,
-        # the unknown voice is unambiguously a stranger — fall through
-        # to the new_stranger branch below instead of dropping forever.
-        if (
-            n_diarize_segments >= 2
-            and v_score < VOICE_ROUTING_STRANGER_FLOOR
-            and n_active_sessions >= 2
-        ):
-            print(
-                f"[Voice] {_now_log_ts()} Routing: multi_segment_voice_mismatch "
-                f"(pyannote={n_diarize_segments} segments, max v_score={v_score:.3f} < "
-                f"{VOICE_ROUTING_STRANGER_FLOOR} stranger floor — likely a non-enrolled "
-                f"speaker; dropping to prevent misattribution to cur_pid={cur_pid})"
-            )
-            return None, "multi_segment_voice_mismatch"
-        if 0.0 < v_score < VOICE_RECOGNITION_THRESHOLD:
-            print(f"[Voice] {_now_log_ts()} Routing: new_stranger — score {v_score:.3f} < threshold")
-            return None, "new_stranger"
-        # Session 120 — single-segment voice mismatch drop. Same shape as
-        # Session 118's multi_segment_voice_mismatch but for single-segment
-        # audio. Fires when pyannote saw ONE voice, ECAPA confidently fails
-        # to match the enrolled holder (mature profile + adequate audio),
-        # AND there are MULTIPLE active sessions (cross-talk-between-knowns
-        # is the real risk).
-        #
-        # Session 121 (2026-04-28) inversion fix: original spec required
-        # n_active_sessions == 1, which was backwards. With only the owner
-        # enrolled, an unknown voice is a stranger — should fall through
-        # to new_stranger. The drop only protects against misattribution
-        # WHEN MULTIPLE knowns are around. Mature-profile + audio-duration
-        # guards prevent false positives on bootstrapping voice profiles
-        # and ECAPA-noise short utterances. Toggleable via config flag.
-        if (
-            VOICE_ROUTING_SINGLE_SEGMENT_MISMATCH_ENABLED
-            and n_diarize_segments == 1
-            and v_score < VOICE_ROUTING_STRANGER_FLOOR
-            and utterance_duration is not None
-            and utterance_duration >= VOICE_ROUTING_MIN_AUDIO_FOR_SCORE
-            and cur_holder_voice_n >= VOICE_ACCUM_MATURE_SAMPLE_COUNT
-            and n_active_sessions >= 2
-        ):
-            print(
-                f"[Voice] {_now_log_ts()} Routing: single_segment_voice_mismatch — "
-                f"v_score={v_score:.3f} < floor={VOICE_ROUTING_STRANGER_FLOOR}, "
-                f"holder voice_n={cur_holder_voice_n} mature, "
-                f"audio={utterance_duration:.2f}s, dropping turn to prevent "
-                f"misattribution to cur_pid={cur_pid}"
-            )
-            return None, "single_segment_voice_mismatch"
-        # v_score == 0: utterance too short to identify
-        scene_candidates = _count_scene_candidates(
-            persons_in_frame, unrecognized_tracks, now, exclude=cur_pid
-        )
-        if scene_candidates == 0:
-            print(f"[Voice] {_now_log_ts()} Routing: current — voice ambiguous, no other candidates in scene")
-            return cur_pid, "current"
-        print(f"[Voice] {_now_log_ts()} Routing: ambiguous — {scene_candidates} other candidate(s) in scene")
-        return None, "ambiguous"
-
-    # Priority 5 — No active session, unrecognized voice
-    if v_pid is None and cur_pid is None:
-        unrec_active = any(
-            now - ts < VOICE_ROUTING_FACE_STALE_SECS
-            for ts in unrecognized_tracks.values()
-        )
-        if 0.0 < v_score < VOICE_RECOGNITION_THRESHOLD or unrec_active:
-            print(f"[Voice] {_now_log_ts()} Routing: new_stranger — ambient, score={v_score:.3f}")
-            return None, "new_stranger"
-        return None, "no_action"
-
-    print(f"[Voice] {_now_log_ts()} Routing: ambiguous — last resort (v_pid={v_pid}, cur={cur_pid})")
-    return None, "ambiguous"
+# P0.10 Phase 2: _resolve_actual_speaker function deleted (was 270 lines
+# spanning the original L1147-L1417). The new reconciler (core/reconciler.py)
+# is the sole routing source post-Phase 2. Legacy router preserved as shadow
+# during the Phase 4 cutover validation window; this deletion closes that
+# window. Bug-W (0.45s phantom-stranger) was THE divergence the shadow
+# caught — fixed in Phase 1 by adding _p0_short_utterance_gap_hold_current
+# (Block A) to the cascade. See tests/p0_10_routing_audit.md for the full
+# branch-mapping and tests/p0_10_plan_v2.md for the Plan v2 execution.
 
 
 def _build_cross_person_excerpts(
@@ -1846,7 +1540,7 @@ def _scene_fingerprint(
     return (speaker_id, now_sec, frozenset(vis_items), unrec_count, best_friend_id, rv_key)
 
 
-def _get_scene_block_cached(
+async def _get_scene_block_cached(
     speaker_id: "str | None",
     now: float,
     active_sessions: "tuple",
@@ -1856,8 +1550,6 @@ def _get_scene_block_cached(
     recent_visitors: "list[dict] | None" = None,
 ) -> str:
     """Cache-backed wrapper for _build_scene_block (Wave 6 Item 23)."""
-    global _scene_block_cache, _scene_block_cache_hits, _scene_block_cache_misses
-
     if not SCENE_BLOCK_CACHE_ENABLED:
         return _build_scene_block(
             speaker_id, now, active_sessions, persons_in_frame,
@@ -1869,33 +1561,21 @@ def _get_scene_block_cached(
         unrecognized_tracks, best_friend_id, recent_visitors,
     )
 
-    cached = _scene_block_cache.get(key)
-    if cached is not None:
-        _scene_block_cache_hits += 1
+    cached = _scene_block_store.peek(key, default=CACHE_MISS)
+    if cached is not CACHE_MISS:
         return cached
 
-    _scene_block_cache_misses += 1
     result = _build_scene_block(
         speaker_id, now, active_sessions, persons_in_frame,
         unrecognized_tracks, best_friend_id, recent_visitors,
     )
-
-    if len(_scene_block_cache) >= SCENE_BLOCK_CACHE_MAX_ENTRIES:
-        oldest = next(iter(_scene_block_cache))
-        del _scene_block_cache[oldest]
-
-    _scene_block_cache[key] = result
+    await _scene_block_store.set(key, result)
     return result
 
 
 def get_scene_block_cache_stats() -> dict:
     """Hit/miss/size stats for the scene_block cache."""
-    return {
-        "hits":        _scene_block_cache_hits,
-        "misses":      _scene_block_cache_misses,
-        "size":        len(_scene_block_cache),
-        "max_entries": SCENE_BLOCK_CACHE_MAX_ENTRIES,
-    }
+    return _scene_block_store.peek_stats()
 
 
 def _build_scene_block(
@@ -2093,45 +1773,55 @@ def _open_session(
         from collections import deque as _deque
         # Session 111 Critical #5 — reset the per-person EmotionAgent on
         # every fresh session so the 3-turn rolling window can't carry
-        # yesterday's emotions into today. Agents were previously
-        # persisted in `_emotion_agents` across session open/close
-        # cycles, meaning a user whose last session ended on a
-        # "sad/angry" detection still had that state seed their next
-        # session's context block on turn 1. Pop is cheap (object
-        # will be lazily recreated on first emotion-detection call in
-        # conversation_turn) and avoids state invariants that'd be
-        # needed for a more surgical reset.
-        _emotion_agents.pop(person_id, None)
+        # yesterday's emotions into today. Agents are owned by
+        # _per_person_agent_store; pop is cheap (object will be lazily
+        # recreated on first emotion-detection call in conversation_turn).
+        try:
+            _loop = asyncio.get_running_loop()
+            _loop.create_task(_per_person_agent_store.pop_emotion_agent(person_id))
+        except RuntimeError:
+            # No running event loop (test context / early boot) — run synchronously
+            # so the invariant holds immediately and sync test assertions pass.
+            try:
+                asyncio.run(_per_person_agent_store.pop_emotion_agent(person_id))
+            except Exception:
+                pass  # CLEANUP: pop is best-effort
         # Session 112 Part 1 — room-session lifecycle. Mint a new
         # room_session_id on the FIRST open into an empty room; later
         # opens (another person joining) inherit the existing id. The
         # room stays alive until _close_session empties the session
         # table (see _close_session for the end-of-room hook).
-        global _active_room_session, _active_room_started_at, _active_room_participants
-        if _active_room_session is None:
+        _current_room_session = _pipeline_state_store.peek_active_room_session()
+        if _current_room_session is None:
             import uuid as _uuid_rs
-            _active_room_session = f"room_{int(now)}_{_uuid_rs.uuid4().hex[:6]}"
+            _current_room_session = f"room_{int(now)}_{_uuid_rs.uuid4().hex[:6]}"
             # Phase 3B.1 — stamp wall-clock start time so <<<ROOM>>> block
             # can render duration. Must be set in the SAME branch that
             # mints the id so the pair stays consistent.
-            _active_room_started_at = now
             # Phase 3B.6 — fresh participants set for the new room.
-            _active_room_participants = set()
-            print(f"[Room] New room session: {_active_room_session}")
-        _current_room_session = _active_room_session
+            # Set synchronously via private helper so that callers
+            # reading peek_active_room_session() immediately after _open_session()
+            # see the minted id without waiting for a create_task to drain.
+            # Same atomicity contract as _close_session's synchronous clear.
+            _pipeline_state_store._sync_mint_room(_current_room_session, now)
+            print(f"[Room] New room session: {_current_room_session}")
         # Phase 3B.6 — accumulate every pid that joins this room so
         # synthesize_room has the participant list at room-end time
         # (when _session_store has no active sessions). Idempotent on re-open.
         # Session 116 P1 #9 — log room join events explicitly so an
         # outside reviewer can audit room membership transitions
         # without inferring from open/close lines.
-        _was_new = person_id not in _active_room_participants
-        _active_room_participants.add(person_id)
+        _current_room_participants = _pipeline_state_store.peek_active_room_participants()
+        _was_new = person_id not in _current_room_participants
+        # Add participant synchronously via private helper for immediate
+        # visibility to callers reading peek_active_room_participants() right
+        # after _open_session() returns.
+        _pipeline_state_store._sync_add_room_participant(person_id)
         if _was_new:
             print(
                 f"[Room] Participant joined: {person_name} ({person_id}) "
-                f"→ {_active_room_session} "
-                f"(now {len(_active_room_participants)} participant(s))"
+                f"\u2192 {_current_room_session} "
+                f"(now {len(_current_room_participants) + 1} participant(s))"
             )
         print(f"[Session] Open: {person_id} ({session_type}) — {person_name}")
         _bootstrap = N_INITIAL_VOICE_BOOTSTRAP if engagement_gate_passed else 0
@@ -2146,12 +1836,18 @@ def _open_session(
         # process. If cache and DB disagree, repair the cache so other consumers
         # (e.g. _effective_switch_threshold gating) see the correct number too.
         # Face-side evidence stays ephemeral — it must be re-established each session.
-        _db_voice_count = _voice_gallery_sizes.get(person_id, 0)
+        _db_voice_count = _voice_gallery_store.peek_size(person_id, 0)
         if _face_db_ref is not None:
             try:
                 _db_voice_count = _face_db_ref.count_voice_embeddings(person_id)
-                if _voice_gallery_sizes.get(person_id, -1) != _db_voice_count:
-                    _voice_gallery_sizes[person_id] = _db_voice_count
+                if _voice_gallery_store.peek_size(person_id, -1) != _db_voice_count:
+                    _existing_emb = _voice_gallery_store.peek_gallery(person_id)
+                    if _existing_emb is not None:
+                        try:
+                            _loop = asyncio.get_running_loop()
+                            _loop.create_task(_voice_gallery_store.set_gallery(person_id, _existing_emb, _db_voice_count))
+                        except RuntimeError:
+                            pass
             except Exception:
                 pass  # OPTIONAL: cache fallback already seeded above — stale count safe until next session open
         # P0.7.2-SHIM: canonical-first — populate SessionStore BEFORE legacy dict
@@ -2198,19 +1894,61 @@ def _open_session(
         if (
             not (_session_store.peek_snapshot(person_id).voice_only_origin if _session_store.peek_snapshot(person_id) is not None else False)
             and person_type in ("known", "best_friend")
-            and _voice_gallery_sizes.get(person_id, 0) < N_INITIAL_VOICE
+            and _voice_gallery_store.peek_size(person_id, 0) < N_INITIAL_VOICE
             and not _has_recent_face_evidence(person_id)
         ):
             print(
                 f"[Backfill] {person_name} ({person_id}) — voice_only_origin=True inferred "
                 f"(person_type={person_type}, "
-                f"voice_n={_voice_gallery_sizes.get(person_id, 0)}, no face)"
+                f"voice_n={_voice_gallery_store.peek_size(person_id, 0)}, no face)"
             )
             try:
                 _loop = asyncio.get_running_loop()
                 _loop.create_task(_session_store.set_voice_only_origin(person_id, True))
             except RuntimeError:
                 pass  # OPTIONAL: no running loop in test/early-boot context
+
+    # P0.0.7 H11 — emit session_lifecycle=open event via the shared helper.
+    _h11_room_open = _pipeline_state_store.peek_active_room_session()
+    _emit_session_lifecycle_safe(
+        lifecycle="open",
+        person_id=person_id,
+        person_name=person_name,
+        source=session_type,
+        person_type=person_type,
+        room_session_id=_h11_room_open,
+    )
+
+
+def _emit_session_lifecycle_safe(
+    *,
+    lifecycle: str,
+    person_id: str,
+    person_name: "str | None",
+    source: str,
+    person_type: str,
+    room_session_id: "str | None",
+) -> None:
+    """P0.0.7 H11 single producer location for session_lifecycle events.
+
+    Called by both _open_session (lifecycle='open') and _close_session
+    (lifecycle='close') so D7 N=1 holds. Delegates to `safe_emit_sync`
+    (single P0.4-annotated except lives in the helper).
+    """
+    from core.event_log import safe_emit_sync, SessionLifecyclePayload
+    safe_emit_sync(
+        "session_lifecycle",
+        SessionLifecyclePayload(
+            lifecycle=lifecycle,
+            person_id=person_id,
+            person_name=person_name,
+            source=source,
+            person_type=person_type,
+            room_session_id=room_session_id,
+        ),
+        session_id=person_id,
+        room_session_id=room_session_id,
+    )
 
 
 def _voice_accum_allowed(pid: str) -> tuple[bool, str, str]:
@@ -2329,8 +2067,6 @@ async def _on_room_end(
 
 def _close_session(person_id: str) -> None:
     """Close and remove a person's session."""
-    global _stranger_track_map, _unrecognized_embeddings, _track_identity
-    global _active_room_session, _active_room_started_at, _active_room_participants
     _close_snap = _session_store.peek_snapshot(person_id)
     _pname_log = _close_snap.person_name if _close_snap is not None else person_id
     print(f"[Session] Close: {person_id} — {_pname_log}")
@@ -2351,56 +2087,68 @@ def _close_session(person_id: str) -> None:
         asyncio.get_running_loop().create_task(_session_store.close_session(person_id))
     except RuntimeError:
         pass  # OPTIONAL: no running loop in test/early-boot context
-    _sessions_started.discard(person_id)
-    # Clean up any face-track → session bindings pointing to this session
-    _stranger_track_map = {
-        tid: pid for tid, pid in _stranger_track_map.items()
-        if pid != person_id
-    }
-    # Prune cached embeddings whose track no longer has an active session
-    _unrecognized_embeddings = {
-        tid: emb for tid, emb in _unrecognized_embeddings.items()
-        if tid in _stranger_track_map
-    }
-    # Remove track-continuity entries for this session so re-entry goes through full recognition
-    _track_identity = {
-        tid: pid for tid, pid in _track_identity.items()
-        if pid != person_id
-    }
+    try:
+        _loop = asyncio.get_running_loop()
+        _loop.create_task(_per_person_agent_store.discard_session_started(person_id))
+    except RuntimeError:
+        pass  # OPTIONAL: no running loop in test/early-boot context
+    # Clean up track store entries for this session
+    try:
+        _loop = asyncio.get_running_loop()
+        _loop.create_task(_track_store.prune_for_session_close(person_id))
+        for _tid in _track_store.peek_tracks_for_person(person_id):
+            _loop.create_task(_track_store.remove_track(_tid))
+    except RuntimeError:
+        pass  # OPTIONAL: no running loop in test/early-boot context
     # Evict per-person caches so re-entry never hits stale data
-    _query_embedding_cache.pop(person_id, None)
-    _identity_hints.pop(person_id, None)
+    try:
+        _loop = asyncio.get_running_loop()
+        _loop.create_task(_query_embedding_store.discard(person_id))
+        _loop.create_task(_identity_hints_store.discard(person_id))
+    except RuntimeError:
+        pass  # OPTIONAL: no running loop in test/early-boot context
     # Clear any identity-dispute flag with the orchestrator — the session is
     # gone, so next time this pid appears it's a fresh start.
     if _brain_orchestrator:
         _brain_orchestrator.clear_disputed(person_id)
 
-    # Session 112 Part 3 — _persons_in_frame session-scoped cleanup.
+    # Session 112 Part 3 — presence store session-scoped cleanup.
     # Previously entries lingered until SCENE_STALE_SECS aged them out
     # (30s), producing a window where the scene block still rendered
-    # people whose sessions had already closed. Pop immediately on
+    # people whose sessions had already closed. Remove immediately on
     # session close. If they're physically present, next background
     # face scan re-adds them (correct — they're visible). If they've
     # actually left the room, the lingering entry is removed right
     # away. Resolves the scene-contradicts-session-state class of bug.
-    _persons_in_frame.pop(person_id, None)
+    try:
+        _loop = asyncio.get_running_loop()
+        _loop.create_task(_presence_store.remove(person_id))
+    except RuntimeError:
+        pass  # OPTIONAL: no running loop in test/early-boot context
 
     # Session 112 Part 1 — room-session end hook. When this close
     # empties the active_sessions table, the room is over. Fire
     # fire-and-forget synthesis tasks (current 3A scope: just log
     # the room end + clear the id; 3B will hook room-level insight,
     # relationship update, cross-person safety scan here).
-    if not _session_store.peek_all_snapshots() and _active_room_session is not None:
-        _ended_room = _active_room_session
-        _ended_started_at = _active_room_started_at
-        _ended_participants = list(_active_room_participants)
-        _active_room_session = None
-        # Phase 3B.1 — clear paired start-time timestamp. Next mint starts
-        # a fresh duration clock from zero.
-        _active_room_started_at = None
-        # Phase 3B.6 — clear participants alongside the id. Set is
-        # rebuilt on next mint.
-        _active_room_participants = set()
+    #
+    # NOTE: check remaining sessions EXCLUDING the person being closed —
+    # close_session() is a create_task (async) so the session may still be
+    # in the store at this point. The room ends when this IS the last person.
+    _room_snap = _pipeline_state_store.peek_active_room_session()
+    _remaining_sessions = [s for s in _session_store.peek_all_snapshots()
+                           if s.person_id != person_id]
+    if not _remaining_sessions and _room_snap is not None:
+        _ended_room        = _room_snap
+        _ended_started_at  = _pipeline_state_store.peek_active_room_started_at()
+        _ended_participants = list(_pipeline_state_store.peek_active_room_participants())
+        # Clear room fields synchronously so the second _close_session in the
+        # same event-loop tick sees _active_room_session=None and does NOT
+        # fire a second room-end (the original module-level variable was
+        # cleared immediately; the store must mirror that atomicity).
+        # The lock is not needed here: this is a single-threaded asyncio
+        # context and CPython GIL protects the simple assignments.
+        _pipeline_state_store._sync_clear_room()
         print(f"[Room] Room session ended: {_ended_room}")
         # Guard against sync-test contexts where no event loop is
         # running — `asyncio.create_task` would raise/warn outside
@@ -2414,6 +2162,20 @@ def _close_session(person_id: str) -> None:
         except RuntimeError:
             print(f"[Room] Room-end hook skipped for {_ended_room} — no running loop")
 
+    # P0.0.7 H11 — emit session_lifecycle=close via the shared helper.
+    # Writer task's _flush_one detects the close-event after persisting
+    # it and calls _clear_session_parents — i.e., the close event itself
+    # still has access to its parent-event-id chain at persist time, and
+    # the cache clears only AFTER the close row is durable.
+    _emit_session_lifecycle_safe(
+        lifecycle="close",
+        person_id=person_id,
+        person_name=_pname_log,
+        source=(_close_snap.session_type if _close_snap is not None else ""),
+        person_type=(_close_snap.person_type if _close_snap is not None else ""),
+        room_session_id=(_close_snap.room_session_id if _close_snap is not None else None),
+    )
+
 
 def _expire_stale_sessions() -> bool:
     """Expire timed-out sessions and clean up per-person state.
@@ -2424,7 +2186,6 @@ def _expire_stale_sessions() -> bool:
 
     Returns True if any session was closed.
     """
-    global _vision_prev_det_count, _detected_lang
     _now_fl = time.time()
     _expired: list[str] = []
     for _snap in _session_store.peek_all_snapshots():
@@ -2458,8 +2219,9 @@ def _expire_stale_sessions() -> bool:
             # DISPUTE_AUTO_CLEAR_VOICE_MIN (0.70) is acceptable. Restore via
             # prior_person_type (captured at dispute-flip).
             _ev = _snap.evidence
+            _pif_view = {s.person_id: {"source": s.source} for s in _presence_store.peek_all_snapshots()}
             _face_confirmed = (
-                _face_in_frame(_snap.person_id, _persons_in_frame)
+                _face_in_frame(_snap.person_id, _pif_view)
                 and _ev.face_match_conf >= DISPUTE_AUTO_CLEAR_VOICE_MIN
             )
             _voice_floor = (
@@ -2525,19 +2287,31 @@ def _expire_stale_sessions() -> bool:
             continue
         _pname = _snap_exp.person_name
         print(f"[Pipeline] Session expired: {_pname} ({_pid})")
-        _conversation.pop(_pid, None)
-        _last_greeted[_pid] = time.time()
+        try:
+            _loop_exp = asyncio.get_running_loop()
+            _loop_exp.create_task(_conversation_store.pop_history(_pid))
+            _loop_exp.create_task(_conversation_store.touch_greeted(_pid, time.time()))
+        except RuntimeError:
+            asyncio.run(_conversation_store.pop_history(_pid))  # OPTIONAL: sync fallback
+            asyncio.run(_conversation_store.touch_greeted(_pid, time.time()))  # OPTIONAL: sync fallback
         if _brain_orchestrator:
             _brain_orchestrator.notify_session_end(_pid)
         _close_session(_pid)
-        _vision_prev_det_count = 0
+        _vision_frame_store._sync_set_prev_det_count(0)
 
     if _expired and not _session_store.peek_all_snapshots():
         # All sessions closed — full cleanup
         lip_tracker.reset()
         set_lip_active(False)
-        _persons_in_frame.clear()
-        _detected_lang = "en"
+        try:
+            _loop = asyncio.get_running_loop()
+            _loop.create_task(_presence_store.clear())
+        except RuntimeError:
+            pass  # OPTIONAL: no running loop in test/early-boot context
+        try:
+            asyncio.get_running_loop().create_task(_pipeline_state_store.set_detected_lang("en"))
+        except RuntimeError:
+            asyncio.run(_pipeline_state_store.set_detected_lang("en"))
 
     return bool(_expired)
 
@@ -2648,7 +2422,7 @@ async def _accumulate_voice(
         return
 
     v_pid, v_score = await loop.run_in_executor(
-        None, voice_mod.identify, audio, _voice_gallery, VOICE_RECOGNITION_THRESHOLD
+        None, voice_mod.identify, audio, _voice_gallery_store.peek_all_gallery(), VOICE_RECOGNITION_THRESHOLD
     )
     # Track the latest voice self-match in evidence regardless of accumulation outcome.
     if v_pid == person_id and v_score > 0.0:
@@ -2671,10 +2445,9 @@ async def _accumulate_voice(
     )
     if added:
         updated = await loop.run_in_executor(None, db.load_voice_profile_for, person_id)
-        if updated is not None:
-            _voice_gallery[person_id] = updated
         count = await loop.run_in_executor(None, db.voice_embedding_count, person_id)
-        _voice_gallery_sizes[person_id] = count
+        if updated is not None:
+            await _voice_gallery_store.set_gallery(person_id, updated, count)
         # Update evidence: sample count grew; if this was a bootstrap grant, burn a credit.
         loop.create_task(_session_store.set_voice_sample_count(person_id, count))
         if path == "bootstrap":
@@ -2738,9 +2511,8 @@ async def _background_vision_loop(
         if frame is None:
             await asyncio.sleep(0.05)
             continue
-        global _last_face_seen, _latest_vision_frame, _latest_frame_time, _latest_yolo_detections, _last_active_bbox, _last_silent_update, _ambient_wake_pending
-        _latest_vision_frame = frame
-        _latest_frame_time   = time.monotonic()
+        global _latest_yolo_detections, _last_active_bbox
+        await _vision_frame_store.set_frame(frame.copy(), time.monotonic())
         detections = await loop.run_in_executor(None, detector.detect, frame)
         if detections:
             # During ambient listen (no active sessions), any face counts as "seen".
@@ -2748,7 +2520,10 @@ async def _background_vision_loop(
             # scan below (which runs recognition). detect() never sets person_id, so
             # we can't filter by active person here.
             if not _session_store.peek_all_snapshots():
-                _last_face_seen = time.time()
+                try:
+                    asyncio.get_running_loop().create_task(_pipeline_state_store.set_last_face_seen(time.time()))
+                except RuntimeError:
+                    asyncio.run(_pipeline_state_store.set_last_face_seen(time.time()))
             # Keep bbox current and calibrate lip tracker.
             # Calibration runs during SPEAKING — the person is quiet and still,
             # making it the ideal resting-motion baseline window.
@@ -2756,7 +2531,7 @@ async def _background_vision_loop(
                 for det in detections:
                     if _session_store.peek_snapshot(det.person_id) is not None:
                         _last_active_bbox = det.bbox
-                        if _pipeline_state == PipelineState.SPEAKING:
+                        if _pipeline_state_store.peek_pipeline_state() == PipelineState.SPEAKING:
                             lip_tracker.update_baseline(frame, det.bbox)
                         break
 
@@ -2787,12 +2562,12 @@ async def _background_vision_loop(
                     _thresh += 0.05
                 _pid, _pname, _conf = await loop.run_in_executor(None, db.recognize, _emb, _thresh)
                 if (_pid
-                        and time.time() - _last_greeted.get(_pid, 0) >= GREET_COOLDOWN
-                        and _pid not in _ambient_wake_pending):
+                        and time.time() - _conversation_store.peek_last_greeted(_pid) >= GREET_COOLDOWN
+                        and not _per_person_agent_store.is_ambient_wake_pending(_pid)):
                     if not verify_live(frame, _det.bbox, _anti_spoof_checker):
                         print(f"[Pipeline] Anti-spoof: BLOCKED background wake for {_pname} — liveness failed")
                         continue
-                    _ambient_wake_pending.add(_pid)   # debounce: suppress re-fires until outer loop consumes
+                    loop.create_task(_per_person_agent_store.add_ambient_wake(_pid))  # debounce: suppress re-fires until outer loop consumes
                     print(f"[Vision] Background: recognized {_pname} (score={_conf:.3f}) — waking pipeline")
                     stop_audio()  # interrupt ambient listen; outer loop handles greeting next iteration
                     break
@@ -2806,13 +2581,11 @@ async def _background_vision_loop(
         # Recognises all faces in frame so brain knows when a new person appears.
         # Runs immediately when face count rises (new arrival), otherwise throttled
         # to 1/s to avoid hammering the GPU during normal conversation.
-        global _persons_in_frame, _vision_face_scan_last, _vision_prev_det_count, \
-               _unrecognized_tracks, _unrecognized_embeddings, _stranger_track_map, _track_identity, \
-               _last_vision_report_str
+        global _vision_face_scan_last, _last_vision_report_str
         _bv_scan_now = time.time()
         _det_count = len(detections) if detections else 0
-        _new_arrival = _det_count > _vision_prev_det_count
-        _vision_prev_det_count = _det_count
+        _new_arrival = _det_count > _vision_frame_store.peek_prev_det_count()
+        await _vision_frame_store.set_prev_det_count(_det_count)
         if (
             embedder is not None
             and temporal_buffer is not None
@@ -2820,30 +2593,20 @@ async def _background_vision_loop(
             and _session_store.peek_all_snapshots()
             and detections
         ):
-            # Prune track dicts to currently-live SORT track_ids
+            # Prune track store to currently-live SORT track_ids
             _active_tids = {_det.track_id for _det in detections if _det.track_id is not None}
-            _unrecognized_tracks = {
-                tid: ts for tid, ts in _unrecognized_tracks.items()
-                if _bv_scan_now - ts < SCENE_STALE_SECS
-            }
-            _unrecognized_embeddings = {
-                tid: emb for tid, emb in _unrecognized_embeddings.items()
-                if tid in _unrecognized_tracks
-            }
-            _stranger_track_map = {
-                tid: pid for tid, pid in _stranger_track_map.items()
-                if tid in _unrecognized_tracks
-            }
-            # Track-continuity: prune identities for tracks that have left frame
-            _track_identity = {
-                tid: pid for tid, pid in _track_identity.items()
-                if tid in _active_tids
-            }
+            loop.create_task(_track_store.prune_stale(_bv_scan_now - SCENE_STALE_SECS))
+            loop.create_task(_track_store.prune_to_active_tids(_active_tids))
+            _all_track_snaps = _track_store.peek_all_snapshots()
+            _ti_view = {s.track_id: s.identity_pid for s in _all_track_snaps if s.identity_pid is not None}
+            _ut_view = {s.track_id: s.last_seen for s in _all_track_snaps if s.last_seen > 0}
+            _pif_recog_view = {s.person_id: {"last_recognized_at": s.last_recognized_at}
+                               for s in _presence_store.peek_all_snapshots()}
             for _det in detections:
                 # Event-driven cadence: skip if this track was recently recognized (#11)
                 if not _should_run_recognition(
-                    _det.track_id, _track_identity, _unrecognized_tracks,
-                    _persons_in_frame, _bv_scan_now,
+                    _det.track_id, _ti_view, _ut_view,
+                    _pif_recog_view, _bv_scan_now,
                 ):
                     continue
                 _x1, _y1, _x2, _y2 = _det.bbox
@@ -2866,7 +2629,7 @@ async def _background_vision_loop(
                 if _pid2:
                     # Record confirmed identity for this track (used by main-loop track-continuity)
                     if _det.track_id is not None:
-                        _track_identity[_det.track_id] = _pid2
+                        loop.create_task(_track_store.bind_identity(_det.track_id, _pid2))
                     if _session_store.peek_snapshot(_pid2) is not None:
                         # Active person confirmed in frame — update their face-seen timestamp
                         # so brain knows they're visible. (detect() never sets person_id,
@@ -2876,31 +2639,13 @@ async def _background_vision_loop(
                             _loop.create_task(_session_store.set_last_face_seen(_pid2, _bv_scan_now))
                         except RuntimeError:
                             pass  # OPTIONAL: no running loop in test/early-boot context
-                    if _pid2 not in _persons_in_frame:
-                        _persons_in_frame[_pid2] = {
-                            "name": _pname2, "conf": _conf2,
-                            "last_seen": _bv_scan_now, "last_recognized_at": _bv_scan_now,
-                            "source": "face",   # Bug B: distinguish from voice-only entries
-                        }
+                    _is_new_in_frame = _pid2 not in _presence_store
+                    loop.create_task(_presence_store.upsert_face_recognition(
+                        _pid2, _pname2, _conf2, _bv_scan_now))
+                    if _is_new_in_frame:
                         if _session_store.peek_snapshot(_pid2) is None:
                             if verify_live(frame, _det.bbox, _anti_spoof_checker):
                                 print(f"[Vision] New person in frame: {_pname2} (conf={_conf2:.2f})")
-                    else:
-                        _persons_in_frame[_pid2]["last_seen"]          = _bv_scan_now
-                        _persons_in_frame[_pid2]["last_recognized_at"] = _bv_scan_now
-                        _persons_in_frame[_pid2]["conf"]               = _conf2
-                        _persons_in_frame[_pid2]["source"]             = "face"
-                        # Session 102 Bug F.3: refresh the cached display
-                        # name every scan. Previously "name" was written
-                        # once at pid-first-seen and never updated — so
-                        # after a rename (Bug F.2 path or stranger
-                        # promotion) the SCENE block and [Vision] logs
-                        # kept rendering the STT-mangled original name
-                        # for the remainder of the session. Re-reading
-                        # from the fresh recognize() result is cheap
-                        # (string assign, 1 Hz) and self-heals any
-                        # rename within one scan.
-                        _persons_in_frame[_pid2]["name"]               = _pname2
                     # Step 3: update identity_evidence with the fresh face match.
                     # anti_spoof_live isn't re-checked here (secondary scan is 1 Hz;
                     # liveness was verified at greeting). Session stays recent-witness.
@@ -2923,35 +2668,34 @@ async def _background_vision_loop(
                 else:
                     # Unrecognized face — record by SORT track_id for per-person routing
                     _tid = _det.track_id if _det.track_id is not None else id(_det)
-                    _unrecognized_tracks[_tid] = _bv_scan_now
-                    _unrecognized_embeddings[_tid] = _emb2  # cache for gate-pass face enrollment
+                    loop.create_task(_track_store.mark_unrecognized(_tid, _bv_scan_now))
+                    loop.create_task(_track_store.set_embedding(_tid, _emb2))
                     # #20: pre-allocate a stranger pid for each stable (SORT-confirmed) track
-                    if _det.track_id is not None and _tid not in _stranger_track_map:
+                    if _det.track_id is not None and _track_store.peek_stranger_pid(_tid) is None:
                         import uuid as _uuid_pa
-                        _stranger_track_map[_tid] = f"stranger_{_uuid_pa.uuid4().hex[:8]}"
+                        loop.create_task(_track_store.mint_stranger(
+                            _tid, f"stranger_{_uuid_pa.uuid4().hex[:8]}"))
+
             # Prune recognized persons who left (not seen for >5s)
-            _left_persons = {k: v for k, v in list(_persons_in_frame.items()) if _bv_scan_now - v["last_seen"] >= SCENE_STALE_SECS}
-            for _lp_id, _lp_info in _left_persons.items():
+            _stale_cutoff = _bv_scan_now - SCENE_STALE_SECS
+            _stale_snaps = [
+                s for s in _presence_store.peek_all_snapshots()
+                if s.last_seen > 0 and s.last_seen < _stale_cutoff
+            ]
+            for _lp_snap in _stale_snaps:
                 # Bug B: suppress the "left frame" log for voice-only entries — they
-                # were never ON-camera, so "left frame" is misleading and the "conf"
-                # field actually carries voice_score for those.
+                # were never ON-camera, so "left frame" is misleading.
                 #
-                # Obs 4 (2026-04-20): when a voice entry ages out of _persons_in_frame
-                # (at SCENE_STALE_SECS) but its session is still alive (expires at
-                # VOICE_SESSION_TIMEOUT, 5–30s later), there's a silent window where
-                # debugging "why did we stop tracking X's speech?" had no log. Emit a
-                # distinct [Voice] message so the session-state transition is visible.
-                # If no active session exists, stay silent — _close_session already
-                # logged the close at VOICE_SESSION_TIMEOUT.
-                if _lp_info.get("source") == "voice":
-                    _snap_voice_lp = _session_store.peek_snapshot(_lp_id)
+                # Obs 4 (2026-04-20): when a voice entry ages out but its session is
+                # still alive, emit a [Voice] message so the transition is visible.
+                if _lp_snap.source == "voice":
+                    _snap_voice_lp = _session_store.peek_snapshot(_lp_snap.person_id)
                     if _snap_voice_lp is not None:
                         _remaining = VOICE_SESSION_TIMEOUT - (_bv_scan_now - _snap_voice_lp.last_spoke_at)
-                        print(f"[Voice] {_lp_info['name']} no longer heard — session expires in {_remaining:.0f}s")
+                        print(f"[Voice] {_lp_snap.name} no longer heard — session expires in {_remaining:.0f}s")
                     continue
-                print(f"[Vision] Person left frame: {_lp_info['name']} (conf={_lp_info['conf']:.2f})")
-            for _stale_k in _left_persons:
-                _persons_in_frame.pop(_stale_k, None)
+                print(f"[Vision] Person left frame: {_lp_snap.name} (conf={_lp_snap.conf:.2f})")
+            loop.create_task(_presence_store.prune_stale(_stale_cutoff))
 
             # ── Phase 2 / Session 124 — Vision Channel shadow logging ─────
             # Throttled comparison: once per VISION_SHADOW_INTERVAL_SECS,
@@ -3004,9 +2748,8 @@ async def _background_vision_loop(
                     # SUSTAINED multi-scan divergence would indicate a real
                     # gate or stale-window mismatch worth investigating.
                     _prod_visible = {
-                        pid for pid, info in list(_persons_in_frame.items())
-                        if info.get("source") == "face"
-                        and _bv_scan_now - info.get("last_seen", 0) < SCENE_STALE_SECS
+                        s.person_id for s in _presence_store.peek_all_snapshots()
+                        if s.source == "face" and _bv_scan_now - s.last_seen < SCENE_STALE_SECS
                     }
                     _new_visible = set(_shadow_state.visible_pids)
                     if _prod_visible != _new_visible:
@@ -3033,13 +2776,13 @@ async def _background_vision_loop(
             # Voice-only entries live in _persons_in_frame for routing purposes
             # but don't belong in the "who is ON CAMERA" line.
             _rnames  = sorted(
-                v["name"] for v in list(_persons_in_frame.values())
-                if (_now_vr - v["last_seen"] < VOICE_ROUTING_FACE_STALE_SECS
-                    and v.get("source") != "voice")
+                s.name for s in _presence_store.peek_all_snapshots()
+                if (_now_vr - s.last_seen < VOICE_ROUTING_FACE_STALE_SECS
+                    and s.source != "voice")
             )
             _unrec_n = sum(
-                1 for ts in _unrecognized_tracks.values()
-                if _now_vr - ts < VOICE_ROUTING_FACE_STALE_SECS
+                1 for s in _track_store.peek_all_snapshots()
+                if s.last_seen > 0 and _now_vr - s.last_seen < VOICE_ROUTING_FACE_STALE_SECS
             )
             _vr_parts = list(_rnames)
             if _unrec_n == 1:
@@ -3057,13 +2800,13 @@ async def _background_vision_loop(
         _bv_now = time.time()
         if _bv_now - _vision_last_heartbeat >= 30.0:
             _vision_last_heartbeat = _bv_now
-            state_label = _pipeline_state.name if _pipeline_state else "?"
+            state_label = _pipeline_state_store.peek_pipeline_state().name if _pipeline_state_store.peek_pipeline_state() else "?"
             if _session_store.peek_all_snapshots():
                 who = ", ".join(snap.person_name for snap in _session_store.peek_all_snapshots())
             elif detections:
                 # Bug B: only face-sourced entries count as "known faces" here.
-                _known_faces = [v["name"] for v in list(_persons_in_frame.values())
-                                if v.get("source") != "voice"]
+                _known_faces = [s.name for s in _presence_store.peek_all_snapshots()
+                                if s.source != "voice"]
                 who = ("recognized=" + ", ".join(_known_faces)) if _known_faces else "unrecognized"
             else:
                 who = "no face"
@@ -3071,6 +2814,63 @@ async def _background_vision_loop(
             if _hb_key != _vision_last_heartbeat_state:
                 _vision_last_heartbeat_state = _hb_key
                 print(f"[Vision] Active ({state_label}) — {who}")
+
+        # P0.0.7 H2 — emit vision_frame event per scan iteration.
+        # Sidecar style: pipeline orchestrates the scan; emit ties into the
+        # per-iteration tail. JPEG storage at faces/frames/<frame_id>.jpg
+        # uses content-hash keying for free deduplication (D2 — no inline
+        # image bytes in the event payload). anti_spoof_* fields are
+        # placeholders here (the scan itself doesn't run anti-spoof);
+        # P0.S1 will wire the real values when anti-spoof-on-every-match
+        # lands. The schema's load-bearing fields are present from day 1
+        # so post-P0.S1 replay logs can drive regression tests.
+        # Single P0.4-annotated except lives inside safe_emit_sync; the
+        # JPEG-storage sub-try remains because storage failure is a
+        # legitimate distinct concern (handled with explicit fallback).
+        import hashlib as _h2_hash
+        import uuid as _h2_uuid
+        import cv2 as _h2_cv2
+        from pathlib import Path as _H2Path
+        from core.event_log import safe_emit_sync, VisionFramePayload
+        from core.event_log.producer import _ensure_frames_dir as _h2_frames_dir
+        _h2_recognized: list[tuple[str, float, float]] = []
+        for _s in _presence_store.peek_all_snapshots():
+            if _s.source == "face" and _s.last_seen > 0:
+                _h2_recognized.append((_s.person_id, float(_s.conf or 0.0), 0.0))
+        _h2_unrec_ids = tuple(
+            int(s.track_id) for s in _track_store.peek_all_snapshots()
+            if s.last_seen > 0 and s.identity_pid is None
+        )
+        _h2_frame_id = _h2_uuid.uuid4().hex[:12]
+        _h2_frame_path: "str | None" = None
+        try:
+            _h2_frames = _h2_frames_dir()
+            _h2_path = _H2Path(_h2_frames) / f"{_h2_frame_id}.jpg"
+            # Best-effort JPEG write — failures fall back to frame_path=None.
+            _ok, _h2_buf = _h2_cv2.imencode(".jpg", frame)
+            if _ok:
+                _h2_path.write_bytes(_h2_buf.tobytes())
+                _h2_frame_path = str(_h2_path)
+        except Exception:
+            # OPTIONAL: JPEG storage failure must not break the vision loop —
+            # event still emits with frame_path=None and replay degrades
+            # gracefully (text-only diagnostics, no image evidence).
+            _h2_frame_path = None
+        safe_emit_sync(
+            "vision_frame",
+            VisionFramePayload(
+                frame_id=_h2_frame_id,
+                frame_path=_h2_frame_path,
+                frame_ts=_bv_now,
+                n_detections=len(detections) if detections else 0,
+                recognized=tuple(_h2_recognized),
+                unrecognized_track_ids=_h2_unrec_ids,
+                # P0.S1 prerequisite: definite bool. Real values
+                # threaded through in P0.S1's hook upgrade.
+                anti_spoof_live=True,
+                anti_spoof_score=None,
+            ),
+        )
 
         # YOLO is NOT run here during conversation — PyTorch CPU ops hold the Python
         # GIL, which blocks httpx's async I/O callbacks and stalls LLM token streaming.
@@ -3084,7 +2884,6 @@ async def _cloud_retry_loop() -> None:
     Skips pinging when ONLINE — keeps the loop alive for any future outage.
     Sets _cloud_recovered flag on recovery.
     """
-    global _cloud_state, _cloud_recovered
     while not _shutdown_event.is_set():
         try:
             await asyncio.wait_for(_shutdown_event.wait(), timeout=CLOUD_RETRY_INTERVAL)
@@ -3092,19 +2891,20 @@ async def _cloud_retry_loop() -> None:
         except asyncio.TimeoutError:
             pass
 
-        if _cloud_state == CloudState.ONLINE:
+        if _pipeline_state_store.peek_cloud_state() == CloudState.ONLINE:
             continue  # ONLINE — skip ping, keep loop alive for next potential outage
 
         print("[Pipeline] Retrying Together.ai connection...")
         available = await ping_together()
         if available:
             print("[Pipeline] Together.ai reconnected!")
-            _cloud_state    = CloudState.ONLINE
-            _cloud_recovered = True
+            asyncio.create_task(_pipeline_state_store.transition_to_online())
             if _brain_orchestrator:
                 _brain_orchestrator.report_api_recovered()
-        elif _cloud_failed_at and _brain_orchestrator:
-            _brain_orchestrator.report_api_failure(time.time() - _cloud_failed_at)
+        elif _pipeline_state_store.peek_cloud_failed_at() and _brain_orchestrator:
+            _brain_orchestrator.report_api_failure(
+                time.time() - _pipeline_state_store.peek_cloud_failed_at()
+            )
 
 
 async def _kairos_tick(person_id: str, person_name: str, db: "FaceDB", memory_search_fn: "Callable | None" = None, best_friend_id: str | None = None) -> bool:
@@ -3116,8 +2916,6 @@ async def _kairos_tick(person_id: str, person_name: str, db: "FaceDB", memory_se
 
     Returns True if the brain spoke; False otherwise.
     """
-    global _last_kairos_at
-
     if person_id.startswith("stranger_"):
         return False
     # Finding H — don't initiate proactive speech during an identity-disputed
@@ -3129,8 +2927,8 @@ async def _kairos_tick(person_id: str, person_name: str, db: "FaceDB", memory_se
         return False
 
     now = time.time()
-    _silence_elapsed  = now - _last_user_speech_at
-    _cooldown_elapsed = now - _last_kairos_at
+    _silence_elapsed  = now - _pipeline_state_store.peek_last_user_speech_at()
+    _cooldown_elapsed = now - _pipeline_state_store.peek_last_kairos_at()
 
     if _silence_elapsed < KAIROS_SILENCE_THRESHOLD:
         return False
@@ -3154,20 +2952,29 @@ async def _kairos_tick(person_id: str, person_name: str, db: "FaceDB", memory_se
 
     print(f"[KAIROS] Brain proactive wake — {_silence_elapsed:.0f}s silence")
 
-    history = _conversation.get(person_id, [])
+    history = list(_conversation_store.peek_history(person_id))
 
+    _k_pif_view = {
+        s.person_id: {"last_seen": s.last_seen, "name": s.name, "conf": s.conf, "source": s.source}
+        for s in _presence_store.peek_all_snapshots()
+    }
+    _k_ut_view = {
+        s.track_id: s.last_seen
+        for s in _track_store.peek_all_snapshots()
+        if s.last_seen > 0 and s.identity_pid is None
+    }
     kairos_scene_block = (
-        _get_scene_block_cached(
-            person_id, time.time(), _session_store.peek_all_snapshots(), _persons_in_frame,
-            _unrecognized_tracks, best_friend_id,
+        await _get_scene_block_cached(
+            person_id, time.time(), _session_store.peek_all_snapshots(), _k_pif_view,
+            _k_ut_view, best_friend_id,
             recent_visitors=_fetch_recent_visitors_for_scene(best_friend_id),
         )
         if SCENE_BLOCK_ENABLED else None
     )
     _kairos_snap     = _session_store.peek_snapshot(person_id) if person_id else None
-    _kairos_rec_conf = _persons_in_frame.get(person_id, {}).get("conf", 0.0) if person_id else 0.0
+    _kairos_rec_conf = _presence_store.peek_conf(person_id, 0.0) if person_id else 0.0
     kairos_vision_state = {
-        "face_in_frame":          time.time() - _last_face_seen < 2.0,
+        "face_in_frame":          time.time() - _pipeline_state_store.peek_last_face_seen() < 2.0,
         "person_name":            person_name,
         "person_id":              person_id,
         "recognition_conf":       _kairos_rec_conf,
@@ -3190,8 +2997,8 @@ async def _kairos_tick(person_id: str, person_name: str, db: "FaceDB", memory_se
         # Phase 3B.1: unified room-state block. Returns None in
         # single-person sessions so this field is benign there.
         "room_block":             _build_room_block(
-            _session_store.peek_all_snapshots(), _conversation, _emotion_agents,
-            _active_room_started_at, turn_cap=ROOM_BLOCK_TURN_CAP,
+            _session_store.peek_all_snapshots(), _conversation_store._history, _per_person_agent_store.peek_all_emotion_agents(),
+            _pipeline_state_store.peek_active_room_started_at(), turn_cap=ROOM_BLOCK_TURN_CAP,
         ),
         # Phase 3B.6: recent room context for greeting/engagement
         # enrichment. None when no qualifying room within window.
@@ -3205,7 +3012,7 @@ async def _kairos_tick(person_id: str, person_name: str, db: "FaceDB", memory_se
         if _kairos_snap is not None:
             if _kairos_snap.cached_prefix is None:
                 _kp_value = render_session_stable_prefix(
-                    system_name=_active_system_name,
+                    system_name=_pipeline_state_store.peek_active_system_name(),
                     session_person_type=_kairos_snap.person_type,
                     session_user_turns=_kairos_snap.user_turns,
                     identity_disputed=_is_disputed(person_id),
@@ -3227,11 +3034,11 @@ async def _kairos_tick(person_id: str, person_name: str, db: "FaceDB", memory_se
                 kairos_prompt,
                 person_name=person_name,
                 conversation_history=history,
-                language=_detected_lang,
-                system_name=_active_system_name,
+                language=_pipeline_state_store.peek_detected_lang(),
+                system_name=_pipeline_state_store.peek_active_system_name(),
                 memory_search_fn=memory_search_fn,
                 room_search_fn=_make_room_search_fn(
-                    _active_room_session, person_id, db,
+                    _pipeline_state_store.peek_active_room_session(), person_id, db,
                 ),
                 vision_state=kairos_vision_state,
                 scene_block=kairos_scene_block,
@@ -3242,18 +3049,21 @@ async def _kairos_tick(person_id: str, person_name: str, db: "FaceDB", memory_se
                     yield payload
 
         _set_state(PipelineState.SPEAKING, person_name)
-        await speak_stream(_sentence_stream(_kairos_token_gen()), language=_detected_lang)
+        await speak_stream(_sentence_stream(_kairos_token_gen()), language=_pipeline_state_store.peek_detected_lang())
         response = "".join(response_parts).strip()
 
         # Brain chose silence — don't log, don't reset cooldown aggressively
         if not response or response.upper() == "SILENT":
             print(f"[KAIROS] Brain chose silence")
-            _last_kairos_at = time.time()  # still advance cooldown to avoid spin
+            try:
+                asyncio.get_running_loop().create_task(_pipeline_state_store.set_last_kairos_at(time.time()))
+            except RuntimeError:
+                asyncio.run(_pipeline_state_store.set_last_kairos_at(time.time()))
             _set_state(PipelineState.LISTENING, person_name)
             return False
 
         print(f"[KAIROS] Brain spoke: {response[:60]!r}")
-        _conversation.setdefault(person_id, []).extend([
+        await _conversation_store.append_turns(person_id, [
             {"role": "user",      "content": "[silence]"},
             {"role": "assistant", "content": response},
         ])
@@ -3283,7 +3093,10 @@ async def _kairos_tick(person_id: str, person_name: str, db: "FaceDB", memory_se
 
     if pending_q:
         _brain_orchestrator.mark_question_asked(pending_q["id"])
-    _last_kairos_at = time.time()
+    try:
+        asyncio.get_running_loop().create_task(_pipeline_state_store.set_last_kairos_at(time.time()))
+    except RuntimeError:
+        asyncio.run(_pipeline_state_store.set_last_kairos_at(time.time()))
 
     _set_state(PipelineState.LISTENING, person_name)
     return True
@@ -3333,8 +3146,7 @@ async def _dream_loop(db: "FaceDB") -> None:
             stale_ids = db.find_stale_stranger_voice_ids(STRANGER_VOICE_TTL_DAYS)
             if stale_ids:
                 for _pid in stale_ids:
-                    _voice_gallery.pop(_pid, None)
-                    _voice_gallery_sizes.pop(_pid, None)
+                    await _voice_gallery_store.pop_gallery(_pid)
                 # Pass the pre-computed ids so prune doesn't re-run the SELECT.
                 voice_pruned_ids = db.prune_stale_stranger_voice(
                     STRANGER_VOICE_TTL_DAYS, ids=stale_ids,
@@ -3347,20 +3159,9 @@ async def _dream_loop(db: "FaceDB") -> None:
             # free. Divergence → reload embeddings for the affected pids too, so
             # voice_mod.identify() can't keep matching against a vanished mean.
             _fresh_sizes = db.load_voice_profile_sizes()
-            _divergent = [
-                _pid for _pid in set(_voice_gallery_sizes) | set(_fresh_sizes)
-                if _voice_gallery_sizes.get(_pid) != _fresh_sizes.get(_pid)
-            ]
-            if _divergent:
-                print(f"[Dream] Voice gallery cache reconciled: {len(_divergent)} pid(s) out of sync")
-                _voice_gallery_sizes.clear()
-                _voice_gallery_sizes.update(_fresh_sizes)
-                for _pid in _divergent:
-                    _prof = db.load_voice_profile_for(_pid)
-                    if _prof is None:
-                        _voice_gallery.pop(_pid, None)
-                    else:
-                        _voice_gallery[_pid] = _prof
+            _reconciled = await _voice_gallery_store.reconcile(_fresh_sizes, db.load_voice_profile_for)
+            if _reconciled:
+                print(f"[Dream] Voice gallery cache reconciled: {_reconciled} pid(s) out of sync")
             # Silent observations retention (prune_silent_observations() is implemented in db.py
             # but was never called — enforce SILENT_OBS_RETENTION_DAYS from config)
             db.prune_silent_observations()
@@ -3440,7 +3241,7 @@ async def _emit_health(loop: asyncio.AbstractEventLoop) -> None:
                     db=_face_db_ref,
                     brain_orchestrator=_brain_orchestrator,
                     active_sessions=_session_store.peek_all_snapshots(),
-                    cloud_state=_cloud_state,
+                    cloud_state=_pipeline_state_store.peek_cloud_state(),
                     last_dream_run_at=_last_dream_run_at,
                 ),
             )
@@ -3587,7 +3388,7 @@ async def enrollment_flow(name: str, camera: Camera, detector: FaceDetector,
     display_name, safe_id = sanitize_name(name)
     name = display_name  # keep display name for TTS
 
-    await speak(f"Hi {name}! Please look at the camera and stay still for 5 seconds.", language=_detected_lang)
+    await speak(f"Hi {name}! Please look at the camera and stay still for 5 seconds.", language=_pipeline_state_store.peek_detected_lang())
 
     person_id  = f"{safe_id}_{uuid.uuid4().hex[:6]}"
     frames = await camera.capture_frames_async(n=20, interval=0.3, stop_event=_shutdown_event)
@@ -3638,13 +3439,762 @@ async def enrollment_flow(name: str, camera: Camera, detector: FaceDetector,
         for emb in pending_embeddings:
             db.add_embedding(person_id, emb, "enrollment")
 
-        await speak(f"Got it! I'll remember you as {name}. Nice to meet you!", language=_detected_lang)
+        await speak(f"Got it! I'll remember you as {name}. Nice to meet you!", language=_pipeline_state_store.peek_detected_lang())
         print(f"[Pipeline] Enrolled {name} ({person_id}) with {len(pending_embeddings)} embeddings")
     else:
         if spoof_blocked:
-            await speak("I couldn't verify that you're a real person. Please try again without any photos or screens.", language=_detected_lang)
+            await speak("I couldn't verify that you're a real person. Please try again without any photos or screens.", language=_pipeline_state_store.peek_detected_lang())
         else:
-            await speak("I couldn't get a clear view of your face. Please try again in better lighting.", language=_detected_lang)
+            await speak("I couldn't get a clear view of your face. Please try again in better lighting.", language=_pipeline_state_store.peek_detected_lang())
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ToolContext:
+    """P0.8: context bundle passed to extracted tool handlers.
+
+    Carries the per-call inputs and derived state computed by _execute_tool
+    after the Layer 0 / repeat / privilege gates pass. Handlers reference
+    ctx.<field> instead of local closures — required by the dispatch-table
+    refactor that wraps each handler invocation in asyncio.wait_for.
+    """
+    args: dict
+    person_id: str
+    person_name: str
+    db: "FaceDB"
+    user_text: str
+    intent_sidecar: "dict | None"
+    exec_snap: "object | None"      # SessionSnapshot or None
+    caller_type: str                # session person_type or "stranger" fallback
+
+
+async def _handle_update_person_name(args: dict, ctx: "_ToolContext") -> "str | None":
+    """P0.8 extracted handler — verbatim move of update_person_name branch from _execute_tool."""
+    # P0.8 mechanical extraction (handler body is verbatim from the original
+    # _execute_tool branch).  Local names rebind from ctx so the body reads
+    # identically.  Intent + grounding gates stay inside — P1.A3 extracts
+    # them next.
+    args           = ctx.args
+    person_id      = ctx.person_id
+    person_name    = ctx.person_name
+    db             = ctx.db
+    user_text      = ctx.user_text
+    intent_sidecar = ctx.intent_sidecar
+    _exec_snap     = ctx.exec_snap
+
+    new_name, _ = sanitize_name(args.get("name") or "")
+    _sess_type  = _exec_snap.person_type if _exec_snap is not None else "known"
+
+    # Session 101 Bug F.2 — enrollment-mishear escape hatch with
+    # widened intent set. Runs BEFORE the normal `_intent_allows` gate
+    # because natural correction phrasings ("No, it's not Javan, it's
+    # Jagan") classify as `deny_identity` (linguistically correct —
+    # denial + correction) rather than `assign_own_name`. The classic
+    # `_intent_allows` check on `update_person_name` only accepts
+    # `assign_own_name`, so the original Session 100 Bug F escape
+    # hatch (which runs AFTER the gate) never activated for the exact
+    # phrasing users actually produce. 2026-04-23 re-canary: rename
+    # blocked → person_id stays at STT-mangled "Jawan" → all
+    # downstream facts stored under wrong entity, PromptPrefAgent
+    # encoded "use 'Jawan' as preferred form," dashboard frozen.
+    #
+    # Widening: during the fresh-enrollment window (face only, no
+    # voice corroboration — same gate as Session 100's
+    # _is_enrollment_mishear_candidate), accept 3 intents for
+    # update_person_name: assign_own_name, deny_identity,
+    # confirm_identity. Each MUST still satisfy the full grounding
+    # contract (extracted_value present AND appears NFKC-casefolded
+    # in user_text) so ungrounded hallucinations can't sneak through.
+    # Mature-session security (mid-session rename → dispute) is
+    # PRESERVED because `_is_enrollment_mishear_candidate` fails on
+    # any session past the grace window or with voice samples.
+    if (
+        new_name
+        and new_name.lower() != person_name.lower()
+        and _sess_type in ("known", "best_friend")
+        and _is_enrollment_mishear_candidate(db, person_id, _exec_snap)
+        and intent_sidecar is not None
+    ):
+        from core.config import INTENT_CONFIDENCE_MIN as _ICM
+        _mishear_intents = frozenset((
+            "assign_own_name", "deny_identity", "confirm_identity",
+        ))
+        _mi_intent = intent_sidecar.get("turn_intent") or ""
+        _mi_conf   = float(intent_sidecar.get("confidence") or 0.0)
+        _mi_val    = intent_sidecar.get("extracted_value")
+        _mi_val_s  = str(_mi_val).strip() if _mi_val else ""
+        _grounded  = bool(_mi_val_s) and (
+            _nfkc_lower(_mi_val_s) in _nfkc_lower(user_text or "")
+        )
+        if (
+            _mi_intent in _mishear_intents
+            and _mi_conf >= _ICM
+            and _grounded
+        ):
+            if db:
+                db.update_person_name(person_id, new_name)
+                _invalidate_bf_cache()  # Session 115 Fix 2 — rename may target bf
+            _old_pat_mh2 = re.compile(
+                r'\b' + re.escape(person_name) + r'\b', re.IGNORECASE,
+            )
+            for _msg_mh in _conversation_store.peek_history(person_id):
+                _msg_mh["content"] = _old_pat_mh2.sub(
+                    new_name, _msg_mh["content"],
+                )
+            if _session_store.peek_snapshot(person_id) is not None:
+                try:
+                    _loop = asyncio.get_running_loop()
+                    _loop.create_task(_session_store.rename(person_id, new_name))
+                except RuntimeError:
+                    pass  # OPTIONAL: no running loop in test/early-boot context
+            # Session 102 Bug F.3: update the in-frame cache
+            # immediately so the SCENE block and [Vision] logs don't
+            # keep rendering the old name until the next background
+            # scan lands (~1s). Belt-and-braces with the background-
+            # scan refresh.
+            try:
+                asyncio.get_running_loop().create_task(
+                    _presence_store.update_name(person_id, new_name)
+                )
+            except RuntimeError:
+                pass  # OPTIONAL: no running loop in test/early-boot context
+            if _brain_orchestrator:
+                _brain_orchestrator.on_identity_confirmed(
+                    person_id, person_name, new_name,
+                )
+            print(
+                f"[Pipeline] Enrollment-mishear rename (Bug F.2): "
+                f"{person_name!r} → {new_name!r} "
+                f"(intent={_mi_intent}, person_type={_sess_type!r}, "
+                f"conf={_mi_conf:.2f})"
+            )
+            _log_intent_divergence(
+                tool_name="update_person_name",
+                sidecar=intent_sidecar,
+                gate_decision=f"allow_mishear_{_mi_intent}",
+                user_text=user_text, person_id=person_id,
+            )
+            return "handled"
+
+    # VISION_ROADMAP P1.7a (Session 85): classifier-first gate, regex
+    # fallback. Order: (1) if _classify_intent fired this turn, use
+    # _intent_allows — dual-gate (intent match + confidence floor +
+    # grounding + arg cross-check) is the new authority. (2) If classifier
+    # was unavailable AND INTENT_FALLBACK_TO_REGEX=True, fall through to
+    # the legacy regex gate (Session 73's capture-group rule). (3) If
+    # classifier was unavailable AND fallback is disabled (P1.17+), allow
+    # with a warning — silently dropping mutation tools on classifier
+    # failure would be worse UX than a logged wide-open path. All three
+    # outcomes land a row in brain.db.intent_divergences for Phase 5.
+    if new_name:
+        from core.config import INTENT_FALLBACK_TO_REGEX
+        _gate_allowed = True
+        _gate_reason  = "no gate evaluated"
+        if intent_sidecar is not None:
+            _allowed, _reason = _intent_allows(
+                tool_name="update_person_name",
+                turn_intent=intent_sidecar.get("turn_intent") or "",
+                confidence=float(intent_sidecar.get("confidence") or 0.0),
+                extracted_value=intent_sidecar.get("extracted_value"),
+                user_text=user_text,
+                tool_args=args,
+            )
+            if not _allowed:
+                _last_msg_preview = ((user_text or "").strip())[:80]
+                print(
+                    f"[Pipeline] Tool: update_person_name REJECTED (intent) "
+                    f"— {_reason}; user_text: '{_last_msg_preview}'"
+                )
+                _log_intent_divergence(
+                    tool_name="update_person_name",
+                    sidecar=intent_sidecar,
+                    gate_decision=f"reject: {_reason}",
+                    user_text=user_text, person_id=person_id,
+                )
+                return "rejected"
+            print(
+                f"[Pipeline] Tool: update_person_name allowed by intent "
+                f"gate — {_reason}"
+            )
+            _log_intent_divergence(
+                tool_name="update_person_name",
+                sidecar=intent_sidecar,
+                gate_decision="allow",
+                user_text=user_text, person_id=person_id,
+            )
+        elif INTENT_FALLBACK_TO_REGEX:
+            if not _user_text_gate_passes(
+                user_text, new_name, PERSON_NAME_ASSIGN_PATTERNS
+            ):
+                _last_msg_preview = ((user_text or "").strip())[:80]
+                print(
+                    f"[Pipeline] Tool: update_person_name REJECTED "
+                    f"(regex fallback) — user did not self-identify as "
+                    f"'{new_name}' in: '{_last_msg_preview}'"
+                )
+                _log_intent_divergence(
+                    tool_name="update_person_name",
+                    sidecar=None,
+                    gate_decision="regex_fallback_reject",
+                    user_text=user_text, person_id=person_id,
+                )
+                return "rejected"
+            _log_intent_divergence(
+                tool_name="update_person_name",
+                sidecar=None,
+                gate_decision="regex_fallback_allow",
+                user_text=user_text, person_id=person_id,
+            )
+        else:
+            # Both classifier unavailable AND fallback disabled — this
+            # state only happens after P1.17 flips the fallback off AND
+            # the classifier genuinely failed (timeout / parse). Silent
+            # drop would feel broken; log loudly and allow so legitimate
+            # mutation tools aren't blackholed on infrastructure blips.
+            print(
+                f"[Pipeline] WARN: update_person_name — classifier "
+                f"unavailable AND fallback disabled; allowing with warning"
+            )
+            _log_intent_divergence(
+                tool_name="update_person_name",
+                sidecar=None,
+                gate_decision="both_unavailable_allow_with_warning",
+                user_text=user_text, person_id=person_id,
+            )
+
+    if new_name and new_name.lower() != person_name.lower():
+        # Session 100 Bug F — enrollment-mishear escape hatch. When a
+        # fresh-enrollment session (face only, no voice corroboration) sees
+        # a grounded rename claim, allow it through the stranger-promotion
+        # chain instead of flipping to disputed. 2026-04-23 canary: STT
+        # mishear at first boot wrote "Gevan" instead of "Jagan"; the
+        # classic dispute-flip locked the wrong name in place for the
+        # whole session + cascaded into all downstream facts. The classifier
+        # gate above has already validated the rename is grounded
+        # (assign_own_name intent + user_text match); this branch only
+        # decides the ROUTING between dispute-flip and promotion-rename.
+        if (
+            _sess_type in ("known", "best_friend")
+            and _is_enrollment_mishear_candidate(db, person_id, _exec_snap)
+        ):
+            if db:
+                db.update_person_name(person_id, new_name)
+                _invalidate_bf_cache()  # Session 115 Fix 2 — rename may target bf
+            old_pat_mh = re.compile(r'\b' + re.escape(person_name) + r'\b', re.IGNORECASE)
+            for msg in _conversation_store.peek_history(person_id):
+                msg["content"] = old_pat_mh.sub(new_name, msg["content"])
+            if _session_store.peek_snapshot(person_id) is not None:
+                try:
+                    _loop = asyncio.get_running_loop()
+                    _loop.create_task(_session_store.rename(person_id, new_name))
+                except RuntimeError:
+                    pass  # OPTIONAL: no running loop in test/early-boot context
+            # Session 102 Bug F.3: refresh in-frame cache immediately.
+            try:
+                asyncio.get_running_loop().create_task(
+                    _presence_store.update_name(person_id, new_name)
+                )
+            except RuntimeError:
+                pass  # OPTIONAL: no running loop in test/early-boot context
+            # Migrate knowledge rows + rebuild graph. NOTE: person_type
+            # stays as-is (best_friend keeps best_friend; known keeps
+            # known) — this is a NAME correction, not a privilege change.
+            if _brain_orchestrator:
+                _brain_orchestrator.on_identity_confirmed(person_id, person_name, new_name)
+            print(
+                f"[Pipeline] Enrollment-mishear rename: {person_name!r} → "
+                f"{new_name!r} (person_type={_sess_type!r} preserved; "
+                f"session fresh + no voice corroboration)"
+            )
+            return "handled"
+
+        # A rename on an already-KNOWN session is structurally suspicious —
+        # the sensor may have misidentified the speaker. Do NOT rename the DB
+        # row (that would corrupt the known person's identity). Flip to
+        # "disputed": extraction pauses, next turn's SENSOR block surfaces
+        # the mismatch, and the user can clarify before anything is persisted.
+        # Any enrolled-identity session ("known" OR "best_friend") gets the
+        # same dispute-flip treatment — a rename here is structurally suspicious
+        # (sensor may be poisoned) and we MUST NOT touch the DB, since the pid
+        # belongs to a real enrolled person whose identity the system has to
+        # protect. best_friend is especially critical because they're the system
+        # owner: a mis-rename would transfer their privileges to the attacker.
+        if _sess_type in ("known", "best_friend"):
+            if _session_store.peek_snapshot(person_id) is not None:
+                _dispute_ts = time.time()
+                try:
+                    _loop = asyncio.get_running_loop()
+                    _loop.create_task(_session_store.transition_to_disputed(
+                        person_id, new_name,
+                        f"speaker claims name '{new_name}', sensor says '{person_name}'",
+                        now=_dispute_ts,
+                    ))
+                    _loop.create_task(_session_store.set_cached_prefix(person_id, None))
+                except RuntimeError:
+                    pass  # OPTIONAL: no running loop in test/early-boot context
+            if _brain_orchestrator:
+                _brain_orchestrator.mark_disputed(person_id)
+            print(
+                f"[Pipeline] Tool: identity DISPUTED — speaker claims '{new_name}', "
+                f"sensor said '{person_name}' (session was {_sess_type!r}). "
+                f"Extraction paused for this session."
+            )
+            return "handled"
+
+        # Finding G — CRITICAL: a rename on a DISPUTED session must NOT touch
+        # the DB. The disputed pid belongs to the sensor-matched (real) person
+        # whom vision wrongly matched; renaming their row would permanently
+        # overwrite their identity. Block the rename and keep the dispute
+        # active — it will force-close via DISPUTE_MAX_DURATION, and the user
+        # can audit+repair the poisoned gallery (audit_person.py / repair_gallery.py)
+        # or factory-reset if the drift is severe.
+        if _is_disputed(person_id):
+            # N3 — count persistent blocks and surface a watchdog alert once the
+            # count crosses DISPUTE_RENAME_BLOCK_THRESHOLD. `disputed_block_alerted`
+            # prevents re-firing within the same session; both fields evaporate
+            # when _close_session pops the session dict.
+            _block_count = (_exec_snap.disputed_block_count if _exec_snap is not None else 0) + 1
+            try:
+                _loop = asyncio.get_running_loop()
+                _loop.create_task(_session_store.increment_block_count(person_id))
+            except RuntimeError:
+                pass  # OPTIONAL: no running loop in test/early-boot context
+            print(
+                f"[Pipeline] Tool: disputed-session rename to '{new_name}' BLOCKED "
+                f"(block #{_block_count}) — pid '{person_id}' belongs to '{person_name}' "
+                f"(sensor-matched), not the current speaker. Skipping DB rename; "
+                f"dispute stays active until timeout or session end."
+            )
+            if (_block_count >= DISPUTE_RENAME_BLOCK_THRESHOLD
+                    and not (_exec_snap.disputed_block_alerted if _exec_snap is not None else False)
+                    and _brain_orchestrator):
+                try:
+                    _loop = asyncio.get_running_loop()
+                    _loop.create_task(_session_store.mark_block_alerted(person_id))
+                except RuntimeError:
+                    pass  # OPTIONAL: no running loop in test/early-boot context
+                # prior_person_type tells us whether this is a "best_friend"
+                # impersonation (critical) or a general "known" one (warning).
+                _victim_type = (_exec_snap.prior_person_type if _exec_snap is not None else None) or "stranger"
+                _brain_orchestrator.report_dispute_rename_burst(
+                    victim_pid=person_id,
+                    victim_name=person_name,
+                    victim_person_type=_victim_type,
+                    claimed_name=new_name,
+                    block_count=_block_count,
+                    dispute_started_at=_exec_snap.dispute_set_at if _exec_snap is not None else None,
+                )
+            return "handled"
+
+        # Stranger session: legitimate rename path (the pid was minted for this
+        # stranger, so renaming it is the intended promotion to a real name).
+        if db:
+            db.update_person_name(person_id, new_name)
+            _invalidate_bf_cache()  # Session 115 Fix 2 — defensive (stranger rename shouldn't touch bf, but cheap)
+        # Retroactively fix old name in in-memory history
+        old_pat = re.compile(r'\b' + re.escape(person_name) + r'\b', re.IGNORECASE)
+        for msg in _conversation_store.peek_history(person_id):
+            msg["content"] = old_pat.sub(new_name, msg["content"])
+        try:
+            _loop = asyncio.get_running_loop()
+            _loop.create_task(_session_store.rename(person_id, new_name))
+        except RuntimeError:
+            pass  # OPTIONAL: no running loop in test/early-boot context
+        # Session 102 Bug F.3: refresh in-frame cache immediately.
+        try:
+            asyncio.get_running_loop().create_task(
+                _presence_store.update_name(person_id, new_name)
+            )
+        except RuntimeError:
+            pass  # OPTIONAL: no running loop in test/early-boot context
+        # Stranger identity confirmed via LLM tool: run full promotion chain
+        if _sess_type == "stranger":
+            if db:
+                db.update_person_type(person_id, "known")
+            if _brain_orchestrator:
+                _brain_orchestrator.on_identity_confirmed(person_id, person_name, new_name)
+            try:
+                _loop = asyncio.get_running_loop()
+                _loop.create_task(_session_store.promote_type(person_id, "known"))
+                _loop.create_task(_session_store.set_cached_prefix(person_id, None))
+                _loop.create_task(_session_store.set_waiting_for_name(person_id, False))
+            except RuntimeError:
+                pass  # OPTIONAL: no running loop in test/early-boot context
+        print(f"[Pipeline] Tool: person name '{person_name}' → '{new_name}'")
+        return "handled"
+    # Same name — no-op. Bug Q (2026-04-21): return "handled_noop" so the
+    # caller does NOT emit the canonical "Got it, {name}." ack. Writing
+    # that ack to history when nothing actually changed was the feedback
+    # loop that had the LLM re-issue the same tool call across turns.
+    print(f"[Pipeline] Tool: update_person_name no-op (already '{person_name}')")
+    return "handled_noop"
+
+
+async def _handle_report_identity_mismatch(args: dict, ctx: "_ToolContext") -> "str | None":
+    """P0.8 extracted handler — verbatim move of report_identity_mismatch branch from _execute_tool."""
+    # P0.8 mechanical extraction (handler body is verbatim from the original
+    # _execute_tool branch).  Local names rebind from ctx so the body reads
+    # identically.  Intent + grounding gates stay inside — P1.A3 extracts
+    # them next.
+    args           = ctx.args
+    person_id      = ctx.person_id
+    person_name    = ctx.person_name
+    db             = ctx.db
+    user_text      = ctx.user_text
+    intent_sidecar = ctx.intent_sidecar
+    _exec_snap     = ctx.exec_snap
+
+    # Bug G3 (2026-04-22 live run): the second-biggest blast-radius tool
+    # was the only Session 71+ side-effect tool without a user-text gate.
+    # Jagan's legit multi-person scene question "who are you talking to?"
+    # was interpreted as identity denial by the LLM → session flipped
+    # DISPUTED → ~15 broken turns. Gate requires a denial-signal phrase.
+    # Session 86 P1.7b: classifier-first; regex fallback on classifier
+    # unavail. Same 3-branch pattern as update_person_name (P1.7a canary).
+    from core.config import INTENT_FALLBACK_TO_REGEX
+    if intent_sidecar is not None:
+        _allowed, _reason = _intent_allows(
+            tool_name="report_identity_mismatch",
+            turn_intent=intent_sidecar.get("turn_intent") or "",
+            confidence=float(intent_sidecar.get("confidence") or 0.0),
+            extracted_value=intent_sidecar.get("extracted_value"),
+            user_text=user_text,
+            tool_args=args,
+        )
+        if not _allowed:
+            _last_msg_preview = ((user_text or "").strip())[:80]
+            print(
+                f"[Pipeline] Tool: report_identity_mismatch REJECTED (intent) "
+                f"— {_reason}; user_text: '{_last_msg_preview}'"
+            )
+            _log_intent_divergence(
+                tool_name="report_identity_mismatch",
+                sidecar=intent_sidecar,
+                gate_decision=f"reject: {_reason}",
+                user_text=user_text, person_id=person_id,
+            )
+            return "rejected"
+        print(
+            f"[Pipeline] Tool: report_identity_mismatch allowed by intent "
+            f"gate — {_reason}"
+        )
+        _log_intent_divergence(
+            tool_name="report_identity_mismatch",
+            sidecar=intent_sidecar,
+            gate_decision="allow",
+            user_text=user_text, person_id=person_id,
+        )
+    elif INTENT_FALLBACK_TO_REGEX:
+        if not _user_text_gate_passes(user_text, None, IDENTITY_DENIAL_PATTERNS):
+            _last_msg_preview = ((user_text or "").strip())[:80]
+            print(
+                f"[Pipeline] Tool: report_identity_mismatch REJECTED "
+                f"(regex fallback) — user did not deny identity in: "
+                f"'{_last_msg_preview}'"
+            )
+            _log_intent_divergence(
+                tool_name="report_identity_mismatch",
+                sidecar=None,
+                gate_decision="regex_fallback_reject",
+                user_text=user_text, person_id=person_id,
+            )
+            return "rejected"
+        _log_intent_divergence(
+            tool_name="report_identity_mismatch",
+            sidecar=None,
+            gate_decision="regex_fallback_allow",
+            user_text=user_text, person_id=person_id,
+        )
+    else:
+        print(
+            f"[Pipeline] WARN: report_identity_mismatch — classifier "
+            f"unavailable AND fallback disabled; allowing with warning"
+        )
+        _log_intent_divergence(
+            tool_name="report_identity_mismatch",
+            sidecar=None,
+            gate_decision="both_unavailable_allow_with_warning",
+            user_text=user_text, person_id=person_id,
+        )
+
+    reason = (args.get("reason") or "").strip() or "identity mismatch reported"
+    if _session_store.peek_snapshot(person_id) is not None:
+        _dispute_ts_ridm = time.time()
+        try:
+            _loop = asyncio.get_running_loop()
+            _loop.create_task(_session_store.transition_to_disputed(
+                person_id, None, reason, now=_dispute_ts_ridm,
+            ))
+            _loop.create_task(_session_store.set_cached_prefix(person_id, None))
+        except RuntimeError:
+            pass  # OPTIONAL: no running loop in test/early-boot context
+    if _brain_orchestrator:
+        _brain_orchestrator.mark_disputed(person_id)
+    print(f"[Pipeline] Tool: identity DISPUTED for {person_name} — {reason}")
+    return "handled"
+
+
+async def _handle_update_system_name(args: dict, ctx: "_ToolContext") -> "str | None":
+    """P0.8 extracted handler — verbatim move of update_system_name branch from _execute_tool."""
+    # P0.8 mechanical extraction (handler body is verbatim from the original
+    # _execute_tool branch).  Local names rebind from ctx so the body reads
+    # identically.  Intent + grounding gates stay inside — P1.A3 extracts
+    # them next.
+    args           = ctx.args
+    person_id      = ctx.person_id
+    person_name    = ctx.person_name
+    db             = ctx.db
+    user_text      = ctx.user_text
+    intent_sidecar = ctx.intent_sidecar
+    _exec_snap     = ctx.exec_snap
+
+    new_name, _ = sanitize_name(args.get("name") or "")
+    if not new_name or new_name.lower() in _INVALID_SYSTEM_NAMES:
+        print(f"[Pipeline] Tool: update_system_name rejected invalid name '{new_name}'")
+        return None
+
+    # Bug G1 (2026-04-22 live run): Session 71's OR-gate accepted
+    # "do you know the GAME called Detroit?" because 'Detroit' appeared in
+    # the turn — and the system renamed itself to "Detroit". Session 73
+    # tightened to capture-group regex; Session 86 P1.7b layers the
+    # classifier gate on top (this is the fix for the 2026-04-22 Alexa
+    # bug: "I want it to be changed to Alexa" rejected by regex 3× even
+    # though classifier got it right at 0.95 every time).
+    from core.config import INTENT_FALLBACK_TO_REGEX
+    if intent_sidecar is not None:
+        _allowed, _reason = _intent_allows(
+            tool_name="update_system_name",
+            turn_intent=intent_sidecar.get("turn_intent") or "",
+            confidence=float(intent_sidecar.get("confidence") or 0.0),
+            extracted_value=intent_sidecar.get("extracted_value"),
+            user_text=user_text,
+            tool_args=args,
+        )
+        if not _allowed:
+            _last_msg_preview = ((user_text or "").strip())[:80]
+            print(
+                f"[Pipeline] Tool: update_system_name REJECTED (intent) "
+                f"— {_reason}; user_text: '{_last_msg_preview}'"
+            )
+            _log_intent_divergence(
+                tool_name="update_system_name",
+                sidecar=intent_sidecar,
+                gate_decision=f"reject: {_reason}",
+                user_text=user_text, person_id=person_id,
+            )
+            return "rejected"
+        print(
+            f"[Pipeline] Tool: update_system_name allowed by intent gate "
+            f"— {_reason}"
+        )
+        _log_intent_divergence(
+            tool_name="update_system_name",
+            sidecar=intent_sidecar,
+            gate_decision="allow",
+            user_text=user_text, person_id=person_id,
+        )
+    elif INTENT_FALLBACK_TO_REGEX:
+        if not _user_text_gate_passes(user_text, new_name, SYSTEM_NAME_ASSIGN_PATTERNS):
+            _last_msg_preview = ((user_text or "").strip())[:80]
+            print(
+                f"[Pipeline] Tool: update_system_name REJECTED "
+                f"(regex fallback) — user did not assign '{new_name}' in: "
+                f"'{_last_msg_preview}'"
+            )
+            _log_intent_divergence(
+                tool_name="update_system_name",
+                sidecar=None,
+                gate_decision="regex_fallback_reject",
+                user_text=user_text, person_id=person_id,
+            )
+            return "rejected"
+        _log_intent_divergence(
+            tool_name="update_system_name",
+            sidecar=None,
+            gate_decision="regex_fallback_allow",
+            user_text=user_text, person_id=person_id,
+        )
+    else:
+        print(
+            f"[Pipeline] WARN: update_system_name — classifier unavailable "
+            f"AND fallback disabled; allowing with warning"
+        )
+        _log_intent_divergence(
+            tool_name="update_system_name",
+            sidecar=None,
+            gate_decision="both_unavailable_allow_with_warning",
+            user_text=user_text, person_id=person_id,
+        )
+
+    if new_name.lower() != _pipeline_state_store.peek_active_system_name().lower():
+        await _pipeline_state_store.set_active_system_name(new_name)
+        # Invalidate prefix cache for ALL sessions — system_name is in Section 2
+        try:
+            _loop = asyncio.get_running_loop()
+            for _snap_inv in _session_store.peek_all_snapshots():
+                _loop.create_task(_session_store.set_cached_prefix(_snap_inv.person_id, None))
+        except RuntimeError:
+            pass  # OPTIONAL
+        if _brain_orchestrator:
+            _brain_orchestrator.set_system_name(new_name)
+        if db:
+            db.set_system_identity(
+                "system_name", new_name,
+                set_by=person_id,
+                note=f"named by {person_name}",
+            )
+        print(f"[Pipeline] Tool: system name → '{new_name}'")
+        return "handled"
+    # Same name — no-op. Bug Q: no canonical ack, no history write.
+    # The redundant "Got it, I'll go by Kara." on turns 15/17/19 in the
+    # 2026-04-21 run was the direct feedback-loop driver.
+    print(f"[Pipeline] Tool: update_system_name no-op (already '{_pipeline_state_store.peek_active_system_name()}')")
+    return "handled_noop"
+
+
+async def _handle_shutdown(args: dict, ctx: "_ToolContext") -> "str | None":
+    """P0.8 extracted handler — verbatim move of shutdown branch from _execute_tool."""
+    # P0.8 mechanical extraction (handler body is verbatim from the original
+    # _execute_tool branch).  Local names rebind from ctx so the body reads
+    # identically.  Intent + grounding gates stay inside — P1.A3 extracts
+    # them next.
+    args           = ctx.args
+    person_id      = ctx.person_id
+    person_name    = ctx.person_name
+    db             = ctx.db
+    user_text      = ctx.user_text
+    intent_sidecar = ctx.intent_sidecar
+    _exec_snap     = ctx.exec_snap
+
+    # Session 86 P1.7b site 4: classifier-first; 3-regex fallback (strict
+    # phrases + lenient goodnight + question-about-shutdown exclusion)
+    # kept intact as the safety net. Shutdown is the highest-blast-radius
+    # mutation tool so BOTH gates must agree for a shutdown to fire in the
+    # dual-gate phase. ``request_shutdown`` requires INTENT_SHUTDOWN_CONF_MIN
+    # (0.80), strictly higher than the general 0.75 floor — wired via the
+    # tool_name branch in _intent_allows.
+    from core.config import INTENT_FALLBACK_TO_REGEX
+    _last_msg = (user_text or "").lower()
+    _SHUTDOWN_STRICT = (
+        "shut down", "shutdown", "turn off", "go to sleep", "stop listening",
+        "bye i'm done", "power off", "switch off",
+    )
+    _SHUTDOWN_LENIENT_RE = re.compile(
+        r"^\s*(?:good\s?night|i'?m\s+done|i\s+am\s+done)\s*[!.?]*\s*$"
+    )
+
+    def _regex_says_shutdown(msg: str) -> bool:
+        """Legacy 3-regex chain — strict phrases + lenient goodnight
+        minus question-about-shutdown exclusion. Extracted so the
+        fallback branch reads cleanly and the shared logic is in one
+        place."""
+        has_phrase = (
+            any(re.search(r'\b' + re.escape(p) + r'\b', msg) for p in _SHUTDOWN_STRICT)
+            or bool(_SHUTDOWN_LENIENT_RE.match(msg))
+        )
+        is_question = has_phrase and _SHUTDOWN_QUESTION_RE.search(msg)
+        return bool(msg and has_phrase and not is_question)
+
+    if intent_sidecar is not None:
+        _allowed, _reason = _intent_allows(
+            tool_name="shutdown",
+            turn_intent=intent_sidecar.get("turn_intent") or "",
+            confidence=float(intent_sidecar.get("confidence") or 0.0),
+            extracted_value=intent_sidecar.get("extracted_value"),
+            user_text=user_text,
+            tool_args=args,
+        )
+        if not _allowed:
+            print(
+                f"[Pipeline] Tool: shutdown REJECTED (intent) — {_reason}; "
+                f"user_text: '{_last_msg[:80]}'"
+            )
+            _log_intent_divergence(
+                tool_name="shutdown",
+                sidecar=intent_sidecar,
+                gate_decision=f"reject: {_reason}",
+                user_text=user_text, person_id=person_id,
+            )
+            return "rejected"
+        print(f"[Pipeline] Tool: shutdown allowed by intent gate — {_reason}")
+        _log_intent_divergence(
+            tool_name="shutdown",
+            sidecar=intent_sidecar,
+            gate_decision="allow",
+            user_text=user_text, person_id=person_id,
+        )
+    elif INTENT_FALLBACK_TO_REGEX:
+        if not _regex_says_shutdown(_last_msg):
+            print(
+                f"[Pipeline] Tool: shutdown REJECTED (regex fallback) — "
+                f"no explicit command in: '{_last_msg[:80]}'"
+            )
+            _log_intent_divergence(
+                tool_name="shutdown",
+                sidecar=None,
+                gate_decision="regex_fallback_reject",
+                user_text=user_text, person_id=person_id,
+            )
+            return "rejected"
+        _log_intent_divergence(
+            tool_name="shutdown",
+            sidecar=None,
+            gate_decision="regex_fallback_allow",
+            user_text=user_text, person_id=person_id,
+        )
+    else:
+        # Shutdown's both-unavailable policy diverges from the other
+        # mutation tools: allow-with-warning would risk an unintended
+        # system shutdown if the classifier blips. For the biggest-
+        # blast-radius tool we fail CLOSED — user can retry their
+        # command in ~10s once the classifier recovers.
+        print(
+            f"[Pipeline] WARN: shutdown — classifier unavailable AND "
+            f"fallback disabled; REJECTING (fail-closed for highest "
+            f"blast radius)"
+        )
+        _log_intent_divergence(
+            tool_name="shutdown",
+            sidecar=None,
+            gate_decision="both_unavailable_reject_failclosed",
+            user_text=user_text, person_id=person_id,
+        )
+        return "rejected"
+    print("[Pipeline] Tool: shutdown requested")
+    return "shutdown"
+
+
+async def _handle_search_memory(args: dict, ctx: "_ToolContext") -> "str | None":
+    """P0.8 extracted handler — verbatim move of search_memory branch from _execute_tool."""
+    # P0.8 mechanical extraction (handler body is verbatim from the original
+    # _execute_tool branch).  Local names rebind from ctx so the body reads
+    # identically.  Intent + grounding gates stay inside — P1.A3 extracts
+    # them next.
+    args           = ctx.args
+    person_id      = ctx.person_id
+    person_name    = ctx.person_name
+    db             = ctx.db
+    user_text      = ctx.user_text
+    intent_sidecar = ctx.intent_sidecar
+    _exec_snap     = ctx.exec_snap
+
+    # Normally handled inside ask_stream (brain.py). This branch fires only in
+    # degraded paths (SICK state non-streaming). Graceful no-op.
+    print("[Pipeline] Tool: search_memory fallback — not executed in degraded mode")
+    return None
+
+
+# P0.8: dispatch table — single source of truth for tool→handler mapping.
+# _execute_tool looks up the handler here, then wraps the call in
+# asyncio.wait_for with a per-tool budget from TOOL_TIMEOUT_OVERRIDES.
+# Adding a new tool: define _handle_<name>, register here, add a
+# TOOL_TIMEOUT_OVERRIDES entry if its budget differs from TOOL_TIMEOUT_SECS.
+_TOOL_HANDLERS: "dict[str, object]" = {
+    "update_person_name":       _handle_update_person_name,
+    "report_identity_mismatch": _handle_report_identity_mismatch,
+    "update_system_name":       _handle_update_system_name,
+    "shutdown":                 _handle_shutdown,
+    "search_memory":            _handle_search_memory,
+}
 
 
 async def _execute_tool(
@@ -3688,10 +4238,14 @@ async def _execute_tool(
                         doesn't exist) and None (privilege denied / internal
                         error). Both "rejected" and "unknown" route through the
                         same Ollama-text retry path in conversation_turn.
+      "tool_timeout"  — P0.8 (2026-05-16): handler exceeded its per-tool wall-clock
+                        budget (TOOL_TIMEOUT_OVERRIDES or TOOL_TIMEOUT_SECS).
+                        asyncio.wait_for cancelled the task; transaction
+                        wrappers rolled back any partial SQL state via __aexit__.
+                        Routes through the same retry path as "rejected" /
+                        "unknown" with a tool-timeout system_note.
       None            — blocked by privilege gate, repeat guard, or internal error.
     """
-    global _active_system_name, _detected_lang
-
     # ── Layer 0: Unknown-tool filter (Bug P, 2026-04-21 live run) ────────────
     # TOOL_PRIVILEGES is the canonical registry — a startup assertion ties every
     # `brain.TOOLS` entry to a row here, so "not in table" means the LLM invented
@@ -3753,641 +4307,77 @@ async def _execute_tool(
         )
         return None
 
-    if name == "update_person_name":
-        new_name, _ = sanitize_name(args.get("name") or "")
-        _sess_type  = _exec_snap.person_type if _exec_snap is not None else "known"
+    # P0.8: context bundle passed to extracted handlers.  Built once after
+    # all pre-dispatch gates pass; carries the per-call inputs and derived
+    # state.  Handler signature is async (args, ctx) — matches the dispatch
+    # table _TOOL_HANDLERS that P0.8-7 wires up via asyncio.wait_for.
+    _ctx = _ToolContext(
+        args=args,
+        person_id=person_id,
+        person_name=person_name,
+        db=db,
+        user_text=user_text,
+        intent_sidecar=intent_sidecar,
+        exec_snap=_exec_snap,
+        caller_type=_caller_type,
+    )
 
-        # Session 101 Bug F.2 — enrollment-mishear escape hatch with
-        # widened intent set. Runs BEFORE the normal `_intent_allows` gate
-        # because natural correction phrasings ("No, it's not Javan, it's
-        # Jagan") classify as `deny_identity` (linguistically correct —
-        # denial + correction) rather than `assign_own_name`. The classic
-        # `_intent_allows` check on `update_person_name` only accepts
-        # `assign_own_name`, so the original Session 100 Bug F escape
-        # hatch (which runs AFTER the gate) never activated for the exact
-        # phrasing users actually produce. 2026-04-23 re-canary: rename
-        # blocked → person_id stays at STT-mangled "Jawan" → all
-        # downstream facts stored under wrong entity, PromptPrefAgent
-        # encoded "use 'Jawan' as preferred form," dashboard frozen.
-        #
-        # Widening: during the fresh-enrollment window (face only, no
-        # voice corroboration — same gate as Session 100's
-        # _is_enrollment_mishear_candidate), accept 3 intents for
-        # update_person_name: assign_own_name, deny_identity,
-        # confirm_identity. Each MUST still satisfy the full grounding
-        # contract (extracted_value present AND appears NFKC-casefolded
-        # in user_text) so ungrounded hallucinations can't sneak through.
-        # Mature-session security (mid-session rename → dispute) is
-        # PRESERVED because `_is_enrollment_mishear_candidate` fails on
-        # any session past the grace window or with voice samples.
-        if (
-            new_name
-            and new_name.lower() != person_name.lower()
-            and _sess_type in ("known", "best_friend")
-            and _is_enrollment_mishear_candidate(db, person_id, _exec_snap)
-            and intent_sidecar is not None
-        ):
-            from core.config import INTENT_CONFIDENCE_MIN as _ICM
-            _mishear_intents = frozenset((
-                "assign_own_name", "deny_identity", "confirm_identity",
-            ))
-            _mi_intent = intent_sidecar.get("turn_intent") or ""
-            _mi_conf   = float(intent_sidecar.get("confidence") or 0.0)
-            _mi_val    = intent_sidecar.get("extracted_value")
-            _mi_val_s  = str(_mi_val).strip() if _mi_val else ""
-            _grounded  = bool(_mi_val_s) and (
-                _nfkc_lower(_mi_val_s) in _nfkc_lower(user_text or "")
-            )
-            if (
-                _mi_intent in _mishear_intents
-                and _mi_conf >= _ICM
-                and _grounded
-            ):
-                if db:
-                    db.update_person_name(person_id, new_name)
-                    _invalidate_bf_cache()  # Session 115 Fix 2 — rename may target bf
-                _old_pat_mh2 = re.compile(
-                    r'\b' + re.escape(person_name) + r'\b', re.IGNORECASE,
-                )
-                for _msg_mh in _conversation.get(person_id, []):
-                    _msg_mh["content"] = _old_pat_mh2.sub(
-                        new_name, _msg_mh["content"],
-                    )
-                if _session_store.peek_snapshot(person_id) is not None:
-                    try:
-                        _loop = asyncio.get_running_loop()
-                        _loop.create_task(_session_store.rename(person_id, new_name))
-                    except RuntimeError:
-                        pass  # OPTIONAL: no running loop in test/early-boot context
-                # Session 102 Bug F.3: update the in-frame cache
-                # immediately so the SCENE block and [Vision] logs don't
-                # keep rendering the old name until the next background
-                # scan lands (~1s). Belt-and-braces with the background-
-                # scan refresh.
-                if person_id in _persons_in_frame:
-                    _persons_in_frame[person_id]["name"] = new_name
-                if _brain_orchestrator:
-                    _brain_orchestrator.on_identity_confirmed(
-                        person_id, person_name, new_name,
-                    )
-                print(
-                    f"[Pipeline] Enrollment-mishear rename (Bug F.2): "
-                    f"{person_name!r} → {new_name!r} "
-                    f"(intent={_mi_intent}, person_type={_sess_type!r}, "
-                    f"conf={_mi_conf:.2f})"
-                )
-                _log_intent_divergence(
-                    tool_name="update_person_name",
-                    sidecar=intent_sidecar,
-                    gate_decision=f"allow_mishear_{_mi_intent}",
-                    user_text=user_text, person_id=person_id,
-                )
-                return "handled"
+    # P0.8: dispatch table + per-tool timeout.  asyncio.wait_for wraps ONLY
+    # the handler invocation; Layer 0 / repeat / privilege gates above it
+    # run un-budgeted (they're micro-operations).  On TimeoutError, the
+    # handler task is cancelled and CancelledError propagates through
+    # transaction wrappers (FaceDB.transaction / BrainDB._safe_commit
+    # __aexit__) — partial SQL writes roll back automatically.
+    # P0.0.7 H7 — emit tool_call event BEFORE dispatch via safe_emit_sync.
+    # The writer task's _flush_one assigns an id, records it in
+    # _recent_parent under (session_id=person_id, event_type="tool_call");
+    # the tool_result event below auto-resolves parent_event_id via
+    # NATURAL_PARENT_PAIRS. Single P0.4-annotated except in safe_emit_sync.
+    from core.event_log import safe_emit_sync, ToolCallPayload
+    safe_emit_sync(
+        "tool_call",
+        ToolCallPayload(
+            name=name,
+            args=dict(args or {}),
+            person_id=person_id,
+            intent_sidecar=dict(intent_sidecar) if intent_sidecar else None,
+        ),
+        session_id=person_id,
+    )
 
-        # VISION_ROADMAP P1.7a (Session 85): classifier-first gate, regex
-        # fallback. Order: (1) if _classify_intent fired this turn, use
-        # _intent_allows — dual-gate (intent match + confidence floor +
-        # grounding + arg cross-check) is the new authority. (2) If classifier
-        # was unavailable AND INTENT_FALLBACK_TO_REGEX=True, fall through to
-        # the legacy regex gate (Session 73's capture-group rule). (3) If
-        # classifier was unavailable AND fallback is disabled (P1.17+), allow
-        # with a warning — silently dropping mutation tools on classifier
-        # failure would be worse UX than a logged wide-open path. All three
-        # outcomes land a row in brain.db.intent_divergences for Phase 5.
-        if new_name:
-            from core.config import INTENT_FALLBACK_TO_REGEX
-            _gate_allowed = True
-            _gate_reason  = "no gate evaluated"
-            if intent_sidecar is not None:
-                _allowed, _reason = _intent_allows(
-                    tool_name="update_person_name",
-                    turn_intent=intent_sidecar.get("turn_intent") or "",
-                    confidence=float(intent_sidecar.get("confidence") or 0.0),
-                    extracted_value=intent_sidecar.get("extracted_value"),
-                    user_text=user_text,
-                    tool_args=args,
-                )
-                if not _allowed:
-                    _last_msg_preview = ((user_text or "").strip())[:80]
-                    print(
-                        f"[Pipeline] Tool: update_person_name REJECTED (intent) "
-                        f"— {_reason}; user_text: '{_last_msg_preview}'"
-                    )
-                    _log_intent_divergence(
-                        tool_name="update_person_name",
-                        sidecar=intent_sidecar,
-                        gate_decision=f"reject: {_reason}",
-                        user_text=user_text, person_id=person_id,
-                    )
-                    return "rejected"
-                print(
-                    f"[Pipeline] Tool: update_person_name allowed by intent "
-                    f"gate — {_reason}"
-                )
-                _log_intent_divergence(
-                    tool_name="update_person_name",
-                    sidecar=intent_sidecar,
-                    gate_decision="allow",
-                    user_text=user_text, person_id=person_id,
-                )
-            elif INTENT_FALLBACK_TO_REGEX:
-                if not _user_text_gate_passes(
-                    user_text, new_name, PERSON_NAME_ASSIGN_PATTERNS
-                ):
-                    _last_msg_preview = ((user_text or "").strip())[:80]
-                    print(
-                        f"[Pipeline] Tool: update_person_name REJECTED "
-                        f"(regex fallback) — user did not self-identify as "
-                        f"'{new_name}' in: '{_last_msg_preview}'"
-                    )
-                    _log_intent_divergence(
-                        tool_name="update_person_name",
-                        sidecar=None,
-                        gate_decision="regex_fallback_reject",
-                        user_text=user_text, person_id=person_id,
-                    )
-                    return "rejected"
-                _log_intent_divergence(
-                    tool_name="update_person_name",
-                    sidecar=None,
-                    gate_decision="regex_fallback_allow",
-                    user_text=user_text, person_id=person_id,
-                )
-            else:
-                # Both classifier unavailable AND fallback disabled — this
-                # state only happens after P1.17 flips the fallback off AND
-                # the classifier genuinely failed (timeout / parse). Silent
-                # drop would feel broken; log loudly and allow so legitimate
-                # mutation tools aren't blackholed on infrastructure blips.
-                print(
-                    f"[Pipeline] WARN: update_person_name — classifier "
-                    f"unavailable AND fallback disabled; allowing with warning"
-                )
-                _log_intent_divergence(
-                    tool_name="update_person_name",
-                    sidecar=None,
-                    gate_decision="both_unavailable_allow_with_warning",
-                    user_text=user_text, person_id=person_id,
-                )
-
-        if new_name and new_name.lower() != person_name.lower():
-            # Session 100 Bug F — enrollment-mishear escape hatch. When a
-            # fresh-enrollment session (face only, no voice corroboration) sees
-            # a grounded rename claim, allow it through the stranger-promotion
-            # chain instead of flipping to disputed. 2026-04-23 canary: STT
-            # mishear at first boot wrote "Gevan" instead of "Jagan"; the
-            # classic dispute-flip locked the wrong name in place for the
-            # whole session + cascaded into all downstream facts. The classifier
-            # gate above has already validated the rename is grounded
-            # (assign_own_name intent + user_text match); this branch only
-            # decides the ROUTING between dispute-flip and promotion-rename.
-            if (
-                _sess_type in ("known", "best_friend")
-                and _is_enrollment_mishear_candidate(db, person_id, _exec_snap)
-            ):
-                if db:
-                    db.update_person_name(person_id, new_name)
-                    _invalidate_bf_cache()  # Session 115 Fix 2 — rename may target bf
-                old_pat_mh = re.compile(r'\b' + re.escape(person_name) + r'\b', re.IGNORECASE)
-                for msg in _conversation.get(person_id, []):
-                    msg["content"] = old_pat_mh.sub(new_name, msg["content"])
-                if _session_store.peek_snapshot(person_id) is not None:
-                    try:
-                        _loop = asyncio.get_running_loop()
-                        _loop.create_task(_session_store.rename(person_id, new_name))
-                    except RuntimeError:
-                        pass  # OPTIONAL: no running loop in test/early-boot context
-                # Session 102 Bug F.3: refresh in-frame cache immediately.
-                if person_id in _persons_in_frame:
-                    _persons_in_frame[person_id]["name"] = new_name
-                # Migrate knowledge rows + rebuild graph. NOTE: person_type
-                # stays as-is (best_friend keeps best_friend; known keeps
-                # known) — this is a NAME correction, not a privilege change.
-                if _brain_orchestrator:
-                    _brain_orchestrator.on_identity_confirmed(person_id, person_name, new_name)
-                print(
-                    f"[Pipeline] Enrollment-mishear rename: {person_name!r} → "
-                    f"{new_name!r} (person_type={_sess_type!r} preserved; "
-                    f"session fresh + no voice corroboration)"
-                )
-                return "handled"
-
-            # A rename on an already-KNOWN session is structurally suspicious —
-            # the sensor may have misidentified the speaker. Do NOT rename the DB
-            # row (that would corrupt the known person's identity). Flip to
-            # "disputed": extraction pauses, next turn's SENSOR block surfaces
-            # the mismatch, and the user can clarify before anything is persisted.
-            # Any enrolled-identity session ("known" OR "best_friend") gets the
-            # same dispute-flip treatment — a rename here is structurally suspicious
-            # (sensor may be poisoned) and we MUST NOT touch the DB, since the pid
-            # belongs to a real enrolled person whose identity the system has to
-            # protect. best_friend is especially critical because they're the system
-            # owner: a mis-rename would transfer their privileges to the attacker.
-            if _sess_type in ("known", "best_friend"):
-                if _session_store.peek_snapshot(person_id) is not None:
-                    _dispute_ts = time.time()
-                    try:
-                        _loop = asyncio.get_running_loop()
-                        _loop.create_task(_session_store.transition_to_disputed(
-                            person_id, new_name,
-                            f"speaker claims name '{new_name}', sensor says '{person_name}'",
-                            now=_dispute_ts,
-                        ))
-                        _loop.create_task(_session_store.set_cached_prefix(person_id, None))
-                    except RuntimeError:
-                        pass  # OPTIONAL: no running loop in test/early-boot context
-                if _brain_orchestrator:
-                    _brain_orchestrator.mark_disputed(person_id)
-                print(
-                    f"[Pipeline] Tool: identity DISPUTED — speaker claims '{new_name}', "
-                    f"sensor said '{person_name}' (session was {_sess_type!r}). "
-                    f"Extraction paused for this session."
-                )
-                return "handled"
-
-            # Finding G — CRITICAL: a rename on a DISPUTED session must NOT touch
-            # the DB. The disputed pid belongs to the sensor-matched (real) person
-            # whom vision wrongly matched; renaming their row would permanently
-            # overwrite their identity. Block the rename and keep the dispute
-            # active — it will force-close via DISPUTE_MAX_DURATION, and the user
-            # can audit+repair the poisoned gallery (audit_person.py / repair_gallery.py)
-            # or factory-reset if the drift is severe.
-            if _is_disputed(person_id):
-                # N3 — count persistent blocks and surface a watchdog alert once the
-                # count crosses DISPUTE_RENAME_BLOCK_THRESHOLD. `disputed_block_alerted`
-                # prevents re-firing within the same session; both fields evaporate
-                # when _close_session pops the session dict.
-                _block_count = (_exec_snap.disputed_block_count if _exec_snap is not None else 0) + 1
-                try:
-                    _loop = asyncio.get_running_loop()
-                    _loop.create_task(_session_store.increment_block_count(person_id))
-                except RuntimeError:
-                    pass  # OPTIONAL: no running loop in test/early-boot context
-                print(
-                    f"[Pipeline] Tool: disputed-session rename to '{new_name}' BLOCKED "
-                    f"(block #{_block_count}) — pid '{person_id}' belongs to '{person_name}' "
-                    f"(sensor-matched), not the current speaker. Skipping DB rename; "
-                    f"dispute stays active until timeout or session end."
-                )
-                if (_block_count >= DISPUTE_RENAME_BLOCK_THRESHOLD
-                        and not (_exec_snap.disputed_block_alerted if _exec_snap is not None else False)
-                        and _brain_orchestrator):
-                    try:
-                        _loop = asyncio.get_running_loop()
-                        _loop.create_task(_session_store.mark_block_alerted(person_id))
-                    except RuntimeError:
-                        pass  # OPTIONAL: no running loop in test/early-boot context
-                    # prior_person_type tells us whether this is a "best_friend"
-                    # impersonation (critical) or a general "known" one (warning).
-                    _victim_type = (_exec_snap.prior_person_type if _exec_snap is not None else None) or "stranger"
-                    _brain_orchestrator.report_dispute_rename_burst(
-                        victim_pid=person_id,
-                        victim_name=person_name,
-                        victim_person_type=_victim_type,
-                        claimed_name=new_name,
-                        block_count=_block_count,
-                        dispute_started_at=_exec_snap.dispute_set_at if _exec_snap is not None else None,
-                    )
-                return "handled"
-
-            # Stranger session: legitimate rename path (the pid was minted for this
-            # stranger, so renaming it is the intended promotion to a real name).
-            if db:
-                db.update_person_name(person_id, new_name)
-                _invalidate_bf_cache()  # Session 115 Fix 2 — defensive (stranger rename shouldn't touch bf, but cheap)
-            # Retroactively fix old name in in-memory history
-            old_pat = re.compile(r'\b' + re.escape(person_name) + r'\b', re.IGNORECASE)
-            for msg in _conversation.get(person_id, []):
-                msg["content"] = old_pat.sub(new_name, msg["content"])
-            try:
-                _loop = asyncio.get_running_loop()
-                _loop.create_task(_session_store.rename(person_id, new_name))
-            except RuntimeError:
-                pass  # OPTIONAL: no running loop in test/early-boot context
-            # Session 102 Bug F.3: refresh in-frame cache immediately.
-            if person_id in _persons_in_frame:
-                _persons_in_frame[person_id]["name"] = new_name
-            # Stranger identity confirmed via LLM tool: run full promotion chain
-            if _sess_type == "stranger":
-                if db:
-                    db.update_person_type(person_id, "known")
-                if _brain_orchestrator:
-                    _brain_orchestrator.on_identity_confirmed(person_id, person_name, new_name)
-                try:
-                    _loop = asyncio.get_running_loop()
-                    _loop.create_task(_session_store.promote_type(person_id, "known"))
-                    _loop.create_task(_session_store.set_cached_prefix(person_id, None))
-                    _loop.create_task(_session_store.set_waiting_for_name(person_id, False))
-                except RuntimeError:
-                    pass  # OPTIONAL: no running loop in test/early-boot context
-            print(f"[Pipeline] Tool: person name '{person_name}' → '{new_name}'")
-            return "handled"
-        # Same name — no-op. Bug Q (2026-04-21): return "handled_noop" so the
-        # caller does NOT emit the canonical "Got it, {name}." ack. Writing
-        # that ack to history when nothing actually changed was the feedback
-        # loop that had the LLM re-issue the same tool call across turns.
-        print(f"[Pipeline] Tool: update_person_name no-op (already '{person_name}')")
-        return "handled_noop"
-
-    elif name == "report_identity_mismatch":
-        # Bug G3 (2026-04-22 live run): the second-biggest blast-radius tool
-        # was the only Session 71+ side-effect tool without a user-text gate.
-        # Jagan's legit multi-person scene question "who are you talking to?"
-        # was interpreted as identity denial by the LLM → session flipped
-        # DISPUTED → ~15 broken turns. Gate requires a denial-signal phrase.
-        # Session 86 P1.7b: classifier-first; regex fallback on classifier
-        # unavail. Same 3-branch pattern as update_person_name (P1.7a canary).
-        from core.config import INTENT_FALLBACK_TO_REGEX
-        if intent_sidecar is not None:
-            _allowed, _reason = _intent_allows(
-                tool_name="report_identity_mismatch",
-                turn_intent=intent_sidecar.get("turn_intent") or "",
-                confidence=float(intent_sidecar.get("confidence") or 0.0),
-                extracted_value=intent_sidecar.get("extracted_value"),
-                user_text=user_text,
-                tool_args=args,
-            )
-            if not _allowed:
-                _last_msg_preview = ((user_text or "").strip())[:80]
-                print(
-                    f"[Pipeline] Tool: report_identity_mismatch REJECTED (intent) "
-                    f"— {_reason}; user_text: '{_last_msg_preview}'"
-                )
-                _log_intent_divergence(
-                    tool_name="report_identity_mismatch",
-                    sidecar=intent_sidecar,
-                    gate_decision=f"reject: {_reason}",
-                    user_text=user_text, person_id=person_id,
-                )
-                return "rejected"
+    handler = _TOOL_HANDLERS.get(name)
+    if handler is None:
+        _tool_result_status = None  # defensive — tool in registry but no handler
+        _tool_result_error: "str | None" = "no_handler_registered"
+    else:
+        _timeout = TOOL_TIMEOUT_OVERRIDES.get(name, TOOL_TIMEOUT_SECS)
+        _tool_result_error = None
+        try:
+            _tool_result_status = await asyncio.wait_for(handler(args, _ctx), timeout=_timeout)
+        except asyncio.TimeoutError:
             print(
-                f"[Pipeline] Tool: report_identity_mismatch allowed by intent "
-                f"gate — {_reason}"
+                f"[Pipeline] Tool: {name!r} TIMEOUT after {_timeout}s "
+                f"(person={person_name!r}). Task cancelled; partial SQL state "
+                f"rolled back via transaction __aexit__. Routing to retry path."
             )
-            _log_intent_divergence(
-                tool_name="report_identity_mismatch",
-                sidecar=intent_sidecar,
-                gate_decision="allow",
-                user_text=user_text, person_id=person_id,
-            )
-        elif INTENT_FALLBACK_TO_REGEX:
-            if not _user_text_gate_passes(user_text, None, IDENTITY_DENIAL_PATTERNS):
-                _last_msg_preview = ((user_text or "").strip())[:80]
-                print(
-                    f"[Pipeline] Tool: report_identity_mismatch REJECTED "
-                    f"(regex fallback) — user did not deny identity in: "
-                    f"'{_last_msg_preview}'"
-                )
-                _log_intent_divergence(
-                    tool_name="report_identity_mismatch",
-                    sidecar=None,
-                    gate_decision="regex_fallback_reject",
-                    user_text=user_text, person_id=person_id,
-                )
-                return "rejected"
-            _log_intent_divergence(
-                tool_name="report_identity_mismatch",
-                sidecar=None,
-                gate_decision="regex_fallback_allow",
-                user_text=user_text, person_id=person_id,
-            )
-        else:
-            print(
-                f"[Pipeline] WARN: report_identity_mismatch — classifier "
-                f"unavailable AND fallback disabled; allowing with warning"
-            )
-            _log_intent_divergence(
-                tool_name="report_identity_mismatch",
-                sidecar=None,
-                gate_decision="both_unavailable_allow_with_warning",
-                user_text=user_text, person_id=person_id,
-            )
+            _tool_result_status = "tool_timeout"
+            _tool_result_error = f"asyncio.TimeoutError after {_timeout}s"
 
-        reason = (args.get("reason") or "").strip() or "identity mismatch reported"
-        if _session_store.peek_snapshot(person_id) is not None:
-            _dispute_ts_ridm = time.time()
-            try:
-                _loop = asyncio.get_running_loop()
-                _loop.create_task(_session_store.transition_to_disputed(
-                    person_id, None, reason, now=_dispute_ts_ridm,
-                ))
-                _loop.create_task(_session_store.set_cached_prefix(person_id, None))
-            except RuntimeError:
-                pass  # OPTIONAL: no running loop in test/early-boot context
-        if _brain_orchestrator:
-            _brain_orchestrator.mark_disputed(person_id)
-        print(f"[Pipeline] Tool: identity DISPUTED for {person_name} — {reason}")
-        return "handled"
+    # P0.0.7 H7 — emit tool_result event AFTER dispatch (single emit
+    # location for D7 N=1) via safe_emit_sync. parent_event_id
+    # auto-resolves via NATURAL_PARENT_PAIRS to the tool_call event above.
+    from core.event_log import safe_emit_sync, ToolResultPayload
+    safe_emit_sync(
+        "tool_result",
+        ToolResultPayload(
+            status=str(_tool_result_status) if _tool_result_status is not None else "none",
+            response_text=None,
+            error=_tool_result_error,
+        ),
+        session_id=person_id,
+    )
 
-    elif name == "update_system_name":
-        new_name, _ = sanitize_name(args.get("name") or "")
-        if not new_name or new_name.lower() in _INVALID_SYSTEM_NAMES:
-            print(f"[Pipeline] Tool: update_system_name rejected invalid name '{new_name}'")
-            return None
-
-        # Bug G1 (2026-04-22 live run): Session 71's OR-gate accepted
-        # "do you know the GAME called Detroit?" because 'Detroit' appeared in
-        # the turn — and the system renamed itself to "Detroit". Session 73
-        # tightened to capture-group regex; Session 86 P1.7b layers the
-        # classifier gate on top (this is the fix for the 2026-04-22 Alexa
-        # bug: "I want it to be changed to Alexa" rejected by regex 3× even
-        # though classifier got it right at 0.95 every time).
-        from core.config import INTENT_FALLBACK_TO_REGEX
-        if intent_sidecar is not None:
-            _allowed, _reason = _intent_allows(
-                tool_name="update_system_name",
-                turn_intent=intent_sidecar.get("turn_intent") or "",
-                confidence=float(intent_sidecar.get("confidence") or 0.0),
-                extracted_value=intent_sidecar.get("extracted_value"),
-                user_text=user_text,
-                tool_args=args,
-            )
-            if not _allowed:
-                _last_msg_preview = ((user_text or "").strip())[:80]
-                print(
-                    f"[Pipeline] Tool: update_system_name REJECTED (intent) "
-                    f"— {_reason}; user_text: '{_last_msg_preview}'"
-                )
-                _log_intent_divergence(
-                    tool_name="update_system_name",
-                    sidecar=intent_sidecar,
-                    gate_decision=f"reject: {_reason}",
-                    user_text=user_text, person_id=person_id,
-                )
-                return "rejected"
-            print(
-                f"[Pipeline] Tool: update_system_name allowed by intent gate "
-                f"— {_reason}"
-            )
-            _log_intent_divergence(
-                tool_name="update_system_name",
-                sidecar=intent_sidecar,
-                gate_decision="allow",
-                user_text=user_text, person_id=person_id,
-            )
-        elif INTENT_FALLBACK_TO_REGEX:
-            if not _user_text_gate_passes(user_text, new_name, SYSTEM_NAME_ASSIGN_PATTERNS):
-                _last_msg_preview = ((user_text or "").strip())[:80]
-                print(
-                    f"[Pipeline] Tool: update_system_name REJECTED "
-                    f"(regex fallback) — user did not assign '{new_name}' in: "
-                    f"'{_last_msg_preview}'"
-                )
-                _log_intent_divergence(
-                    tool_name="update_system_name",
-                    sidecar=None,
-                    gate_decision="regex_fallback_reject",
-                    user_text=user_text, person_id=person_id,
-                )
-                return "rejected"
-            _log_intent_divergence(
-                tool_name="update_system_name",
-                sidecar=None,
-                gate_decision="regex_fallback_allow",
-                user_text=user_text, person_id=person_id,
-            )
-        else:
-            print(
-                f"[Pipeline] WARN: update_system_name — classifier unavailable "
-                f"AND fallback disabled; allowing with warning"
-            )
-            _log_intent_divergence(
-                tool_name="update_system_name",
-                sidecar=None,
-                gate_decision="both_unavailable_allow_with_warning",
-                user_text=user_text, person_id=person_id,
-            )
-
-        if new_name.lower() != _active_system_name.lower():
-            _active_system_name = new_name
-            # Invalidate prefix cache for ALL sessions — system_name is in Section 2
-            try:
-                _loop = asyncio.get_running_loop()
-                for _snap_inv in _session_store.peek_all_snapshots():
-                    _loop.create_task(_session_store.set_cached_prefix(_snap_inv.person_id, None))
-            except RuntimeError:
-                pass  # OPTIONAL
-            if _brain_orchestrator:
-                _brain_orchestrator.set_system_name(new_name)
-            if db:
-                db.set_system_identity(
-                    "system_name", new_name,
-                    set_by=person_id,
-                    note=f"named by {person_name}",
-                )
-            print(f"[Pipeline] Tool: system name → '{new_name}'")
-            return "handled"
-        # Same name — no-op. Bug Q: no canonical ack, no history write.
-        # The redundant "Got it, I'll go by Kara." on turns 15/17/19 in the
-        # 2026-04-21 run was the direct feedback-loop driver.
-        print(f"[Pipeline] Tool: update_system_name no-op (already '{_active_system_name}')")
-        return "handled_noop"
-
-    elif name == "shutdown":
-        # Session 86 P1.7b site 4: classifier-first; 3-regex fallback (strict
-        # phrases + lenient goodnight + question-about-shutdown exclusion)
-        # kept intact as the safety net. Shutdown is the highest-blast-radius
-        # mutation tool so BOTH gates must agree for a shutdown to fire in the
-        # dual-gate phase. ``request_shutdown`` requires INTENT_SHUTDOWN_CONF_MIN
-        # (0.80), strictly higher than the general 0.75 floor — wired via the
-        # tool_name branch in _intent_allows.
-        from core.config import INTENT_FALLBACK_TO_REGEX
-        _last_msg = (user_text or "").lower()
-        _SHUTDOWN_STRICT = (
-            "shut down", "shutdown", "turn off", "go to sleep", "stop listening",
-            "bye i'm done", "power off", "switch off",
-        )
-        _SHUTDOWN_LENIENT_RE = re.compile(
-            r"^\s*(?:good\s?night|i'?m\s+done|i\s+am\s+done)\s*[!.?]*\s*$"
-        )
-
-        def _regex_says_shutdown(msg: str) -> bool:
-            """Legacy 3-regex chain — strict phrases + lenient goodnight
-            minus question-about-shutdown exclusion. Extracted so the
-            fallback branch reads cleanly and the shared logic is in one
-            place."""
-            has_phrase = (
-                any(re.search(r'\b' + re.escape(p) + r'\b', msg) for p in _SHUTDOWN_STRICT)
-                or bool(_SHUTDOWN_LENIENT_RE.match(msg))
-            )
-            is_question = has_phrase and _SHUTDOWN_QUESTION_RE.search(msg)
-            return bool(msg and has_phrase and not is_question)
-
-        if intent_sidecar is not None:
-            _allowed, _reason = _intent_allows(
-                tool_name="shutdown",
-                turn_intent=intent_sidecar.get("turn_intent") or "",
-                confidence=float(intent_sidecar.get("confidence") or 0.0),
-                extracted_value=intent_sidecar.get("extracted_value"),
-                user_text=user_text,
-                tool_args=args,
-            )
-            if not _allowed:
-                print(
-                    f"[Pipeline] Tool: shutdown REJECTED (intent) — {_reason}; "
-                    f"user_text: '{_last_msg[:80]}'"
-                )
-                _log_intent_divergence(
-                    tool_name="shutdown",
-                    sidecar=intent_sidecar,
-                    gate_decision=f"reject: {_reason}",
-                    user_text=user_text, person_id=person_id,
-                )
-                return "rejected"
-            print(f"[Pipeline] Tool: shutdown allowed by intent gate — {_reason}")
-            _log_intent_divergence(
-                tool_name="shutdown",
-                sidecar=intent_sidecar,
-                gate_decision="allow",
-                user_text=user_text, person_id=person_id,
-            )
-        elif INTENT_FALLBACK_TO_REGEX:
-            if not _regex_says_shutdown(_last_msg):
-                print(
-                    f"[Pipeline] Tool: shutdown REJECTED (regex fallback) — "
-                    f"no explicit command in: '{_last_msg[:80]}'"
-                )
-                _log_intent_divergence(
-                    tool_name="shutdown",
-                    sidecar=None,
-                    gate_decision="regex_fallback_reject",
-                    user_text=user_text, person_id=person_id,
-                )
-                return "rejected"
-            _log_intent_divergence(
-                tool_name="shutdown",
-                sidecar=None,
-                gate_decision="regex_fallback_allow",
-                user_text=user_text, person_id=person_id,
-            )
-        else:
-            # Shutdown's both-unavailable policy diverges from the other
-            # mutation tools: allow-with-warning would risk an unintended
-            # system shutdown if the classifier blips. For the biggest-
-            # blast-radius tool we fail CLOSED — user can retry their
-            # command in ~10s once the classifier recovers.
-            print(
-                f"[Pipeline] WARN: shutdown — classifier unavailable AND "
-                f"fallback disabled; REJECTING (fail-closed for highest "
-                f"blast radius)"
-            )
-            _log_intent_divergence(
-                tool_name="shutdown",
-                sidecar=None,
-                gate_decision="both_unavailable_reject_failclosed",
-                user_text=user_text, person_id=person_id,
-            )
-            return "rejected"
-        print("[Pipeline] Tool: shutdown requested")
-        return "shutdown"
-
-    elif name == "search_memory":
-        # Normally handled inside ask_stream (brain.py). This branch fires only in
-        # degraded paths (SICK state non-streaming). Graceful no-op.
-        print("[Pipeline] Tool: search_memory fallback — not executed in degraded mode")
-        return None
-
-    return None
+    return _tool_result_status
 
 
 # Tools that can safely run in parallel with each other (asyncio.gather).
@@ -4413,7 +4403,7 @@ async def _refresh_query_embedding(person_id: str, person_name: str, text: str) 
     try:
         emb = await _brain_orchestrator.embed_query(text)
         if emb is not None:
-            _query_embedding_cache[person_id] = emb
+            await _query_embedding_store.set(person_id, emb)
     except Exception:
         pass  # OPTIONAL: embedding prefetch failed — next turn uses graph-context fallback
 
@@ -4468,7 +4458,7 @@ async def _ask_offline_safe(
                 conversation_history=conversation_history,
                 language=language,
                 system_note=system_note,
-                system_name=_active_system_name,
+                system_name=_pipeline_state_store.peek_active_system_name(),
             ),
             timeout=timeout,
         )
@@ -4772,6 +4762,21 @@ def _build_tool_rejection_note(
             f"is that right?\". Keep it to one short sentence."
         )
 
+    # P0.8 tool-timeout rejection — surface to the brain so the retry can
+    # acknowledge the action didn't land rather than confabulate completion.
+    timed_out = [
+        tc["name"] for tc in tool_calls
+        if tool_results.get(tc["name"]) == "tool_timeout"
+    ]
+    if timed_out:
+        parts.append(
+            "Your previous tool call(s) timed out before completing: "
+            f"{', '.join(repr(t) for t in timed_out)}. Any partial database "
+            "writes were rolled back. Acknowledge the action did not complete "
+            "and ask the user to try again — do NOT pretend the action "
+            "succeeded or stay silent. Keep it to one short sentence."
+        )
+
     # Identity-mismatch rejection on owner query — inject visitor facts.
     rejected_mismatch = next(
         (tc for tc in tool_calls
@@ -4825,10 +4830,6 @@ async def conversation_turn(
     prompt_addendum_override: str | None = None,
 ) -> tuple[str, str | None]:
     """Handle one turn of conversation. Returns ("continue", None) or ("enroll", name)."""
-    global _conversation, _pipeline_state, \
-           _cloud_state, _cloud_failed_at, _cloud_monitor_task, _active_system_name, \
-           _emotion_agents, _query_embedding_cache, _last_user_speech_at, _identity_hints
-
     _ct_snap = _session_store.peek_snapshot(person_id)
     _sess_type_badge = _ct_snap.person_type if _ct_snap is not None else "known"
     _type_badge = " [STRANGER]" if _sess_type_badge == "stranger" else ""
@@ -4861,20 +4862,20 @@ async def conversation_turn(
     # turn.
     if (
         not person_id.startswith("stranger_")
-        and person_id not in _compact_pids
+        and not _conversation_store.is_compacting(person_id)
     ):
         async def _compact_history_background(_pid: str, _pname: str):
             try:
                 _compacted = await autocompact_history(
-                    _conversation.get(_pid, []), _pname,
+                    _conversation_store.peek_history(_pid), _pname,
                 )
-                _conversation[_pid] = _compacted
+                await _conversation_store.set_history(_pid, _compacted)
             except Exception as _cex:
                 print(f"[Pipeline] autocompact background failed for {_pid}: {_cex!r}")
             finally:
-                _compact_pids.discard(_pid)
+                await _conversation_store.release_compact(_pid)
 
-        _compact_pids.add(person_id)
+        await _conversation_store.add_compact(person_id)
         asyncio.create_task(_compact_history_background(person_id, person_name))
         # Session 116 P1 #10 — background spawn visibility. The
         # decoupling architecture is invisible from logs without these
@@ -4893,7 +4894,7 @@ async def conversation_turn(
     # on the next match. So state persists exactly as long as the same call
     # pattern keeps firing — which is what the guard is for.
 
-    history    = _conversation.get(person_id, [])
+    history    = list(_conversation_store.peek_history(person_id))
     # Use session dict person_type so that identity confirmation during a session
     # immediately lifts the stranger gates — no restart needed.
     is_stranger = (_ct_snap.person_type if _ct_snap is not None else None) == "stranger"
@@ -4921,7 +4922,7 @@ async def conversation_turn(
                 if snap.person_id != person_id and snap.person_name
             }
             _heuristic_decision = _user_to_user_heuristic(
-                text, _active_system_name, _other_names,
+                text, _pipeline_state_store.peek_active_system_name(), _other_names,
             )
         if _heuristic_decision and _heuristic_decision[0] == "user_to_person":
             # Heuristic confident → synthesize a sidecar that drives the
@@ -4954,7 +4955,7 @@ async def conversation_turn(
             # through to the normal response path (safer to respond).
             _is_system_name = (
                 _addressed
-                and _addressed.lower() == (_active_system_name or "").lower()
+                and _addressed.lower() == (_pipeline_state_store.peek_active_system_name() or "").lower()
             )
             if _addressed and not _is_system_name:
                 print(
@@ -4968,7 +4969,7 @@ async def conversation_turn(
                     "content": text,
                     "ts":      _now_ts_u2u,
                 })
-                _conversation[person_id] = history
+                await _conversation_store.set_history(person_id, history)
                 _room_sid_u2u = _ct_snap.room_session_id if _ct_snap is not None else None
                 if db and not _is_disputed(person_id):
                     db.log_turn(
@@ -4999,7 +5000,7 @@ async def conversation_turn(
     # Context retrieval — use embedding cached from the PREVIOUS turn (instant dict
     # lookup) instead of a blocking 200-500ms Together.ai round-trip.
     # A background task refreshes the cache; the next turn benefits from it.
-    cached_embedding = _query_embedding_cache.get(person_id)
+    cached_embedding = _query_embedding_store.peek(person_id)
     if _brain_orchestrator and not is_stranger and person_name:
         asyncio.create_task(_refresh_query_embedding(person_id, person_name, text))
 
@@ -5034,9 +5035,9 @@ async def conversation_turn(
     emotion_context = None
     if not is_stranger:
         # Lazy-create agent for this person on first interaction
-        if person_id not in _emotion_agents:
-            _emotion_agents[person_id] = EmotionAgent()
-        _cur_agent = _emotion_agents[person_id]
+        if _per_person_agent_store.peek_emotion_agent(person_id) is None:
+            await _per_person_agent_store.set_emotion_agent(person_id, EmotionAgent())
+        _cur_agent = _per_person_agent_store.peek_emotion_agent(person_id)
 
         async def _emotion_process_background(_pid: str, _pname: str, _agent, _text: str):
             try:
@@ -5063,7 +5064,7 @@ async def conversation_turn(
         # fresh emotion update from the background task will be visible on
         # the NEXT turn's context build.
         _emo_lines: list[str] = []
-        for _emo_pid, _emo_ag in _emotion_agents.items():
+        for _emo_pid, _emo_ag in _per_person_agent_store.peek_all_emotion_agents().items():
             if _session_store.peek_snapshot(_emo_pid) is None:
                 continue
             _emo_snap_em = _session_store.peek_snapshot(_emo_pid)
@@ -5084,7 +5085,7 @@ async def conversation_turn(
     # Gives the brain full awareness of who is present and recent cross-person
     # exchanges so it can make dynamic, human-like routing decisions.
     _all_snaps_ct = _session_store.peek_all_snapshots()
-    room_context = _build_cross_person_excerpts(person_id, _all_snaps_ct, _conversation, _bf_id)
+    room_context = _build_cross_person_excerpts(person_id, _all_snaps_ct, _conversation_store._history, _bf_id)
     if room_context:
         print(f"[Brain] Room context: {len(_all_snaps_ct)} people active")
 
@@ -5118,10 +5119,19 @@ async def conversation_turn(
 
     # SCENE sensor block — always-on snapshot of who is visible / audible,
     # injected into the system prompt on every turn.
+    _ct_pif_view = {
+        s.person_id: {"last_seen": s.last_seen, "name": s.name, "conf": s.conf, "source": s.source}
+        for s in _presence_store.peek_all_snapshots()
+    }
+    _ct_ut_view = {
+        s.track_id: s.last_seen
+        for s in _track_store.peek_all_snapshots()
+        if s.last_seen > 0 and s.identity_pid is None
+    }
     scene_block = (
-        _get_scene_block_cached(
-            person_id, time.time(), _session_store.peek_all_snapshots(), _persons_in_frame,
-            _unrecognized_tracks, _bf_id,
+        await _get_scene_block_cached(
+            person_id, time.time(), _session_store.peek_all_snapshots(), _ct_pif_view,
+            _ct_ut_view, _bf_id,
             recent_visitors=_fetch_recent_visitors_for_scene(_bf_id),
         )
         if SCENE_BLOCK_ENABLED else None
@@ -5143,8 +5153,8 @@ async def conversation_turn(
     # ── Identity hint injection for stranger sessions ─────────────────────────
     # Hint is built from the PREVIOUS turn's scoring — always one turn delayed,
     # which is correct: we need conversation content before we can score.
-    if is_stranger and person_id in _identity_hints:
-        _id_h    = _identity_hints[person_id]
+    _id_h = _identity_hints_store.peek(person_id, default=CACHE_MISS)
+    if is_stranger and _id_h is not CACHE_MISS:
         _id_conf = _id_h["confidence"]
         _id_name = _id_h["name"]
         _id_rel  = _id_h.get("relationship") or "acquaintance"
@@ -5181,34 +5191,38 @@ async def conversation_turn(
     _prefix_buf:    list[str]          = []
 
     # ── Cloud state machine ────────────────────────────────────────────────────
-    if _cloud_state == CloudState.SICK:
+    _cs = _pipeline_state_store.peek_cloud_state()
+    if _cs == CloudState.SICK:
         # Grace period: try Together.ai — it might have recovered
         try:
             response, tool_calls = await ask(
                 text,
                 person_name=person_name,
                 conversation_history=history,
-                language=_detected_lang,
+                language=_pipeline_state_store.peek_detected_lang(),
                 vision_state=vision_state,
                 voice_state=voice_state,
                 memory_context=memory_context,
                 object_context=object_context,
                 emotion_context=emotion_context,
                 prompt_addendum=prompt_addendum,
-                system_name=_active_system_name,
+                system_name=_pipeline_state_store.peek_active_system_name(),
                 scene_block=scene_block,
             )
             # Recovered!
-            _cloud_state = CloudState.ONLINE
+            asyncio.create_task(_pipeline_state_store.recover_online_no_flag())
             print("[Cloud] State: SICK → ONLINE (recovered mid-conversation)")
             print("[Pipeline] Together.ai recovered (detected mid-conversation)")
         except Exception:
-            elapsed = time.time() - _cloud_failed_at
+            elapsed = time.time() - _pipeline_state_store.peek_cloud_failed_at()
             if elapsed >= CLOUD_OFFLINE_TIMEOUT:
                 print(f"[Cloud] State: SICK → OFFLINE (timeout={elapsed:.0f}s >= {CLOUD_OFFLINE_TIMEOUT}s)")
-                _cloud_state = CloudState.OFFLINE
-                if _cloud_monitor_task is None or _cloud_monitor_task.done():
-                    _cloud_monitor_task = asyncio.create_task(_cloud_retry_loop())
+                asyncio.create_task(_pipeline_state_store.transition_to_offline())
+                _cmt = _pipeline_state_store.peek_cloud_monitor_task()
+                if _cmt is None or _cmt.done():
+                    asyncio.create_task(_pipeline_state_store.set_cloud_monitor_task(
+                        asyncio.create_task(_cloud_retry_loop())
+                    ))
                 response = await _ask_offline_safe(
                     text,
                     "I'm having some real trouble with my brain right now. "
@@ -5216,7 +5230,7 @@ async def conversation_turn(
                     timeout=15.0,
                     person_name=person_name,
                     conversation_history=history,
-                    language=_detected_lang,
+                    language=_pipeline_state_store.peek_detected_lang(),
                     system_note=(
                         "Your cloud connection has gone down. "
                         "Briefly mention you're having some brain trouble and won't be fully yourself for a bit, "
@@ -5230,14 +5244,14 @@ async def conversation_turn(
                     timeout=15.0,
                     person_name=person_name,
                     conversation_history=history,
-                    language=_detected_lang,
+                    language=_pipeline_state_store.peek_detected_lang(),
                     system_note=(
                         "Your cloud connection is unstable right now. "
                         "Briefly mention you're a bit under the weather, then do your best to answer."
                     ),
                 )
 
-    elif _cloud_state == CloudState.OFFLINE:
+    elif _cs == CloudState.OFFLINE:
         # Ollama stateless Q&A — no memory, no tools
         response = await _ask_offline_safe(
             text,
@@ -5245,7 +5259,7 @@ async def conversation_turn(
             timeout=30.0,
             person_name=person_name,
             conversation_history=history,
-            language=_detected_lang,
+            language=_pipeline_state_store.peek_detected_lang(),
         )
 
     else:
@@ -5268,7 +5282,7 @@ async def conversation_turn(
             if _snap_conv is not None:
                 if _snap_conv.cached_prefix is None:
                     _cp_value = render_session_stable_prefix(
-                        system_name=_active_system_name,
+                        system_name=_pipeline_state_store.peek_active_system_name(),
                         session_person_type=_snap_conv.person_type,
                         session_user_turns=_snap_conv.user_turns,
                         identity_disputed=_is_disputed(person_id),
@@ -5290,17 +5304,17 @@ async def conversation_turn(
                     text,
                     person_name=person_name,
                     conversation_history=history,
-                    language=_detected_lang,
+                    language=_pipeline_state_store.peek_detected_lang(),
                     vision_state=vision_state,
                     voice_state=voice_state,
                     memory_context=memory_context,
                     object_context=object_context,
                     emotion_context=emotion_context,
                     prompt_addendum=prompt_addendum,
-                    system_name=_active_system_name,
+                    system_name=_pipeline_state_store.peek_active_system_name(),
                     memory_search_fn=_memory_search,
                     room_search_fn=_make_room_search_fn(
-                        _active_room_session, person_id, db,
+                        _pipeline_state_store.peek_active_room_session(), person_id, db,
                     ),
                     scene_block=scene_block,
                     cached_prefix=_conv_cached_prefix,
@@ -5382,7 +5396,7 @@ async def conversation_turn(
                     _marker_done[0] = True
 
             _set_state(PipelineState.SPEAKING, person_name)
-            await speak_stream(_sentence_stream(_token_gen()), language=_detected_lang)
+            await speak_stream(_sentence_stream(_token_gen()), language=_pipeline_state_store.peek_detected_lang())
             response          = "".join(response_parts)
             # Treat responses with no alphabetical content as empty (e.g. model returned "{}")
             if response and not any(c.isalpha() for c in response):
@@ -5430,7 +5444,7 @@ async def conversation_turn(
             _truncated     = _finish in ("length", "content_filter", None)
 
             if not (response and not _ends_terminal and _truncated
-                    and not tool_calls and _cloud_state == CloudState.ONLINE):
+                    and not tool_calls and _pipeline_state_store.peek_cloud_state() == CloudState.ONLINE):
                 pass  # nothing to retry
             elif len(_stream_words) <= 2:
                 # Case A: very short truncation — full replacement via Ollama.
@@ -5443,12 +5457,12 @@ async def conversation_turn(
                     timeout=15.0,
                     person_name=person_name,
                     conversation_history=history,
-                    language=_detected_lang,
+                    language=_pipeline_state_store.peek_detected_lang(),
                 )
                 if len(_retry_resp) > len(response):
                     # Cut the first-response tail so user doesn't hear overlap.
                     stop_audio()
-                    await speak(_retry_resp, language=_detected_lang)
+                    await speak(_retry_resp, language=_pipeline_state_store.peek_detected_lang())
                     response = _retry_resp
                     # response_streamed stays True — speak() above already played it;
                     # history will record the full retry response, not the fragment.
@@ -5473,28 +5487,31 @@ async def conversation_turn(
                     timeout=10.0,
                     person_name=person_name,
                     conversation_history=[],
-                    language=_detected_lang,
+                    language=_pipeline_state_store.peek_detected_lang(),
                 )
                 if _continuation and _continuation.strip():
                     # Original audio already finished playing — just speak the
                     # tail. Feels like the model paused and thought a moment.
-                    await speak(_continuation, language=_detected_lang)
+                    await speak(_continuation, language=_pipeline_state_store.peek_detected_lang())
                     response = response.rstrip() + " " + _continuation.strip()
 
         except Exception as e:
             print(f"[Brain] Together.ai stream failed: {e}")
             print(f"[Cloud] State: ONLINE → SICK ({type(e).__name__})")
-            _cloud_state     = CloudState.SICK
-            _cloud_failed_at = time.time()
-            if _cloud_monitor_task is None or _cloud_monitor_task.done():
-                _cloud_monitor_task = asyncio.create_task(_cloud_retry_loop())
+            _ct_failed_at = time.time()
+            asyncio.create_task(_pipeline_state_store.transition_to_sick(_ct_failed_at))
+            _cmt2 = _pipeline_state_store.peek_cloud_monitor_task()
+            if _cmt2 is None or _cmt2.done():
+                asyncio.create_task(_pipeline_state_store.set_cloud_monitor_task(
+                    asyncio.create_task(_cloud_retry_loop())
+                ))
             response = await _ask_offline_safe(
                 text,
                 "Oops, I'm feeling a bit sick right now... give me a moment to sort myself out.",
                 timeout=15.0,
                 person_name=person_name,
                 conversation_history=history,
-                language=_detected_lang,
+                language=_pipeline_state_store.peek_detected_lang(),
                 system_note=(
                     "Your cloud connection just went down unexpectedly. "
                     "Briefly mention you're having a brain hiccup and may not be fully yourself, "
@@ -5546,7 +5563,7 @@ async def conversation_turn(
             from core.classifier_graph import handle_correction as _handle_correction
             _correction_summary = await _handle_correction(
                 text,
-                system_name=_active_system_name,
+                system_name=_pipeline_state_store.peek_active_system_name(),
             )
             print(
                 f"[classifier_graph] correction handled: "
@@ -5643,8 +5660,12 @@ async def conversation_turn(
     # and "rejected" (user-text gate failure) both mean the LLM wanted to act
     # but had no real grounding in the user's actual utterance. Both classes
     # route through the same Ollama-retry path.
+    # P0.8: "tool_timeout" (handler exceeded its per-tool budget; task
+    # cancelled, transaction rolled back via __aexit__) joins the same
+    # retry path so the brain can acknowledge the action didn't complete.
     _all_unreal         = bool(tool_calls) and all(
-        _tool_results.get(tc["name"]) in ("unknown", "rejected") for tc in tool_calls
+        _tool_results.get(tc["name"]) in ("unknown", "rejected", "tool_timeout")
+        for tc in tool_calls
     )
 
     # ── Shutdown rejection: prevent history poisoning (Issue A, Session 28) ──
@@ -5691,21 +5712,26 @@ async def conversation_turn(
             bf_id=_bf_id,
             brain_orchestrator=_brain_orchestrator,
         )
-        if _cloud_state == CloudState.ONLINE:
+        if _pipeline_state_store.peek_cloud_state() == CloudState.ONLINE:
             print("[Pipeline] All tool calls ungrounded — Together.ai retry (tools disabled, full context)")
+            # P0.8.1: retry chain is structurally one-shot — ask_retry_text
+            # passes include_tools=False (Session 99 architecture), so the
+            # retry stream CANNOT propose another tool call.  No recursive
+            # tool dispatch is possible; the retry-loop denial-of-service
+            # concern raised by the P0.8 audit does not apply here.
             try:
                 response = await ask_retry_text(
                     text,
                     person_name=person_name,
                     conversation_history=history,
-                    language=_detected_lang,
+                    language=_pipeline_state_store.peek_detected_lang(),
                     vision_state=vision_state,
                     voice_state=voice_state,
                     memory_context=memory_context,
                     object_context=object_context,
                     emotion_context=emotion_context,
                     prompt_addendum=prompt_addendum,
-                    system_name=_active_system_name,
+                    system_name=_pipeline_state_store.peek_active_system_name(),
                     scene_block=scene_block,
                     retry_system_note=_system_note_retry,
                 )
@@ -5721,7 +5747,7 @@ async def conversation_turn(
                     timeout=10.0,
                     person_name=person_name,
                     conversation_history=history,
-                    language=_detected_lang,
+                    language=_pipeline_state_store.peek_detected_lang(),
                     system_note=_system_note_retry,
                 )
         else:
@@ -5733,7 +5759,7 @@ async def conversation_turn(
                 timeout=10.0,
                 person_name=person_name,
                 conversation_history=history,
-                language=_detected_lang,
+                language=_pipeline_state_store.peek_detected_lang(),
                 system_note=_system_note_retry,
             )
         response_streamed = False
@@ -5755,7 +5781,7 @@ async def conversation_turn(
             None,
         )
         if _override_tool == "update_system_name":
-            response          = f"Got it, I'll go by {_active_system_name}."
+            response          = f"Got it, I'll go by {_pipeline_state_store.peek_active_system_name()}."
             response_streamed = False  # stop_audio() cut the stream — must speak canonical ack
         elif _override_tool == "update_person_name":
             _post_tool_snap = _session_store.peek_snapshot(person_id)
@@ -5825,7 +5851,7 @@ async def conversation_turn(
     _max_msgs = CONVERSATION_HISTORY_LIMIT * 2   # 2 messages per turn
     if len(history) > _max_msgs:
         history = history[-_max_msgs:]
-    _conversation[person_id] = history
+    await _conversation_store.set_history(person_id, history)
 
     # During an identity-disputed session, skip persistent logging — the turns
     # may belong to someone who is NOT the sensor-matched person, and persisting
@@ -5856,10 +5882,10 @@ async def conversation_turn(
     # Accumulates confidence across turns; thresholds drive the next turn's hint.
     if is_stranger and _brain_orchestrator:
         _id_hit = _brain_orchestrator.score_stranger_identity(
-            _conversation.get(person_id, [])
+            _conversation_store.peek_history(person_id)
         )
         if _id_hit and _id_hit["confidence"] >= IDENTITY_SOFT_THRESHOLD:
-            _identity_hints[person_id] = _id_hit
+            await _identity_hints_store.set(person_id, _id_hit)
             _id_conf = _id_hit["confidence"]
             _id_name = _id_hit["name"]
             if _id_conf >= IDENTITY_AUTO_THRESHOLD:
@@ -5936,7 +5962,7 @@ async def conversation_turn(
                     db.update_person_type(person_id, "known")
                     # Retroactively fix old name in in-memory history (mirrors tool path)
                     _old_pat = re.compile(r'\b' + re.escape(_old_name) + r'\b', re.IGNORECASE)
-                    for _msg in _conversation.get(person_id, []):
+                    for _msg in _conversation_store.peek_history(person_id):
                         _msg["content"] = _old_pat.sub(_id_name, _msg["content"])
                     if _brain_orchestrator:
                         _brain_orchestrator.on_identity_confirmed(person_id, _old_name, _id_name)
@@ -5949,12 +5975,12 @@ async def conversation_turn(
                             _loop.create_task(_session_store.set_waiting_for_name(person_id, False))
                         except RuntimeError:
                             pass  # OPTIONAL
-                    _identity_hints.pop(person_id, None)
+                    await _identity_hints_store.discard(person_id)
                     print(f"[Identity] Auto-confirmed: {_id_name} (conf={_id_conf:.2f})")
 
     _set_state(PipelineState.SPEAKING, effective_name)
     if response and not response_streamed:
-        await speak(response, language=_detected_lang)
+        await speak(response, language=_pipeline_state_store.peek_detected_lang())
 
     print(f"[Pipeline] Turn end {_now_log_ts()}: {effective_name} — {len(response)} chars")
     return ("continue", None)
@@ -6007,13 +6033,9 @@ async def _warmup_models(loop: asyncio.AbstractEventLoop) -> None:
 
 async def run():
     """Main pipeline loop."""
-    global _pipeline_state, \
-           _detected_lang, _last_face_seen, _shutdown_event, _active_system_name, \
-           _cloud_recovered, _brain_orchestrator, _yolo_frame_counter, \
+    global _shutdown_event, _brain_orchestrator, _yolo_frame_counter, \
            _latest_yolo_detections, _yolo_last_ran, _vision_last_heartbeat, \
-           _last_user_speech_at, _last_silent_update, \
-           _persons_in_frame, _vision_face_scan_last, \
-           _vision_prev_det_count, _ambient_wake_pending
+           _vision_face_scan_last
 
     # ── Privilege-table integrity check ───────────────────────────────────────
     # Fail-closed: every tool the brain can see in its TOOLS list MUST have a
@@ -6035,9 +6057,8 @@ async def run():
     # ── KAIROS silence/cooldown clocks — initialize to now so Kairos doesn't fire
     # immediately at startup before the user has said anything. Without this,
     # _last_user_speech_at=0.0 makes the silence gate pass on the very first tick.
-    global _last_user_speech_at, _last_kairos_at
-    _last_user_speech_at = time.time()
-    _last_kairos_at      = time.time()
+    await _pipeline_state_store.set_last_user_speech_at(time.time())
+    await _pipeline_state_store.set_last_kairos_at(time.time())
 
     _sigint_count = 0
 
@@ -6079,30 +6100,28 @@ async def run():
     if _loaded_name.lower() in _INVALID_SYSTEM_NAMES:
         print(f"[Pipeline] System name '{_loaded_name}' is invalid — resetting to default.")
         db.set_system_identity("system_name", DEFAULT_SYSTEM_NAME, set_by="system", note="auto-reset invalid name")
-        _active_system_name = DEFAULT_SYSTEM_NAME
+        await _pipeline_state_store.set_active_system_name(DEFAULT_SYSTEM_NAME)
     else:
-        _active_system_name = _loaded_name
-    if _active_system_name != DEFAULT_SYSTEM_NAME:
-        print(f"[Pipeline] System name: {_active_system_name}")
+        await _pipeline_state_store.set_active_system_name(_loaded_name)
+    if _pipeline_state_store.peek_active_system_name() != DEFAULT_SYSTEM_NAME:
+        print(f"[Pipeline] System name: {_pipeline_state_store.peek_active_system_name()}")
 
     print("[Pipeline] Preloading audio models...")
     preload_models()
 
     # Load voice recognizer and build in-memory gallery from DB
     voice_mod.load_speaker_embedder()
-    _voice_gallery.update(db.load_voice_profiles())
-    _voice_gallery_sizes.update(db.load_voice_profile_sizes())
-    print(f"[Voice] Gallery loaded — {len(_voice_gallery)} person(s) with voice profiles")
+    await _voice_gallery_store.load_bulk(db.load_voice_profiles(), db.load_voice_profile_sizes())
+    print(f"[Voice] Gallery loaded — {_voice_gallery_store.peek_len()} person(s) with voice profiles")
 
     # Anti-spoofing — optional MiniFASNet liveness gate for enrollment + recognition
     global _anti_spoof_checker
     if ANTISPOOFING_ENABLED:
         _anti_spoof_checker = AntiSpoofChecker(threshold=ANTISPOOFING_THRESHOLD)
 
-    # Emotion agents — per-person dict; preload the shared HuggingFace pipeline so
+    # Emotion agents — preload the shared HuggingFace pipeline so
     # the first conversation turn isn't blocked by the 15-25ms model-load.
-    global _emotion_agents
-    _emotion_agents = {}
+    await _per_person_agent_store.clear_emotion_agents()
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, EmotionAgent()._ensure_loaded)
 
@@ -6124,7 +6143,7 @@ async def run():
 
     # Brain agent — async, decoupled, never blocks the conversation
     _brain_orchestrator = BrainOrchestrator(_shutdown_event)
-    _brain_orchestrator.set_system_name(_active_system_name)
+    _brain_orchestrator.set_system_name(_pipeline_state_store.peek_active_system_name())
     _brain_task = asyncio.create_task(_brain_orchestrator.run())
 
     # Anti-spoof observability: stamp state.json and watchdog alert when disabled.
@@ -6166,7 +6185,7 @@ async def run():
         await asyncio.sleep(0.05)
 
     # Single-reader design: from this point on, background loop is the ONLY camera reader.
-    # Main loop reads from _latest_vision_frame (written by this task).
+    # Main loop reads from _vision_frame_store.peek_frame (written by this task).
     # Eliminates thread-unsafe concurrent cv2.VideoCapture reads on Windows.
     _vis_bg_task = asyncio.create_task(
         _background_vision_loop(camera, detector, embedder, temporal_buffer, db)
@@ -6175,7 +6194,7 @@ async def run():
 
     _null_frame_streak  = 0
     _reconnect_delay    = 2.0   # seconds; doubles each failed attempt, caps at 60
-    _last_silent_update = 0.0   # throttle: write silent obs at most every 5s
+
 
     # Prune stale silent observations at startup (runs once, fast)
     db.prune_silent_observations()
@@ -6183,7 +6202,7 @@ async def run():
     try:
         while not _shutdown_event.is_set():
             # ── Dashboard enroll request ───────────────────────────────────────
-            if _pipeline_state == PipelineState.WATCHING and ENROLL_REQUEST_FILE.exists():
+            if _pipeline_state_store.peek_pipeline_state() == PipelineState.WATCHING and ENROLL_REQUEST_FILE.exists():
                 try:
                     req  = json.loads(ENROLL_REQUEST_FILE.read_text())
                     name = req.get("name", "").strip()
@@ -6234,7 +6253,7 @@ async def run():
                         _set_state(PipelineState.WATCHING)
 
             # ── Dashboard factory reset request ───────────────────────────────
-            if _pipeline_state == PipelineState.WATCHING and RESET_REQUEST_FILE.exists():
+            if _pipeline_state_store.peek_pipeline_state() == PipelineState.WATCHING and RESET_REQUEST_FILE.exists():
                 RESET_REQUEST_FILE.unlink(missing_ok=True)
                 print("[Reset] Factory reset triggered — wiping all data...")
                 state.write(mode="resetting")
@@ -6268,22 +6287,19 @@ async def run():
                 _brain_orchestrator.reopen_connections()
 
                 # Clear all runtime state
-                _last_greeted.clear()
-                _last_self_update.clear()
-                _conversation.clear()
-                _voice_gallery.clear()
-                _voice_gallery_sizes.clear()
-                _sessions_started.clear()
+                await _conversation_store.clear_all_greeted()
+                await _conversation_store.clear_all_self_update()
+                await _conversation_store.clear_all_history()
+                await _voice_gallery_store.clear()
+                await _per_person_agent_store.clear_sessions_started()
                 for _snap_rst in _session_store.peek_all_snapshots():
                     try:
                         _loop = asyncio.get_running_loop()
                         _loop.create_task(_session_store.close_session(_snap_rst.person_id))
                     except RuntimeError:
                         pass  # OPTIONAL
-                _scene_block_cache.clear()  # Wave 6 Item 23
-                _active_system_name = DEFAULT_SYSTEM_NAME
-                _detected_lang      = "en"
-                _last_face_seen     = 0.0
+                await _scene_block_store.clear()  # Wave 6 Item 23
+                _pipeline_state_store.reset()      # P0.6.6
 
                 # Write result for the API to read
                 result = {"success": reset_ok}
@@ -6298,7 +6314,7 @@ async def run():
                 _set_state(PipelineState.WATCHING)
                 print("[Reset] Factory reset complete." if reset_ok else "[Reset] Reset partially failed.")
 
-            frame = _latest_vision_frame if time.monotonic() - _latest_frame_time < 0.5 else None
+            frame = _vision_frame_store.peek_frame_if_fresh(0.5, time.monotonic())
             if frame is None:
                 _null_frame_streak += 1
                 if _null_frame_streak >= 30:
@@ -6409,7 +6425,12 @@ async def run():
                 if directly_recognized:
                     # Record identity for this SORT track so brief occlusion doesn't lose it
                     if det.track_id is not None:
-                        _track_identity[det.track_id] = person_id
+                        try:
+                            asyncio.get_running_loop().create_task(
+                                _track_store.bind_identity(det.track_id, person_id)
+                            )
+                        except RuntimeError:
+                            pass  # OPTIONAL: no running loop in test context
                 else:
                     print(f"[Vision] Face score={conf:.3f} (need ≥{threshold:.3f}) — unrecognized")
                     # Silent observation: accumulate face data without engagement.
@@ -6421,7 +6442,7 @@ async def run():
                     # Replaces soft-match (which mapped any unrecognized face to the current
                     # session holder — the gallery-poisoning root cause).
                     if det.track_id is not None:
-                        _tracked_pid = _track_identity.get(det.track_id)
+                        _tracked_pid = _track_store.peek_identity(det.track_id)
                         if _tracked_pid and _session_store.peek_snapshot(_tracked_pid) is not None:
                             person_id   = _tracked_pid
                             _tc_snap = _session_store.peek_snapshot(_tracked_pid)
@@ -6443,7 +6464,7 @@ async def run():
                     # Anti-spoof LIVE is required — refusing when unavailable (fail-closed)
                     # since a poisoned frame can lock in permanently via gallery drift.
                     if directly_recognized and quality >= FACE_QUALITY_SELF_UPDATE:
-                        last = _last_self_update.get(person_id, 0)
+                        last = _conversation_store.peek_last_self_update(person_id)
                         if time.time() - last >= SELF_UPDATE_COOLDOWN and conf >= SELF_UPDATE_THRESHOLD:
                             _anti_spoof_ok = (
                                 _anti_spoof_checker is not None
@@ -6453,18 +6474,16 @@ async def run():
                             if not _anti_spoof_ok:
                                 # Fail-closed: skip the write when liveness is unavailable or failed.
                                 # Avoid log spam by throttling with the same cooldown.
-                                _last_self_update[person_id] = time.time()
-                                _prune_dict(_last_self_update)
+                                await _conversation_store.touch_self_update(person_id, time.time())
                             else:
                                 added = db.add_embedding(person_id, embedding, "recognition_update", conf)
                                 if added:
-                                    _last_self_update[person_id] = time.time()
-                                    _prune_dict(_last_self_update)
+                                    await _conversation_store.touch_self_update(person_id, time.time())
                                     print(f"[Pipeline] {person_name} gallery updated — new angle stored ({db.embedding_count(person_id)}/{MAX_EMBEDDINGS} face embeddings)")
 
                     # ── Greet known person or returning stranger ──────────────
-                    if _pipeline_state == PipelineState.WATCHING:
-                        last_greeted = _last_greeted.get(person_id, 0)
+                    if _pipeline_state_store.peek_pipeline_state() == PipelineState.WATCHING:
+                        last_greeted = _conversation_store.peek_last_greeted(person_id)
                         # _session_store.peek_snapshot(person_id) being non-None means their session is still
                         # live (e.g., returned to WATCHING after "no speech"). In that
                         # case never re-greet even if the cooldown has technically expired
@@ -6473,7 +6492,7 @@ async def run():
                                 and _session_store.peek_snapshot(person_id) is None):
                             # Consume the ambient wake signal unconditionally — whether
                             # anti-spoof blocks or passes, background loop must not re-fire.
-                            _ambient_wake_pending.discard(person_id)
+                            await _per_person_agent_store.discard_ambient_wake(person_id)
                             # Anti-spoofing: check liveness before greeting to block
                             # photo/screen attacks. Only checked on the greeting frame.
                             if not verify_live(frame, det.bbox, _anti_spoof_checker):
@@ -6483,8 +6502,7 @@ async def run():
                                 print(f"[Pipeline] Anti-spoof: PASSED {person_name}")
                             else:
                                 print(f"[Pipeline] Anti-spoof: DISABLED {person_name} (no liveness check performed)")
-                            _last_greeted[person_id] = time.time()
-                            _prune_dict(_last_greeted)
+                            await _conversation_store.touch_greeted(person_id, time.time())
                             # Fetch DB-sourced person_type BEFORE opening the session so it
                             # lands in the dict at creation — closes the race window where
                             # a best_friend could be mis-gated as stranger via the fail-safe
@@ -6506,10 +6524,10 @@ async def run():
                             if person_type == "stranger":
                                 # ── Returning stranger ────────────────────────
                                 db.update_last_seen(person_id)
-                                _sessions_started.add(person_id)
+                                await _per_person_agent_store.add_session_started(person_id)
                                 # Per-person EmotionAgent: kept alive across sessions; 90-second TTL
                                 # in get_dominant_emotion() handles stale entries automatically.
-                                _conversation[person_id] = db.load_conversation_history(person_id)
+                                await _conversation_store.ensure_history_loaded(person_id, lambda: db.load_conversation_history(person_id))
                                 # person_type was seeded by _open_session; just add the system-name gate.
                                 if _session_store.peek_snapshot(person_id) is not None:
                                     try:
@@ -6518,7 +6536,7 @@ async def run():
                                     except RuntimeError:
                                         pass  # OPTIONAL
                                 if STRANGER_REQUIRE_SYSTEM_NAME:
-                                    print(f"[Pipeline] Stranger {person_id} detected — waiting for system name '{_active_system_name}'")
+                                    print(f"[Pipeline] Stranger {person_id} detected — waiting for system name '{_pipeline_state_store.peek_active_system_name()}'")
                                 else:
                                     greeting = await generate_greeting(person_name, last_seen_ts, lang)
                                     await speak(greeting, language=lang)
@@ -6552,7 +6570,7 @@ async def run():
                                 )
                                 greeting = await generate_greeting(person_name, last_seen_ts, lang)
                                 db.update_last_seen(person_id)
-                                _sessions_started.add(person_id)
+                                await _per_person_agent_store.add_session_started(person_id)
                                 history_from_db = db.load_conversation_history(person_id)
                                 # Prepend anonymous visitor sightings
                                 sightings = db.get_recent_visitor_sightings()
@@ -6593,7 +6611,7 @@ async def run():
                                             {"role": "user",      "content": f"[Visitor conversations]\n{stranger_note}"},
                                             {"role": "assistant", "content": "Noted. I'll mention it when you ask."},
                                         ] + history_from_db
-                                _conversation[person_id] = history_from_db
+                                await _conversation_store.set_history(person_id, history_from_db)
 
                                 # ── Briefing for best friend after long absence ─
                                 _briefing_task = None
@@ -6665,13 +6683,12 @@ async def run():
             # ── Unknown face — silent sighting (no greeting) ──────────────────
             # Strangers are not greeted on sight. They engage by addressing
             # the system by name. Only log the sighting once per cooldown.
-            grace_expired = time.time() - _last_face_seen > FACE_LOSS_GRACE
-            if _pipeline_state == PipelineState.WATCHING and detections and not _session_store.peek_all_snapshots() and grace_expired:
+            grace_expired = time.time() - _pipeline_state_store.peek_last_face_seen() > FACE_LOSS_GRACE
+            if _pipeline_state_store.peek_pipeline_state() == PipelineState.WATCHING and detections and not _session_store.peek_all_snapshots() and grace_expired:
                 unknown_key = "unknown"
-                last_sighted = _last_greeted.get(unknown_key, 0)
+                last_sighted = _conversation_store.peek_last_greeted(unknown_key)
                 if time.time() - last_sighted >= GREET_COOLDOWN:
-                    _last_greeted[unknown_key] = time.time()
-                    _prune_dict(_last_greeted)
+                    await _conversation_store.touch_greeted(unknown_key, time.time())
                     if not db.list_people():
                         # Empty DB — first time anyone has stood in front of this system
                         await first_boot_flow(camera, detector, embedder, db)
@@ -6687,23 +6704,28 @@ async def run():
 
             # ── Update face-seen timestamps for visible sessions ──────────────
             if detections:
+                _now_face = time.time()
                 # Keep ambient timer current when no sessions are active.
                 if not _session_store.peek_all_snapshots():
-                    _last_face_seen = time.time()
+                    try:
+                        _loop = asyncio.get_running_loop()
+                        _loop.create_task(_pipeline_state_store.set_last_face_seen(_now_face))
+                    except RuntimeError:
+                        pass  # OPTIONAL
                 else:
-                    # Only update _last_face_seen for faces that belong to active sessions.
+                    # Only update last_face_seen for faces that belong to active sessions.
                     # A stranger walking in during an active session should NOT reset the timer.
                     for _d in detections:
                         if _d.person_id and _session_store.peek_snapshot(_d.person_id) is not None:
-                            _last_face_seen = time.time()
                             try:
                                 _loop = asyncio.get_running_loop()
-                                _loop.create_task(_session_store.set_last_face_seen(_d.person_id, _last_face_seen))
+                                _loop.create_task(_pipeline_state_store.set_last_face_seen(_now_face))
+                                _loop.create_task(_session_store.set_last_face_seen(_d.person_id, _now_face))
                             except RuntimeError:
                                 pass  # OPTIONAL
 
             # ── Session expiry — check each active session independently ──────
-            if _pipeline_state == PipelineState.WATCHING and _session_store.peek_all_snapshots():
+            if _pipeline_state_store.peek_pipeline_state() == PipelineState.WATCHING and _session_store.peek_all_snapshots():
                 _expire_stale_sessions()
 
             # state.write removed here, handled by _set_state and final WATCHING state
@@ -6732,14 +6754,14 @@ async def run():
                 for _det in detections:
                     if _session_store.peek_snapshot(_det.person_id) is not None:
                         _last_active_bbox = _det.bbox
-                        if _pipeline_state not in (PipelineState.LISTENING, PipelineState.THINKING):
+                        if _pipeline_state_store.peek_pipeline_state() not in (PipelineState.LISTENING, PipelineState.THINKING):
                             lip_tracker.update_baseline(frame, _det.bbox)
                         break
 
             # ── Listen for speech even without a face in frame ────────────────
             _ambient_text  = ""
             _ambient_audio = None
-            if not _session_store.peek_all_snapshots() and _pipeline_state == PipelineState.WATCHING:
+            if not _session_store.peek_all_snapshots() and _pipeline_state_store.peek_pipeline_state() == PipelineState.WATCHING:
                 # Persistent background loop (_vis_bg_task) keeps vision alive — no
                 # per-listen task needed here anymore.
                 _ambient_text, _, _ambient_audio = await listen_and_transcribe()
@@ -6747,7 +6769,7 @@ async def run():
                     print(f"[Pipeline] Voice-first: heard speech — identifying speaker...")
                     # Voice ID
                     v_pid, v_score = voice_mod.identify(
-                        _ambient_audio, _voice_gallery, VOICE_RECOGNITION_THRESHOLD
+                        _ambient_audio, _voice_gallery_store.peek_all_gallery(), VOICE_RECOGNITION_THRESHOLD
                     )
                     if v_pid:
                         row = db.get_person(v_pid)
@@ -6755,8 +6777,7 @@ async def run():
                             _v_pt = db.get_person_type(v_pid) or "known"
                             _open_session(v_pid, row["name"], "voice", person_type=_v_pt, voice_confidence=v_score)
                             print(f"[Voice] Identified {row['name']} by voice (score={v_score:.3f})")
-                            if v_pid not in _conversation:
-                                _conversation[v_pid] = db.load_conversation_history(v_pid)
+                            await _conversation_store.ensure_history_loaded(v_pid, lambda: db.load_conversation_history(v_pid))
                     # #15 invariant: session-opening authority comes from (a) a known-voice
                     # match, (b) a known-face match at WATCHING entry, or (c) a stranger
                     # who said the system name. The gate runs first; camera is a
@@ -6766,9 +6787,9 @@ async def run():
                             await first_boot_flow(camera, detector, embedder, db)
                             _set_state(PipelineState.WATCHING)
                             _ambient_text = ""  # first_boot handled it
-                        elif _name_heard_in(_ambient_text, _active_system_name)[0]:
+                        elif _name_heard_in(_ambient_text, _pipeline_state_store.peek_active_system_name())[0]:
                             # Gate PASSED — use camera to attach face identity if available.
-                            cam_f = _latest_vision_frame if time.monotonic() - _latest_frame_time < 0.5 else None
+                            cam_f = _vision_frame_store.peek_frame_if_fresh(0.5, time.monotonic())
                             if cam_f is not None:
                                 _best_pid, _best_pname, _best_conf = None, None, 0.0
                                 for _d in detector.detect(cam_f):
@@ -6788,8 +6809,7 @@ async def run():
                                 if _best_pid:
                                     _best_pt = db.get_person_type(_best_pid) or "known"
                                     _open_session(_best_pid, _best_pname, "voice", person_type=_best_pt)
-                                    if _best_pid not in _conversation:
-                                        _conversation[_best_pid] = db.load_conversation_history(_best_pid)
+                                    await _conversation_store.ensure_history_loaded(_best_pid, lambda: db.load_conversation_history(_best_pid))
                             if not _session_store.peek_all_snapshots():
                                 # No face visible or face unrecognized — voice-only stranger
                                 _sid = db.add_stranger("visitor")
@@ -6809,7 +6829,7 @@ async def run():
                                 _open_session(_sid, "visitor", "voice",
                                               person_type="stranger",
                                               engagement_gate_passed=True)
-                                _conversation[_sid] = []
+                                await _conversation_store.init_empty(_sid)
                                 if _session_store.peek_snapshot(_sid) is not None:
                                     try:
                                         _loop = asyncio.get_running_loop()
@@ -6823,17 +6843,17 @@ async def run():
                             _ambient_text = ""
 
             _primary_pid_conv = _primary_person_id()
-            if _primary_pid_conv and _pipeline_state == PipelineState.WATCHING:
+            if _primary_pid_conv and _pipeline_state_store.peek_pipeline_state() == PipelineState.WATCHING:
                 # Stay in a tight conversation loop — no camera rescan between turns.
                 # Eliminates the SPEAKING → WATCHING → camera+detect+embed → LISTENING
                 # round-trip (~150ms) that made each turn feel laggy.
 
                 # Voice-ID / camera-fallback paths skip the face-recognition greeting block.
                 # Only run once per session — greeting path already called update_last_seen.
-                if _primary_pid_conv not in _sessions_started:
+                if not _per_person_agent_store.is_session_started(_primary_pid_conv):
                     db.update_last_seen(_primary_pid_conv)
-                    _sessions_started.add(_primary_pid_conv)
-                    _last_greeted[_primary_pid_conv] = time.time()  # prevent face-recog re-greet
+                    await _per_person_agent_store.add_session_started(_primary_pid_conv)
+                    await _conversation_store.touch_greeted(_primary_pid_conv, time.time())  # prevent face-recog re-greet
                     _pp_snap = _session_store.peek_snapshot(_primary_pid_conv)
                     _ppname = _pp_snap.person_name if _pp_snap is not None else _primary_pid_conv
                     print(f"[Pipeline] Conversation started for {_ppname} (voice/camera-fallback path)")
@@ -6855,9 +6875,9 @@ async def run():
                 # Kairos can fire if the person stays silent long enough.
                 _kcr_snap = _session_store.peek_snapshot(_primary_pid_conv)
                 if _kcr_snap is not None and _kcr_snap.kairos_clock_reset:
-                    _last_user_speech_at = time.time()
                     try:
                         _loop = asyncio.get_running_loop()
+                        _loop.create_task(_pipeline_state_store.set_last_user_speech_at(time.time()))
                         _loop.create_task(_session_store.consume_kairos_reset(_primary_pid_conv))
                     except RuntimeError:
                         pass  # OPTIONAL
@@ -6903,8 +6923,7 @@ async def run():
                     # so they don't need to hear when we recover. Just clear
                     # the flag and continue. The next turn flows on Together.ai
                     # as normal.
-                    if _cloud_recovered:
-                        _cloud_recovered = False
+                    if await _pipeline_state_store.consume_cloud_recovered():
                         print("[Cloud] Recovery TTS suppressed (Bug Y) — continuing silently")
 
                     # If ambient probe already captured speech, use it directly.
@@ -6913,7 +6932,7 @@ async def run():
                         text, audio_buf = _ambient_text, _ambient_audio
                         _ambient_text  = ""
                         _ambient_audio = None
-                        _last_user_speech_at = time.time()  # KAIROS: reset silence clock
+                        await _pipeline_state_store.set_last_user_speech_at(time.time())
                         # Ambient probe published its own speech duration when
                         # it ran; read the latest snapshot as the main-turn value.
                         _main_speech_secs = float(getattr(_audio_mod, "_last_speech_secs", 0.0))
@@ -6957,7 +6976,7 @@ async def run():
                         # can fire when silence threshold is reached.
                         continue
 
-                    _last_user_speech_at = time.time()  # KAIROS: reset silence clock
+                    await _pipeline_state_store.set_last_user_speech_at(time.time())
 
                     # Addendum window: user may have paused mid-thought (Smart-Turn fired
                     # at 0.85s) but still has more to say. Re-listen for up to
@@ -6997,32 +7016,23 @@ async def run():
                     # active session person. Runs in executor (ECAPA-TDNN, 80-150ms).
                     _ev_loop = asyncio.get_running_loop()
                     _v_pid, _v_score = await _ev_loop.run_in_executor(
-                        None, voice_mod.identify, audio_buf, _voice_gallery, VOICE_RECOGNITION_THRESHOLD
+                        None, voice_mod.identify, audio_buf, _voice_gallery_store.peek_all_gallery(), VOICE_RECOGNITION_THRESHOLD
                     )
 
-                    # Voice-identified speakers are added to _persons_in_frame so
+                    # Voice-identified speakers are added to _presence_store so
                     # session tracking knows they're present even without a face.
                     # source="voice" distinguishes them from camera-detected entries.
                     if _v_pid:
                         _v_row_pif = db.get_person(_v_pid)
                         _v_name_pif = _v_row_pif["name"] if _v_row_pif else _v_pid
-                        if _v_pid in _persons_in_frame:
-                            _persons_in_frame[_v_pid]["last_seen"] = time.time()
-                            _persons_in_frame[_v_pid]["conf"]      = _v_score
-                            # Session 102 Bug F.3: refresh name on
-                            # voice-only updates too — parallel to the
-                            # face-scan fix. A voice-routed re-entry
-                            # after a rename would have kept the stale
-                            # name otherwise.
-                            _persons_in_frame[_v_pid]["name"]      = _v_name_pif
-                        else:
-                            _persons_in_frame[_v_pid] = {
-                                "name":              _v_name_pif,
-                                "conf":              _v_score,
-                                "last_seen":         time.time(),
-                                "last_recognized_at": time.time(),
-                                "source": "voice",
-                            }
+                        try:
+                            asyncio.get_running_loop().create_task(
+                                _presence_store.upsert_voice_recognition(
+                                    _v_pid, _v_name_pif, _v_score, time.time()
+                                )
+                            )
+                        except RuntimeError:
+                            pass  # OPTIONAL: no running loop in test context
 
                     # ── Within-utterance diarization ─────────────────────────────
                     # Detect multiple speakers in a single VAD window and attribute
@@ -7043,7 +7053,7 @@ async def run():
                     if len(audio_buf) >= DIARIZE_MIN_SECS * MIC_SAMPLE_RATE:
                         _diar = await _ev_loop.run_in_executor(
                             voice_mod.get_diarize_executor(), voice_mod.diarize,
-                            audio_buf, _voice_gallery, VOICE_RECOGNITION_THRESHOLD
+                            audio_buf, _voice_gallery_store.peek_all_gallery(), VOICE_RECOGNITION_THRESHOLD
                         )
                         if len(_diar) >= 2:
                             # Collapse adjacent same-``speaker_label`` segments
@@ -7126,7 +7136,7 @@ async def run():
                         "matched_name":            _v_name,
                         "voice_confidence":        _v_score,
                         "matches_active":          _matches_active,
-                        "gallery_size":            len(_voice_gallery),
+                        "gallery_size":            _voice_gallery_store.peek_len(),
                         "multi_speaker":           _multi_speaker_detected,
                         "multi_speaker_speakers":  _multi_speaker_labels,
                     }
@@ -7190,23 +7200,21 @@ async def run():
                     # resolver can detect "stranger present, voice ID failed"
                     # and drop the turn instead of misattributing to current.
                     _diar_seg_count = len(_diar) if isinstance(_diar, list) else 1
-                    _resolved_pid, _routing_action = _resolve_actual_speaker(
-                        _v_pid, _v_score, _cur_pid,
-                        _persons_in_frame, _unrecognized_tracks,
-                        _voice_gallery_sizes, time.time(),
-                        cur_person_type=_cur_person_type,
-                        utterance_duration=_utterance_secs,
-                        # Session 93 P3.23 tiered threshold: ambiguous-zone drop
-                        # (0.20-0.40 score) only fires when the room plausibly
-                        # contains another speaker. Pass the active session count
-                        # so the resolver can tell solo from multi-session context.
-                        n_active_sessions=len(_session_store.peek_all_snapshots()),
-                        n_diarize_segments=_diar_seg_count,
-                        # Session 120: pass holder's voice profile maturity so
-                        # the single-segment-voice-mismatch gate can decide
-                        # whether ECAPA's "no match" verdict is trustworthy.
-                        cur_holder_voice_n=(_pt_snap.evidence.voice_sample_count if _pt_snap is not None else 0) if _cur_pid else 0,
-                    )
+                    _rs_pif_view = {
+                        s.person_id: {"last_seen": s.last_seen, "name": s.name, "conf": s.conf, "source": s.source}
+                        for s in _presence_store.peek_all_snapshots()
+                    }
+                    _rs_ut_view = {
+                        s.track_id: s.last_seen
+                        for s in _track_store.peek_all_snapshots()
+                        if s.last_seen > 0 and s.identity_pid is None
+                    }
+                    # P0.10 Phase 2: legacy `_resolve_actual_speaker` call site
+                    # deleted (was at this site through Phase 4 cutover, retained
+                    # as shadow-only since Phase 4, now fully removed). The
+                    # reconciler is the sole routing source; `_routing_action`
+                    # + `_resolved_pid` are assigned by the collapsed override
+                    # conditional below (with B2 fail-safe per Block B).
 
                     # ── Session 123 / Phase 1 — Voice Channel shadow logging ──
                     # Run the new pure voice_channel.identify_speaker AFTER the
@@ -7219,7 +7227,7 @@ async def run():
                     try:
                         from core.voice_channel import identify_speaker as _vc_identify
                         _vc_claim = await _vc_identify(
-                            audio_buf, _voice_gallery,
+                            audio_buf, _voice_gallery_store.peek_all_gallery(),
                             utterance_duration=_utterance_secs,
                         )
                         _vc_pid_diff = _vc_claim.pid != _v_pid
@@ -7254,24 +7262,82 @@ async def run():
                             v_score=_v_score,
                             n_diarize_segments=_diar_seg_count,
                             utterance_duration=_utterance_secs,
-                            persons_in_frame=_persons_in_frame,
-                            unrecognized_tracks=_unrecognized_tracks,
+                            persons_in_frame=_rs_pif_view,
+                            unrecognized_tracks=_rs_ut_view,
                             cur_pid=_cur_pid,
                             cur_person_type=(_cur_person_type or ""),
                             n_active_sessions=len(_session_store.peek_all_snapshots()),
-                            voice_gallery_sizes=_voice_gallery_sizes,
+                            voice_gallery_sizes=_voice_gallery_store.peek_all_sizes(),
                             now=_rc_now,
                         )
                         _rc_decision = _rc_reconcile(
                             _rc_claim, _rc_presence, _rc_session,
                         )
-                        if _rc_decision.action != _routing_action:
+                        # P0.10 Phase 2 — Reconciler-Shadow as Bug-W-band watchdog.
+                        # Pre-Phase-2 this block fired on "legacy != new" divergence.
+                        # Legacy is gone now (Step 7); the trigger transforms to
+                        # "did the rule that fired match the expected rule for
+                        # the utterance band?" Bug-W class signal: gap-band turns
+                        # MUST fire `_p0_short_utterance_gap_hold_current`;
+                        # short_hard-band turns MUST fire one of the two
+                        # short-utterance mismatch rules OR the pure-noise rule
+                        # (boundary cases). Anything else is a regression worth
+                        # an entry in the validation log. Whole block deleted in
+                        # the follow-up PR alongside ROUTING_USE_RECONCILER.
+                        _utt = _utterance_secs or 0.0
+                        if _utt < VOICE_ROUTING_NOISE_FLOOR_SECS:
+                            _band = "noise"
+                        elif _utt < VOICE_ROUTING_MIN_AUDIO_FOR_SCORE:
+                            _band = "gap"        # 0.3 <= utt < 0.5 — Bug-W's signature
+                        elif _utt < VOICE_ROUTING_MIN_UTTERANCE_SECS:
+                            _band = "short_hard" # 0.5 <= utt < 1.0 — D7 watch
+                        else:
+                            _band = "normal"
+                        _watch_bands = ("gap", "short_hard")
+                        _rule_fired = _rc_decision.rule_fired
+                        # P0.10.1 F2: band→expected-rule mapping co-located
+                        # with the cascade in core/reconciler.py
+                        # (EXPECTED_RULES_BY_BAND module-level constant).
+                        # Pipeline.py imports it via the same `from
+                        # core.reconciler import ...` line as `_rc_build`
+                        # / `_rc_reconcile`.
+                        from core.reconciler import EXPECTED_RULES_BY_BAND
+                        _expected = EXPECTED_RULES_BY_BAND.get(_band, ())
+                        if _band in _watch_bands and _rule_fired not in _expected:
+                            try:
+                                _face_seens = [
+                                    s.last_seen
+                                    for s in _presence_store.peek_all_snapshots()
+                                    if s.source == "face" and s.last_seen > 0
+                                ]
+                                _last_face_age = (
+                                    _rc_now - max(_face_seens)
+                                    if _face_seens else None
+                                )
+                            except Exception:
+                                # OBSERVABILITY: logging path must never break a turn
+                                _last_face_age = None
+                            # P0.10.1 F1: per-session correlation axis
+                            # distinct from ts. `user_turns` increments on
+                            # each user message within the current session
+                            # (Session 97 STRANGER_IDENTITY_BLOCK_MIN_TURNS
+                            # plumbing). ts alone can't supply ordinal-
+                            # within-session — correlation across multiple
+                            # sessions uses ts; correlation within a single
+                            # session uses turn_in_session.
+                            _ts_snap = _session_store.peek_snapshot(_cur_pid) if _cur_pid else None
+                            _turn_in_session = _ts_snap.user_turns if _ts_snap is not None else None
                             print(
-                                f"[Reconciler-Shadow] {_now_log_ts()} divergence: "
-                                f"legacy={_routing_action!r} "
-                                f"new={_rc_decision.action!r} "
-                                f"rule={_rc_decision.rule_fired!r} "
-                                f"pid={_rc_decision.pid!r} "
+                                f"[Reconciler-Shadow] {_now_log_ts()} divergence | "
+                                f"turn_in_session={_turn_in_session if _turn_in_session is not None else 'n/a'} | "
+                                f"expected_rules={_expected!r} | "
+                                f"actual_rule={_rule_fired!r} | "
+                                f"action={_rc_decision.action!r} | pid={_rc_decision.pid!r} | "
+                                f"utt_dur={_utt:.2f}s | utt_band={_band} | v_score={_v_score:.3f} | "
+                                f"pyannote_segments={_diar_seg_count} | cur_pid={_cur_pid!r} | "
+                                f"cur_person_type={(_cur_person_type or '')!r} | "
+                                f"persons_in_frame_count={len(_rs_pif_view)} | "
+                                f"last_face_age_s={(f'{_last_face_age:.2f}' if _last_face_age is not None else 'n/a')} | "
                                 f"reason={_rc_decision.reasoning!r}"
                             )
                     except Exception as _rc_e:
@@ -7280,11 +7346,34 @@ async def run():
                             f"{type(_rc_e).__name__}: {_rc_e!r}"
                         )
 
-                    # Phase 4 cutover: reconciler is now the primary router.
-                    # Rollback: flip ROUTING_USE_RECONCILER = False in core/config.py.
-                    if ROUTING_USE_RECONCILER and _rc_decision is not None:
+                    # P0.10 Block B (B2): reconciler is the sole routing
+                    # source. ROUTING_USE_RECONCILER flag stays alive in
+                    # core/config.py through the validation window (Step 11)
+                    # but no longer gates dispatch — flag deletion + the
+                    # whole shadow block + this collapsed conditional all
+                    # go together in the follow-up PR once Block E's gate
+                    # criteria are met. Fail-safe (B2): on `_rc_decision is
+                    # None` (cascade returned None — cannot happen with
+                    # current 23-rule cascade per `_last_resort_ambiguous`,
+                    # but a future refactor that re-introduces fall-through
+                    # OR an exception in the try block above sets it back
+                    # to None) hold the current session AND emit a loud
+                    # WARN log so the coverage gap is INSTANTLY visible.
+                    # This branch is a Bug-W-class regression signal —
+                    # should NEVER fire in a fully-covered rule set.
+                    if _rc_decision is not None:
                         _resolved_pid = _rc_decision.pid
                         _routing_action = _rc_decision.action
+                    else:
+                        _resolved_pid = _cur_pid
+                        _routing_action = "current"
+                        print(
+                            f"[Reconciler] WARN {_now_log_ts()}: no rule fired — "
+                            f"falling back to hold-current; claim=(v_pid={_v_pid!r}, "
+                            f"v_score={_v_score:.3f}, utt={(_utterance_secs or 0.0):.2f}s, "
+                            f"n_diarize={_diar_seg_count}) session=(cur_pid={_cur_pid!r}, "
+                            f"cur_type={(_cur_person_type or '')!r})"
+                        )
 
                     if _routing_action == "switch_enrolled":
                         # Different enrolled person is speaking — open/switch their session directly.
@@ -7295,11 +7384,14 @@ async def run():
                             _switched_pt = (db.get_person_type(_resolved_pid) if db else "known") or "known"
                             _open_session(_resolved_pid, _v_name, "voice",
                                           person_type=_switched_pt, voice_confidence=_v_score)
-                            if _resolved_pid not in _conversation:
-                                _conversation[_resolved_pid] = db.load_conversation_history(_resolved_pid)
+                            await _conversation_store.ensure_history_loaded(_resolved_pid, lambda: db.load_conversation_history(_resolved_pid))
                             # Invalidate stale query embedding cache so get_context() fetches
                             # fresh memory on this first turn rather than using a stale vector.
-                            _query_embedding_cache.pop(_resolved_pid, None)
+                            try:
+                                _loop = asyncio.get_running_loop()
+                                _loop.create_task(_query_embedding_store.discard(_resolved_pid))
+                            except RuntimeError:
+                                pass  # OPTIONAL
                         _sw_ts = time.time()
                         try:
                             _loop = asyncio.get_running_loop()
@@ -7330,7 +7422,7 @@ async def run():
                             "matched_name":            _cur_name,
                             "voice_confidence":        _v_score,
                             "matches_active":          True,
-                            "gallery_size":            len(_voice_gallery),
+                            "gallery_size":            _voice_gallery_store.peek_len(),
                             "multi_speaker":           _multi_speaker_detected,
                             "multi_speaker_speakers":  _multi_speaker_labels,
                         }
@@ -7342,8 +7434,10 @@ async def run():
                         # pick the most-recently-seen track's session (not "most-recent voice session").
                         _now_route   = time.time()
                         _active_unrec = {
-                            tid: ts for tid, ts in _unrecognized_tracks.items()
-                            if _now_route - ts < VOICE_ROUTING_FACE_STALE_SECS
+                            s.track_id: s.last_seen
+                            for s in _track_store.peek_all_snapshots()
+                            if s.last_seen > 0 and s.identity_pid is None
+                            and _now_route - s.last_seen < VOICE_ROUTING_FACE_STALE_SECS
                         }
                         # Identify which track is most likely the speaker
                         if len(_active_unrec) == 1:
@@ -7354,7 +7448,7 @@ async def run():
                         else:
                             _speaker_track = None
                         _target_sid = (
-                            _stranger_track_map.get(_speaker_track)
+                            _track_store.peek_stranger_pid(_speaker_track)
                             if _speaker_track is not None else None
                         )
                         if _target_sid and _session_store.peek_snapshot(_target_sid) is not None:
@@ -7378,11 +7472,16 @@ async def run():
                                 _loop.create_task(_session_store.set_waiting_for_name(_sid, STRANGER_REQUIRE_SYSTEM_NAME))
                             except RuntimeError:
                                 pass  # OPTIONAL
-                            _conversation[_sid] = []
+                            await _conversation_store.init_empty(_sid)
                             _cur_pid  = _sid
                             _cur_name = "visitor"
                             if _speaker_track is not None:
-                                _stranger_track_map[_speaker_track] = _sid
+                                try:
+                                    asyncio.get_running_loop().create_task(
+                                        _track_store.mint_stranger(_speaker_track, _sid)
+                                    )
+                                except RuntimeError:
+                                    pass  # OPTIONAL: no running loop in test context
                             print(f"[Voice] Unrecognized speaker → new session {_cur_pid} (track={_speaker_track})")
 
                     elif _routing_action == "ambiguous":
@@ -7458,8 +7557,8 @@ async def run():
                     if (_cur_pid and _session_store.peek_snapshot(_cur_pid) is not None
                             and (_ext_snap.session_type if _ext_snap is not None else None) == "voice"):
                         _holder_vis_ext = (
-                            _cur_pid in _persons_in_frame
-                            and _now_ext - _persons_in_frame[_cur_pid].get("last_recognized_at", 0)
+                            _cur_pid in _presence_store
+                            and _now_ext - _presence_store.peek_last_recognized_at(_cur_pid, 0.0)
                             < VOICE_ROUTING_FACE_STALE_SECS
                         )
                         if _holder_vis_ext:
@@ -7483,8 +7582,8 @@ async def run():
                         # OR when the progressive-enroll gate already confirmed their face
                         # (voice_face_confirmed flag set on gate-pass turn).
                         _face_vis_acc = (
-                            (_cur_pid in _persons_in_frame
-                             and time.time() - _persons_in_frame[_cur_pid].get("last_recognized_at", 0)
+                            (_cur_pid in _presence_store
+                             and time.time() - _presence_store.peek_last_recognized_at(_cur_pid, 0.0)
                              < VOICE_ROUTING_FACE_STALE_SECS)
                             or (_ext_snap.voice_face_confirmed if _ext_snap is not None else False)
                         )
@@ -7496,7 +7595,7 @@ async def run():
                     # Build live sensor state — vision + voice together give brain
                     # the complete picture: what it SEES and who it HEARS, every turn.
                     _cur_snap      = _session_store.peek_snapshot(_cur_pid) if _cur_pid else None
-                    _cur_rec_conf  = _persons_in_frame.get(_cur_pid, {}).get("conf", 0.0) if _cur_pid else 0.0
+                    _cur_rec_conf  = _presence_store.peek_conf(_cur_pid, 0.0) if _cur_pid else 0.0
                     # Session 97 Fix 1: bump the user-turn counter BEFORE
                     # building vision_state so `session_user_turns` reflects
                     # "this turn's number" (1-indexed). Drives the
@@ -7522,7 +7621,7 @@ async def run():
                             except RuntimeError:
                                 pass  # OPTIONAL
                     _vision_state = {
-                        "face_in_frame":          time.time() - _last_face_seen < 2.0,
+                        "face_in_frame":          time.time() - _pipeline_state_store.peek_last_face_seen() < 2.0,
                         "person_name":            _cur_name,
                         "person_id":              _cur_pid,
                         "recognition_conf":       _cur_rec_conf,
@@ -7541,8 +7640,8 @@ async def run():
                         # Phase 3B.1: unified room-state block (None in
                         # single-person sessions).
                         "room_block":             _build_room_block(
-                            _session_store.peek_all_snapshots(), _conversation, _emotion_agents,
-                            _active_room_started_at, turn_cap=ROOM_BLOCK_TURN_CAP,
+                            _session_store.peek_all_snapshots(), _conversation_store._history, _per_person_agent_store.peek_all_emotion_agents(),
+                            _pipeline_state_store.peek_active_room_started_at(), turn_cap=ROOM_BLOCK_TURN_CAP,
                         ),
                         # Phase 3B.6: recent room context for greeting
                         # enrichment (None when no qualifying summary).
@@ -7560,7 +7659,7 @@ async def run():
                     # G4: System-name gate — strangers must address system by name first.
                     # Word-boundary match (not substring) — "Rex" must not fire on "reflex".
                     if _cur_pid and (_cur_snap.waiting_for_name if _cur_snap is not None else False):
-                        _name_heard, _name_match_method = _name_heard_in(text, _active_system_name)
+                        _name_heard, _name_match_method = _name_heard_in(text, _pipeline_state_store.peek_active_system_name())
                         if _name_heard:
                             # Name heard — unlock this stranger's session
                             try:
@@ -7585,11 +7684,9 @@ async def run():
                                 # Track whether a face was actually captured so we don't write
                                 # false face-witness evidence for voice-only gate passes (Bug C).
                                 _face_captured = False
-                                _gate_track = next(
-                                    (tid for tid, pid in _stranger_track_map.items() if pid == _cur_pid), None
-                                )
-                                if _gate_track is not None and _gate_track in _unrecognized_embeddings:
-                                    _gate_emb = _unrecognized_embeddings[_gate_track]
+                                _gate_track = _track_store.peek_track_for_stranger_pid(_cur_pid)
+                                _gate_emb = _track_store.peek_embedding(_gate_track) if _gate_track is not None else None
+                                if _gate_emb is not None:
                                     if db.add_embedding(_cur_pid, _gate_emb, "progressive_enroll"):
                                         print(f"[Pipeline] Progressive enroll: face embedding stored for {_cur_pid}")
                                         _face_captured = True
@@ -7628,7 +7725,7 @@ async def run():
                             # LLM responds naturally to whatever they said (which included the name).
                         else:
                             # Name not heard — stay silent, keep listening
-                            print(f"[STT] STRANGER/{_cur_name} [gate blocked — '{_active_system_name}' not heard]: {text}")
+                            print(f"[STT] STRANGER/{_cur_name} [gate blocked — '{_pipeline_state_store.peek_active_system_name()}' not heard]: {text}")
                             continue
 
                     # For stranger sessions, give the LLM context about the visitor
@@ -7711,10 +7808,11 @@ async def run():
             pass
 
         # 5.5. Cancel cloud retry loop (runs for session lifetime — must be cancelled).
-        if _cloud_monitor_task and not _cloud_monitor_task.done():
-            _cloud_monitor_task.cancel()
+        _cmt = _pipeline_state_store.peek_cloud_monitor_task()
+        if _cmt and not _cmt.done():
+            _cmt.cancel()
             try:
-                await asyncio.wait_for(_cloud_monitor_task, timeout=2.0)
+                await asyncio.wait_for(_cmt, timeout=2.0)
             except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
                 pass
 
