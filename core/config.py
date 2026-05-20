@@ -304,8 +304,24 @@ OLLAMA_MODEL           = "qwen2.5:7b"
 OLLAMA_URL             = "http://localhost:11434"
 
 # ── Provider credentials ──────────────────────────────────────────────────────
-TOGETHER_API_KEY  = os.getenv("TOGETHER_API_KEY", "")
-TOGETHER_BASE_URL = "https://api.together.xyz/v1"
+# P0.S3 §1.P1 — strip whitespace at module load (single source of truth).
+# Empty default is preserved; "".strip() == "". Consumers (CHAT_API_KEY etc.)
+# see the stripped value, so an httpx Authorization: Bearer header is never
+# whitespace-padded. env_validation.py reads BOTH _RAW (for the diagnostic
+# WARNING) and the stripped value (for the empty-check). Strip is idempotent:
+# if RAW is already clean, stripped == raw, no WARNING fires at boot.
+_TOGETHER_API_KEY_RAW = os.getenv("TOGETHER_API_KEY", "")
+TOGETHER_API_KEY      = _TOGETHER_API_KEY_RAW.strip()
+TOGETHER_BASE_URL     = "https://api.together.xyz/v1"
+# P0.S3 §1.P4 — HF_TOKEN centralized at module load for consistency with the
+# TOGETHER_API_KEY pattern. env_validation.py reads config.HF_TOKEN (not
+# os.getenv) so the P0.S6 test_env_var_reads_centralized invariant stays
+# green without adding a new allowlist entry. core/voice.py:302 still reads
+# os.getenv("HF_TOKEN") at lazy-load time (per the existing P0.S6 allowlist
+# entry); migrating voice.py to config.HF_TOKEN is S3.X scope, not P0.S3.
+# Same value read twice during process lifetime is harmless (env vars are
+# immutable during a Python process).
+HF_TOKEN          = os.getenv("HF_TOKEN", "")
 GROQ_API_KEY      = os.getenv("GROQ_API_KEY", "")
 GROQ_BASE_URL     = "https://api.groq.com/openai/v1"
 

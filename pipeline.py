@@ -6067,6 +6067,24 @@ async def run():
     from core.dashboard_token import _ensure_dashboard_token
     _ensure_dashboard_token(FACES_DIR)
 
+    # ── P0.S3 env-var validation ──────────────────────────────────────────────
+    # ORDERING INVARIANT: validate_required_env() MUST run BEFORE any cloud or
+    # network probe. Future specs adding network reachability checks (e.g.,
+    # Together.ai ping at startup, Tavily key liveness check) MUST land AFTER
+    # this call so misleading network errors don't mask the actionable
+    # "TOGETHER_API_KEY is empty" message.
+    #
+    # ORDERING vs P0.S2: validate_required_env() runs AFTER _ensure_dashboard_token
+    # so that even if env validation raises, the dashboard token + auth URL
+    # files are already on disk. User fixes env, restarts, dashboard auth
+    # works (no chicken/egg recovery loop).
+    #
+    # Spec: tests/p0_s3_plan_v1.md §1.P3 (ordering convention locked at the
+    # call site so future maintainers grepping for "ORDERING INVARIANT" find
+    # both invariants at the surface they actually affect).
+    from core.env_validation import validate_required_env
+    validate_required_env()
+
     # ── Privilege-table integrity check ───────────────────────────────────────
     # Fail-closed: every tool the brain can see in its TOOLS list MUST have a
     # TOOL_PRIVILEGES entry, else callers get silently blocked at runtime. This
