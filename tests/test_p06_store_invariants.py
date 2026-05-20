@@ -37,6 +37,7 @@ _STORE_MODULES: list[str] = [
     "cache_store",             # P0.6.5
     "pipeline_state_store",   # P0.6.6
     "vision_frame_store",     # P0.6.7v2
+    "anti_spoof_rejection_store",  # P0.S1 MED 5
 ]
 
 # Mapping: store module → pipeline attribute name expected in conftest loop.
@@ -53,6 +54,7 @@ _STORE_PIPELINE_ATTR: dict[str, str] = {
     "cache_store_classifier":        "_classifier_cache_store",   # P0.6.5
     "pipeline_state_store":   "_pipeline_state_store",
     "vision_frame_store":     "_vision_frame_store",
+    "anti_spoof_rejection_store": "_anti_spoof_rejection_store",  # P0.S1 MED 5
 }
 
 # Sync-method allowlist: Store methods that ARE allowed to be sync

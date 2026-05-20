@@ -68,9 +68,14 @@ class TestTrackStoreSchema:
     EXPECTED_FIELDS = {"_data"}
     EXPECTED_ENTRY_FIELDS = {
         "last_seen", "embedding", "stranger_pid", "identity_pid",
+        # P0.S1 D2.b — anti-spoof verdict carried alongside embedding (atomic C0).
+        "anti_spoof_live", "anti_spoof_score", "anti_spoof_reason",
+        "captured_at", "bbox",
     }
     EXPECTED_SNAPSHOT_FIELDS = {
         "track_id", "last_seen", "embedding", "stranger_pid", "identity_pid",
+        "anti_spoof_live", "anti_spoof_score", "anti_spoof_reason",
+        "captured_at", "bbox",
     }
 
     def test_owned_fields_match(self) -> None:

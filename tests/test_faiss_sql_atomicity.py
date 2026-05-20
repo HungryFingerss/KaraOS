@@ -106,7 +106,7 @@ def test_crash_mid_sql_commit_does_not_corrupt_faiss(tmp_path, monkeypatch):
     )
 
     with pytest.raises(RuntimeError, match="simulated SQL failure"):
-        db.add_embedding(person_id="test_pid", embedding=fake_embedding())
+        db.add_embedding(person_id="test_pid", embedding=fake_embedding(), source="enrollment", anti_spoof_verdict=True)
 
     assert db.index.ntotal == pre_faiss_size, (
         f"BUG: FAISS has {db.index.ntotal} entries after SQL crash — "
@@ -143,7 +143,7 @@ def test_crash_post_sql_commit_pre_faiss_update_recovers_on_boot(tmp_path, monke
     )
 
     with pytest.raises(RuntimeError, match="simulated FAISS add failure"):
-        db1.add_embedding(person_id="test_pid", embedding=fake_embedding())
+        db1.add_embedding(person_id="test_pid", embedding=fake_embedding(), source="enrollment", anti_spoof_verdict=True)
 
     assert sentinel.exists(), "Sentinel not written after FAISS failure"
     db1.close()
@@ -186,7 +186,7 @@ def test_crash_post_faiss_inmemory_pre_disk_save_recovers_on_boot(tmp_path, monk
     monkeypatch.setattr(db1, "_save_faiss", crashing_save_faiss)
 
     with pytest.raises(RuntimeError, match="simulated disk save failure"):
-        db1.add_embedding(person_id="test_pid", embedding=fake_embedding())
+        db1.add_embedding(person_id="test_pid", embedding=fake_embedding(), source="enrollment", anti_spoof_verdict=True)
 
     assert sentinel.exists(), "Sentinel not written after disk-save failure"
     db1.close()
@@ -222,7 +222,7 @@ def test_delete_person_crash_post_sql_recovers_on_boot(tmp_path, monkeypatch):
     db1 = FaceDB(db_path=str(faces_path), faiss_path=faiss_path)
     for i in range(5):
         db1.add_person(f"pid_{i}", f"Person {i}")
-        db1.add_embedding(person_id=f"pid_{i}", embedding=fake_embedding())
+        db1.add_embedding(person_id=f"pid_{i}", embedding=fake_embedding(), source="enrollment", anti_spoof_verdict=True)
     assert db1.index.ntotal == 5
 
     original_rebuild = db1._rebuild_faiss
@@ -273,7 +273,7 @@ def test_artificial_divergence_reconciles_on_boot(tmp_path, monkeypatch):
         emb = fake_embedding()
         embeddings_by_pid[f"pid_{i}"] = emb
         db1.add_person(f"pid_{i}", f"Person {i}")
-        db1.add_embedding(person_id=f"pid_{i}", embedding=emb)
+        db1.add_embedding(person_id=f"pid_{i}", embedding=emb, source="enrollment", anti_spoof_verdict=True)
     assert db1.index.ntotal == 5
     db1.close()
 
@@ -312,7 +312,7 @@ def test_sentinel_file_triggers_reconciliation_when_counts_match(tmp_path, monke
     db1 = FaceDB(db_path=str(faces_path), faiss_path=faiss_path)
     for i in range(3):
         db1.add_person(f"pid_{i}", f"Person {i}")
-        db1.add_embedding(person_id=f"pid_{i}", embedding=fake_embedding())
+        db1.add_embedding(person_id=f"pid_{i}", embedding=fake_embedding(), source="enrollment", anti_spoof_verdict=True)
     db1.close()
 
     sentinel.touch()
@@ -350,7 +350,7 @@ def test_rebuild_failure_at_boot_comes_up_degraded(tmp_path, monkeypatch):
     db1 = FaceDB(db_path=str(faces_path), faiss_path=faiss_path)
     for i in range(3):
         db1.add_person(f"pid_{i}", f"Person {i}")
-        db1.add_embedding(person_id=f"pid_{i}", embedding=fake_embedding())
+        db1.add_embedding(person_id=f"pid_{i}", embedding=fake_embedding(), source="enrollment", anti_spoof_verdict=True)
     db1.close()
     sentinel.touch()
     faiss_path.unlink()

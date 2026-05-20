@@ -1,0 +1,46 @@
+# P0.S6 D5 — pre-commit hook for secret detection on staged files.
+#
+# Per Plan v2 P3 (tool consistency): detect-secrets at pre-commit + TruffleHog
+# at CI. detect-secrets is designed for staged-content per-commit scanning
+# with low false-positive friction.
+#
+# Onboarding (one-time per dev machine):
+#   pip install pre-commit detect-secrets
+#   pre-commit install
+#
+# Baseline (re)generation when a new high-entropy file legitimately lands:
+#   detect-secrets scan --baseline .secrets.baseline --update
+#
+# Exclude pattern enumerates the 4 false-positive categories surfaced by the
+# TruffleHog v2 baseline scan (2026-05-18, Plan v2 §6):
+#   1. binary file format          — data/classifier_scenarios.db, faces/
+#   2. ML model artifacts          — models/* (.pt, .onnx, .pth)
+#   3. eval-bench JSON artifacts   — tests/eval_bench_runs/*.json
+#   4. npm SRI hashes              — dog-ai-dashboard/package-lock.json
+# Plus committed seeds + transient hypothesis cache:
+#   - data/classifier_scenarios_seed.jsonl  (Spec 1 bootstrap seed)
+#   - .hypothesis/                          (regenerable on every run)
+#
+# Adding a new legitimate high-entropy file:
+#   1. Identify which of the 4 categories it matches.
+#   2. Extend this exclude pattern (or use an existing path-prefix match).
+#   3. Regenerate the baseline: detect-secrets scan --baseline .secrets.baseline --update
+#   4. Re-run the local TruffleHog v2 scan (Plan v2 §6) to confirm the new
+#      findings are entropy-class only (no regex matches).
+
+repos:
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: |
+          (?x)^(
+            data/classifier_scenarios\.db|
+            faces/.*|
+            models/.*|
+            tests/eval_bench_runs/.*\.json|
+            dog-ai-dashboard/package-lock\.json|
+            data/classifier_scenarios_seed\.jsonl|
+            \.hypothesis/.*
+          )$

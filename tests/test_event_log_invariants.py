@@ -26,6 +26,7 @@ import dataclasses
 import inspect
 import json
 import os
+import re
 import sqlite3
 from dataclasses import fields
 from pathlib import Path
@@ -268,15 +269,20 @@ def test_vision_frame_payload_includes_anti_spoof_fields():
         "P0.S1 prerequisite violated: VisionFramePayload missing "
         "`anti_spoof_score` field. This is LOAD-BEARING per Plan v2 Block A."
     )
-    # Type sanity — anti_spoof_live must NOT be Optional (replay tests
-    # expect a definite bool; None would force defensive coercion across
-    # every consumer).
+    # Type sanity — P0.S1 Phase 2 widened anti_spoof_live to Optional[bool]
+    # to surface the ANTI_SPOOF_REASON_UNAVAILABLE case (3-state semantic):
+    #   True  → at least one detection passed
+    #   False → at least one detection rejected (active spoof signal)
+    #   None  → all detections produced no verdict (checker unavailable)
+    # Consumers MUST handle None (replay distinguishes hardware-down from
+    # active attack). The P0.0.7 2-state contract was widened deliberately;
+    # this is the new locked schema per P0.S1 closure.
     type_hints = {f.name: f.type for f in fields(VisionFramePayload)}
     live_type_str = str(type_hints["anti_spoof_live"])
-    assert "Optional" not in live_type_str and "None" not in live_type_str, (
-        f"P0.S1: anti_spoof_live should be a definite bool, got "
-        f"{live_type_str}. Defensive coercion across consumers is "
-        f"smell — fix at the producer."
+    assert "Optional" in live_type_str or "None" in live_type_str, (
+        f"P0.S1 Phase 2: anti_spoof_live MUST be Optional[bool] to support "
+        f"the ANTI_SPOOF_REASON_UNAVAILABLE case (None). Found {live_type_str}. "
+        f"Reverting to bare bool drops the unavailable-checker signal."
     )
 
 
@@ -300,6 +306,55 @@ def test_vision_frame_payload_does_not_embed_image_data():
         f"D2 violation: VisionFramePayload has fields suggesting inline "
         f"image data: {forbidden_present}. Use frame_path reference; "
         f"bytes live in faces/frames/<frame_id>.jpg keyed by hash."
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 3b. P0.S6 D3.c — no secret-shaped field names on any event_log payload
+# ══════════════════════════════════════════════════════════════════════════
+# Colocated here per Plan v2 §9.3 / D7 (P0.S6 invariant placement decision).
+# `_FORBIDDEN_FIELD_PATTERN` differs from the secret-in-prints regex in §2 by
+# NOT requiring leading underscore — payload fields use snake_case without
+# the `_API_KEY` convention. `auth_token` matches; `auth_flow_step` would also
+# match (acceptable conservative false positive — payload field naming should
+# avoid `auth` substring anyway).
+
+_FORBIDDEN_FIELD_PATTERN = re.compile(
+    r"(?i).*(api_key|token|secret|password|auth|credential).*"
+)
+
+# Payload-classes registry — every `@dataclass` defined in core/event_log/types.py
+# that's listed in _PAYLOAD_CLASSES is in-scope. We use _PAYLOAD_CLASSES as the
+# enumeration source so the test never drifts from the dispatch table.
+_PAYLOAD_CLASS_NAMES_FOR_SECRET_FIELD_SCAN = {
+    cls.__name__: cls
+    for (_etype, _ver), cls in _PAYLOAD_CLASSES.items()
+}
+
+
+def test_payload_fields_no_secret_shaped_names():
+    """P0.S6 D3.c — no event_log payload dataclass may declare a field whose
+    name matches the secret-shape regex. Prevents accidental introduction of
+    `api_key`, `auth_token`, etc. into the persisted event log via a future
+    refactor that adds a "convenient" auth field to a payload.
+
+    Scoped via `_PAYLOAD_CLASSES` — every registered payload class is checked.
+    The dispatch table is the single source of truth for what counts as a
+    payload (R3 + C3); this test piggybacks on that registry.
+    """
+    violations: list[str] = []
+    for cls_name, cls in _PAYLOAD_CLASS_NAMES_FOR_SECRET_FIELD_SCAN.items():
+        for f in fields(cls):
+            if _FORBIDDEN_FIELD_PATTERN.match(f.name):
+                violations.append(
+                    f"{cls_name}.{f.name} — field name matches secret-shape "
+                    f"regex; payload fields must not name credentials"
+                )
+    assert violations == [], (
+        "P0.S6 D3.c violations (rename the field or pick a non-secret-shaped "
+        "name; payloads persist to brain.db.event_log and must not log "
+        "credentials):\n"
+        + "\n".join(violations)
     )
 
 

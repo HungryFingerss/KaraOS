@@ -58,13 +58,13 @@ def test_delete_person1_keeps_person2():
             db.add_person("p1", "Alice")
             emb1 = [random_embedding(seed=i) for i in range(1, 4)]
             for e in emb1:
-                db.add_embedding("p1", e)
+                db.add_embedding("p1", e, source="enrollment", anti_spoof_verdict=True)
 
             # Enroll person_2 (3 embeddings)
             db.add_person("p2", "Bob")
             emb2 = [random_embedding(seed=i) for i in range(10, 13)]
             for e in emb2:
-                db.add_embedding("p2", e)
+                db.add_embedding("p2", e, source="enrollment", anti_spoof_verdict=True)
 
             # Sanity: both recognized before delete
             pid, _, _ = db.recognize(emb1[0], threshold=0.01)
@@ -116,7 +116,7 @@ def test_faiss_index_file_deleted_triggers_rebuild():
              patch.object(_db_mod, "FAISS_INDEX_PATH", index_path):
             db = _db_mod.FaceDB()
             db.add_person("p1", "Charlie")
-            db.add_embedding("p1", emb)
+            db.add_embedding("p1", emb, source="enrollment", anti_spoof_verdict=True)
             assert index_path.exists(), "FAISS index file was not written"
             db._conn.close()
 
@@ -179,7 +179,7 @@ def test_vectors_stored_as_normalized_blobs():
             db.add_person("p1", "Dave")
             # Pass an unnormalized vector — add_embedding must normalize it
             raw = random_embedding(seed=99) * 5.0
-            db.add_embedding("p1", raw)
+            db.add_embedding("p1", raw, source="enrollment", anti_spoof_verdict=True)
 
             row = db._conn.execute(
                 "SELECT vector FROM embeddings WHERE person_id = 'p1'"
@@ -396,7 +396,7 @@ def test_add_embedding_returns_false_at_cap():
             while added < MAX_EMBEDDINGS and attempts < MAX_EMBEDDINGS * 10:
                 v = rng.random(512).astype(np.float32)
                 v /= np.linalg.norm(v)
-                if db.add_embedding("p1", v):
+                if db.add_embedding("p1", v, source="enrollment", anti_spoof_verdict=True):
                     added += 1
                 attempts += 1
             assert added == MAX_EMBEDDINGS, (
@@ -405,7 +405,7 @@ def test_add_embedding_returns_false_at_cap():
             # One more must be rejected
             extra = rng.random(512).astype(np.float32)
             extra /= np.linalg.norm(extra)
-            result = db.add_embedding("p1", extra)
+            result = db.add_embedding("p1", extra, source="enrollment", anti_spoof_verdict=True)
             assert result is False, "add_embedding should return False when gallery is full"
             db._conn.close()
 
@@ -707,7 +707,10 @@ def test_add_embedding_stores_source_and_confidence():
             db.add_person("p1", "Alice", None)
             emb = random_embedding(seed=10)
 
-            db.add_embedding("p1", emb, source="enrollment", confidence=0.95)
+            db.add_embedding(
+                "p1", emb, source="enrollment", confidence=0.95,
+                anti_spoof_verdict=True,
+            )
 
             row = db._conn.execute(
                 "SELECT source, confidence_at_write FROM embeddings WHERE person_id = 'p1'"
@@ -718,25 +721,10 @@ def test_add_embedding_stores_source_and_confidence():
             db._conn.close()
 
 
-def test_add_embedding_default_source_is_legacy_unknown():
-    """#3: Calling add_embedding() without source must default to 'legacy_unknown'."""
-    import core.db as _db_mod
-
-    with tempfile.TemporaryDirectory() as tmp:
-        db_path    = Path(tmp) / "faces.db"
-        index_path = Path(tmp) / "faces.index"
-
-        with patch.object(_db_mod, "DB_PATH",         db_path), \
-             patch.object(_db_mod, "FAISS_INDEX_PATH", index_path):
-            db = _db_mod.FaceDB()
-            db.add_person("p1", "Alice", None)
-            db.add_embedding("p1", random_embedding(seed=11))
-
-            row = db._conn.execute(
-                "SELECT source FROM embeddings WHERE person_id = 'p1'"
-            ).fetchone()
-            assert row[0] == "legacy_unknown"
-            db._conn.close()
+# P0.S1 D4: test_add_embedding_default_source_is_legacy_unknown DELETED 2026-05-18.
+# Contract removed: `legacy_unknown` is no longer in VALID_EMBEDDING_SOURCES and
+# `source` is now a required kwarg (no default). The test asserted a backdoor
+# that the locked Plan v2 §1 spec eliminated.
 
 
 def test_add_voice_embedding_stores_source_and_confidence():
@@ -824,9 +812,9 @@ def test_gallery_audit_returns_source_counts():
              patch.object(_db_mod, "FAISS_INDEX_PATH", index_path):
             db = _db_mod.FaceDB()
             db.add_person("p1", "Alice", None)
-            db.add_embedding("p1", random_embedding(seed=1),  source="enrollment",        confidence=0.95)
-            db.add_embedding("p1", random_embedding(seed=2),  source="enrollment",        confidence=0.93)
-            db.add_embedding("p1", random_embedding(seed=3),  source="recognition_update", confidence=0.30)
+            db.add_embedding("p1", random_embedding(seed=1),  source="enrollment",        confidence=0.95, anti_spoof_verdict=True)
+            db.add_embedding("p1", random_embedding(seed=2),  source="enrollment",        confidence=0.93, anti_spoof_verdict=True)
+            db.add_embedding("p1", random_embedding(seed=3),  source="recognition_update", confidence=0.30, anti_spoof_verdict=True)
 
             results = db.gallery_audit("p1")
             assert len(results) == 1
@@ -853,13 +841,13 @@ def test_gallery_audit_detects_outlier_embedding():
             base = random_embedding(seed=10)
             for i in range(5):
                 db.add_embedding("p1", base + np.random.randn(512).astype(np.float32) * 0.01,
-                                  source="enrollment", confidence=0.90)
+                                  source="enrollment", confidence=0.90, anti_spoof_verdict=True)
             # 1 outlier embedding (completely different direction).
             # Use 'enrollment' source so the centroid-distance gate (which only
             # guards 'recognition_update' writes) doesn't reject it — the test's
             # intent is that audit detects bad rows regardless of how they got in.
             outlier = random_embedding(seed=99)
-            db.add_embedding("p1", -outlier, source="enrollment", confidence=0.19)
+            db.add_embedding("p1", -outlier, source="enrollment", confidence=0.19, anti_spoof_verdict=True)
 
             results = db.gallery_audit("p1", sigma=1.5)
             assert len(results) == 1
@@ -882,10 +870,10 @@ def test_prune_outlier_embeddings_removes_rows_and_rebuilds():
             base = random_embedding(seed=10)
             for i in range(5):
                 db.add_embedding("p1", base + np.random.randn(512).astype(np.float32) * 0.01,
-                                  source="enrollment", confidence=0.90)
+                                  source="enrollment", confidence=0.90, anti_spoof_verdict=True)
             # See test_gallery_audit_detects_outlier_embedding for why enrollment.
             db.add_embedding("p1", -random_embedding(seed=99),
-                              source="enrollment", confidence=0.19)
+                              source="enrollment", confidence=0.19, anti_spoof_verdict=True)
 
             count_before = db._conn.execute(
                 "SELECT COUNT(*) FROM embeddings WHERE person_id = 'p1'"
@@ -914,7 +902,7 @@ def test_gallery_audit_no_crash_with_few_embeddings():
              patch.object(_db_mod, "FAISS_INDEX_PATH", index_path):
             db = _db_mod.FaceDB()
             db.add_person("p1", "Alice", None)
-            db.add_embedding("p1", random_embedding(seed=1), source="enrollment", confidence=0.90)
+            db.add_embedding("p1", random_embedding(seed=1), source="enrollment", confidence=0.90, anti_spoof_verdict=True)
 
             results = db.gallery_audit("p1")
             assert len(results) == 1

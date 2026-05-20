@@ -153,6 +153,8 @@ class TestTrackStoreInverse:
             "mint_stranger", "bind_identity",
             "remove_track", "prune_stale", "prune_to_active_tids",
             "prune_for_session_close", "clear",
+            # P0.S1 D2.b — atomic embedding+verdict upsert.
+            "upsert_embedding_with_verdict",
         },
     }
 

@@ -620,7 +620,36 @@ VISITOR_CONTEXT_BLOCK_ENABLED = True
 # multiple turns AND the brain needs a gentle reminder that promotion
 # is overdue if a name has surfaced.
 STRANGER_IDENTITY_BLOCK_ENABLED = True
-STRANGER_IDENTITY_BLOCK_MIN_TURNS = 2  # min user turns before block fires
+STRANGER_IDENTITY_BLOCK_MIN_TURNS = 0  # P0.S7.5.2 D5: 2→0; block fires on every stranger turn so canary-3 question-shapes hit guidance immediately
+
+# P0.S7.5.2 D3 — voice gallery accumulation gates. Mirrors face gallery's
+# SELF_UPDATE_CENTROID_MIN=0.55 discipline (Session 51 P0.5). Without
+# these gates, canary 3 (2026-05-20) Jagan's voice profile drifted to
+# the point where his own utterances scored 0.3-0.4 against his mature
+# gallery — symptom of centroid contamination from short-utterance noise.
+MIN_VOICE_ACCUM_DURATION_SECS: float = 1.5  # ECAPA-TDNN min reliable length (per core/voice.py:147); shorter audio produces noisy embeddings
+VOICE_SELF_UPDATE_CENTROID_MIN: float = 0.55  # cosine-to-centroid floor; mirrors face gallery SELF_UPDATE_CENTROID_MIN per Session 51
+VOICE_CENTROID_GATE_MIN_SAMPLES: int = 5  # bootstrap-safe: gate fires only when ≥5 samples present so early enrollment isn't blocked
+
+# P0.S7.5.2 D4 — STT 1-word artifact filter. Canary 3 (2026-05-20)
+# surfaced multiple turns where Whisper emitted bare "You", "Yeah",
+# "Thank" without terminal punctuation — phantom acknowledgments that
+# triggered phantom downstream work. 1-word transcripts now pass only
+# when EITHER (a) terminated with .!? OR (b) the lowercased word is in
+# the known-imperative allowlist below.
+MIN_STT_WORD_COUNT: int = 2  # minimum words to keep STT output unless terminated or allowlisted
+STT_KNOWN_IMPERATIVES: frozenset[str] = frozenset({
+    "yes", "no", "stop", "help", "okay", "ok", "sure", "yeah", "yep", "nope",
+})
+"""1-word Whisper-allowlist for legitimate confirmation/denial responses.
+
+Expansion criteria (P0.S7.5.2 Plan v2 §4.2):
+  - 3+ canary instances of the word being legitimately spoken AND filtered
+    (evidence: terminal_output.md grep + user confirmation that the word
+    was spoken as a real response, not Whisper noise)
+  - No semantic ambiguity (multi-meaning words → require punctuation instead)
+  - Documented in CLAUDE.md closure narrative with the 3-instance evidence trail
+"""
 
 # Session 113 Part 1 — LLM turn allocation via <<<ADDRESS DECISION>>> block.
 # In multi-person rooms the brain (not the pipeline's voice routing) decides
@@ -661,6 +690,53 @@ BATCH_GREETING_LLM_TIMEOUT_SECS = 1.0
 #   ROOM_BLOCK_TURN_CAP — max turns rendered chronologically (rolling window)
 ROOM_BLOCK_ENABLED  = True
 ROOM_BLOCK_TURN_CAP = 10
+
+# P0.S7.D-C Stage 1 — flag-gate the legacy `_build_cross_person_excerpts`
+# block (pipeline.py:1202). Default OFF — runtime renders only <<<ROOM>>>
+# (S113 P3B.1) + <<<SHARED CONTEXT>>> (P0.S7 D-A) for multi-person scenes.
+# Function code stays in source for the duration of D-B/D-D/D-E work;
+# rollback path is one-flag-flip. Stage 2 hard-deletes the function +
+# flag after the bundled-queue canary validates D-A + D-C + D-B + D-D +
+# D-E + γ AS A SET (Plan v1 §8 trigger spec).
+CROSS_PERSON_EXCERPTS_ENABLED: bool = False
+
+# P0.S7 D-A — SHARED CONTEXT block (room-scoped conversation history pulled
+# from conversation_log via FaceDB.get_recent_room_conversation).
+# Complements ROOM block (in-memory state) with persisted SQL retrieval that
+# survives session expiry and the CONVERSATION_HISTORY_LIMIT in-memory trim.
+# Fires under the same multi-person + room_session_id gate as ROOM block;
+# additionally skipped on disputed callers (T-A).
+#   SHARED_CONTEXT_BLOCK_ENABLED  — master flag; False = skip block entirely
+#   SHARED_CONTEXT_BLOCK_TURN_CAP — max turns retrieved from conversation_log
+SHARED_CONTEXT_BLOCK_ENABLED  = True
+SHARED_CONTEXT_BLOCK_TURN_CAP = 10
+
+# P0.S7.5 D1 — nudge types that are ONE-SHOT proactive reminders.
+# These get mark_nudge_injected on first delivery (legacy behavior).
+# Nudge types NOT in this set default to PERSISTENT context — they
+# stay pending and re-inject every turn until expires_at or dismissed.
+# VISITOR_ALERT is INTENTIONALLY excluded: owner needs persistent
+# context about visitor presence whenever they ask, not just first turn.
+# When adding a new nudge type, default behavior is PERSISTENT — opt
+# into one-shot only when the type is a proactive reminder that
+# should not repeat.
+ONE_SHOT_NUDGE_TYPES: frozenset[str] = frozenset({
+    "CROSS_PERSON_HYPOTHESIS",
+    "INTENTION_FOLLOWUP",
+    "MEMORY_PROMPT",
+})
+
+# P0.S7.5 D2 — SHARED CONTEXT widening window. When the current scene
+# is single-person but the requester appears in recent room sessions'
+# audience_ids within this window, render persisted history from those
+# rooms. Matches the visitor-alert expiry (24h) so the two defenses
+# align temporally.
+SHARED_CONTEXT_RECENT_AUDIENCE_HOURS: float = 24.0
+
+# P0.S7.5 D4 — gate the KNOWN SPEAKER IDENTITY block. Default True;
+# rollback is a one-line flip if the block proves too verbose for
+# normal turns.
+KNOWN_SPEAKER_IDENTITY_BLOCK_ENABLED: bool = True
 
 # Phase 3B.3 — TURN ARBITRATION rules appended to the ROOM block. Gives
 # the brain concrete reasons to emit the [addressing:X] marker (Session
@@ -936,6 +1012,25 @@ LOG_ANTISPOOF_PROBS            = False
 LOG_ANTISPOOF_SUMMARY          = True
 LOG_ANTISPOOF_SUMMARY_INTERVAL = 100
 
+# ── P0.S1 anti-spoof gating ───────────────────────────────────────────────────
+# Per-track burst threshold for watchdog alert (C2 contract). When the same
+# SORT track produces >=ANTI_SPOOF_BURST_THRESHOLD rejections within
+# ANTI_SPOOF_BURST_WINDOW_SECS, the watchdog fires ONCE (exact-equality
+# trigger per Plan v2 §14b.1 — `count == THRESHOLD`, not `>=`). Per-track
+# scope: track_A burst does NOT lock out track_B (no cross-track lockout).
+# Voice channel is NOT gated by anti-spoof burst (C2 — no voice lockout).
+ANTI_SPOOF_BURST_THRESHOLD   = 3
+ANTI_SPOOF_BURST_WINDOW_SECS = 60.0
+
+# Reason-code distinguishability for dashboard + replay (C1 contract).
+# Four codes, never collapsed. Operators distinguish hardware-down
+# (unavailable) from active attack (rejected) from missing-frame
+# (no_verdict) from clean (passed).
+ANTI_SPOOF_REASON_PASSED      = "passed"
+ANTI_SPOOF_REASON_REJECTED    = "rejected"
+ANTI_SPOOF_REASON_UNAVAILABLE = "unavailable"
+ANTI_SPOOF_REASON_NO_VERDICT  = "no_verdict"
+
 # ── Logging / observability ───────────────────────────────────────────────────
 # Single source of truth for log time formatting. Every timestamped print path
 # goes through core.log_utils._now_log_ts() — grep-able invariant. No ad-hoc
@@ -1004,6 +1099,13 @@ GRAPH_LOCAL_EMBEDDING_DEVICE      = "auto"  # "auto" | "cuda" | "cpu"
 BRAIN_AGENT_POLL_INTERVAL  = 2.0   # seconds between polls for new turns
 BRAIN_AGENT_CONTEXT_TURNS  = 6     # prior turns fed as context to extraction
 BRAIN_AGENT_MIN_WORDS      = 4     # turns shorter than this are skipped
+
+# P0.S7.2 D5 — minimum content length for multi-person assistant-turn
+# extraction (κ branch). Below this threshold the turn is skipped — filters
+# acknowledgments + KAIROS check-ins + filler that wouldn't yield useful
+# topic-bearing facts for participants' cross-session retrieval. Auditor
+# approved 80 (~15-20 words).
+ASSISTANT_TURN_EXTRACT_MIN_CHARS: int = 80
 PREF_AUTO_CONFIRM_THRESHOLD = 3    # sessions_seen needed to auto-activate a staged pref
 PREF_ANALYSIS_TURNS         = 40   # conversation turns fed to PromptPrefAgent
 
@@ -1193,7 +1295,7 @@ RETRO_STALE_PENALTY    = 0.15  # confidence reduction applied to STALE verdicts
 # ── Kuzu graph schema version ─────────────────────────────────────────────────
 # Bump this when RELATES_TO schema changes. BrainOrchestrator wipes + rebuilds
 # the graph from SQLite when the stored version doesn't match.
-GRAPH_SCHEMA_VERSION   = 2   # bumped: forces drop_schema()+_init_schema() on DBs still at v1
+GRAPH_SCHEMA_VERSION   = 3   # P0.S7.D-B: bumped v2→v3 to add `privacy_level STRING` to the RELATES_TO edge schema. Forces drop_schema()+_init_schema()+rebuild on DBs at v2. Closes the κ-ship-surfaced active leak where personal-tier `received_*`/`witnessed_*` facts (P0.S7.2) were ingested as graph edges without privacy filter (S107/S112 deferral premise falsified).
 
 # ── Emotion detection (Item 7) ───────────────────────────────────────────────
 # Model: j-hartmann/emotion-english-distilroberta-base (CPU-only, ~15-25ms/turn)
@@ -1221,7 +1323,11 @@ EMBED_MIN_CONFIDENCE  = 0.60   # facts below this confidence are excluded from c
 # ── KAIROS — proactive conversation tick (Pattern 7) ─────────────────────────
 # Robot breaks silence proactively using a pending PatternAgent question.
 # Only fires when a known person is in active session and has been silent.
-KAIROS_SILENCE_THRESHOLD = 30.0   # seconds of user silence before KAIROS fires
+# P0.S7.3 — silence countdown begins from max(last_user_speech_at, _tts_end_time),
+# so brain-speaking time doesn't accumulate as "silence." 120s (2 min) gives the
+# user comfortable breathing room after a brain response before KAIROS proactively
+# re-engages. Adjustable per user preference.
+KAIROS_SILENCE_THRESHOLD_SECS: float = 120.0   # seconds of user silence before KAIROS fires
 KAIROS_COOLDOWN          = 120.0  # minimum seconds between proactive initiations
 # Session 112 Part 2 — room-aware KAIROS speaker selection. When
 # multiple people are active and the best_friend is one of them,

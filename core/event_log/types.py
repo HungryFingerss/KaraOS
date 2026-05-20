@@ -183,10 +183,16 @@ class AudioInPayload:
 class VisionFramePayload:
     """vision_frame: per-frame snapshot from the background scan.
 
-    **P0.S1 prerequisite (locked):** `anti_spoof_live` + `anti_spoof_score`
-    are LOAD-BEARING for P0.S1's anti-spoof-on-every-match regression
-    test. Removing or making these fields optional in a future refactor
-    breaks P0.S1's test surface.
+    **P0.S1 prerequisite (locked, Phase 2 widened):** `anti_spoof_live` +
+    `anti_spoof_score` are LOAD-BEARING for P0.S1's anti-spoof-on-every-match
+    regression test. P0.0.7 originally typed `anti_spoof_live: bool`
+    (2-state); P0.S1 Phase 2 widened to `Optional[bool]` (3-state) to
+    surface the ANTI_SPOOF_REASON_UNAVAILABLE case at replay time:
+      - True  → at least one detection passed anti-spoof (or empty scan;
+                no spoof signal observed)
+      - False → at least one detection rejected (active spoof signal)
+      - None  → all detections produced no verdict (checker unavailable)
+    Replay distinguishes hardware-down (None) from active attack (False).
 
     **D2 lock (no inline images):** `frame_path` references
     `faces/frames/<frame_id>.jpg`. Payload NEVER embeds image bytes.
@@ -197,7 +203,7 @@ class VisionFramePayload:
     n_detections:             int
     recognized:               tuple[tuple[str, float, float], ...]
     unrecognized_track_ids:   tuple[int, ...]
-    anti_spoof_live:          bool
+    anti_spoof_live:          Optional[bool]
     anti_spoof_score:         Optional[float]
 
     @classmethod
@@ -206,6 +212,10 @@ class VisionFramePayload:
         recognized = tuple(
             (item[0], float(item[1]), float(item[2])) for item in (recognized_raw or ())
         )
+        # P0.S1 Phase 2 — preserve None for the unavailable-checker case.
+        # `d.get("anti_spoof_live")` returns None for missing OR explicit-null
+        # keys; only coerce to bool when a non-null value is present.
+        _asl = d.get("anti_spoof_live")
         return cls(
             frame_id=d["frame_id"],
             frame_path=d.get("frame_path"),
@@ -213,7 +223,7 @@ class VisionFramePayload:
             n_detections=int(d["n_detections"]),
             recognized=recognized,
             unrecognized_track_ids=tuple(int(x) for x in d.get("unrecognized_track_ids", ())),
-            anti_spoof_live=bool(d["anti_spoof_live"]),
+            anti_spoof_live=(None if _asl is None else bool(_asl)),
             anti_spoof_score=(float(d["anti_spoof_score"])
                               if d.get("anti_spoof_score") is not None else None),
         )

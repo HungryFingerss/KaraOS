@@ -224,7 +224,19 @@ TOOLS = [
                 "Do NOT call if the name matches what the sensor already shows and the speaker "
                 "has not contradicted it. "
                 "Do NOT call on every turn — only when the speaker actively states or corrects their OWN name. "
-                "Do NOT call for 'I'll call you X' — that names the system, not the person."
+                "Do NOT call for 'I'll call you X' — that names the system, not the person.\n\n"
+                "CRITICAL — DO NOT RE-CONFIRM (Bug Q parallel, P0.S7.5 2026-05-19): "
+                "If the current speaker's person_type is already 'known' or 'best_friend' "
+                "AND the sensor block's `who=` field shows the same name you would "
+                "pass, the tool call is a no-op — answer verbally instead. The "
+                "tool is for ESTABLISHING the name (stranger promotion) or "
+                "CHANGING it (the speaker corrects to a different name). Calling "
+                "it as a confirmation of the existing name creates a feedback "
+                "loop: the LLM hears its own canonical-ack and re-issues the same "
+                "call next turn. Canary 2026-05-19: brain re-issued "
+                "`update_person_name({'name':'Lexi'})` 5 times after Lexi was "
+                "already renamed. Do NOT call when the sensor already shows the "
+                "name and the speaker has not actively requested a change."
             ),
             "parameters": {
                 "type": "object",
@@ -2049,6 +2061,62 @@ def format_system_identity_block(system_name: str) -> str:
     )
 
 
+def format_known_speaker_identity_block(person_name: str, person_type: str) -> str:
+    """P0.S7.5 D4 — render the `<<<KNOWN SPEAKER IDENTITY>>>` block when
+    the current speaker is known (NOT a stranger).
+
+    Mirror of `format_system_identity_block` for person renames. Surfaces
+    the speaker's established name to the LLM so the `update_person_name`
+    tool is not called as a confirmation of the already-known name —
+    same Bug Q feedback loop pattern as `update_system_name`.
+
+    Block fires only when person_type IN {'known', 'best_friend'};
+    strangers correctly receive promotion prompting via the STRANGER
+    IDENTITY block (Session 97).
+
+    Canary 2026-05-19 root cause: after Lexi was renamed, brain
+    re-issued `update_person_name({'name':'Lexi'})` 5 times across
+    consecutive turns. The repeated tool calls served no purpose
+    (the name was already established) but kept polluting the turn
+    state. This block tells the brain "the name is established —
+    don't re-confirm."
+
+    The block is appended AS A WHOLE (leading "\\n\\n" included) so the
+    caller can do `prompt += format_known_speaker_identity_block(name, type)`
+    without needing to manage spacing.
+    """
+    return (
+        "\n\n<<<KNOWN SPEAKER IDENTITY>>>\n"
+        f"Your conversation partner's name is {person_name}. "
+        f"They are person_type='{person_type}'. "
+        "The name is already established.\n"
+        "\n"
+        "CRITICAL RULES:\n"
+        "1. Do NOT call `update_person_name` to confirm the existing "
+        "name. The name is established — calling the tool as "
+        "confirmation creates a feedback loop (Bug Q parallel): the "
+        "LLM hears its own canonical-ack and re-issues the same "
+        "call next turn. Canary 2026-05-19: brain re-issued "
+        f"`update_person_name({{'name':'{person_name}'}})` 5 times "
+        "after the rename was complete.\n"
+        "\n"
+        "2. ONLY call `update_person_name` when the speaker EXPLICITLY "
+        "corrects to a DIFFERENT name. Examples that ARE correction requests:\n"
+        f"    - \"Actually I'm not {person_name}, I'm Lexie\"\n"
+        f"    - \"Call me Lex instead of {person_name}\"\n"
+        "    - \"My name is Sarah, not the one you have\"\n"
+        "  Examples that are NOT correction requests:\n"
+        f"    - \"{person_name} said earlier...\" → speaker mentioning self by name "
+        "(NOT a rename — just conversational reference)\n"
+        f"    - \"Hi, it's {person_name}\" → greeting (NOT a rename — just identification)\n"
+        f"    - Any sentence where {person_name} uses their own name in conversation\n"
+        "\n"
+        "3. If the speaker says their name in a NON-correcting way, "
+        "just respond naturally — do NOT call the tool.\n"
+        "<<<END KNOWN SPEAKER IDENTITY>>>"
+    )
+
+
 def _format_datetime_line() -> str:
     """Render current date/time rounded to the nearest 5-minute boundary.
 
@@ -2218,6 +2286,19 @@ def render_session_stable_prefix(
     ):
         prompt += format_system_identity_block(system_name)
 
+    # P0.S7.5 D4 — KNOWN SPEAKER IDENTITY block. Fires only when the
+    # current speaker's session person_type is 'known' or 'best_friend'
+    # (NOT stranger — strangers receive promotion prompting via
+    # STRANGER IDENTITY block). Surfaces the established name so the
+    # brain stops re-issuing update_person_name as confirmation.
+    from core.config import KNOWN_SPEAKER_IDENTITY_BLOCK_ENABLED as _KS_ID_ENABLED
+    if (
+        _KS_ID_ENABLED
+        and person_name
+        and session_person_type in ("known", "best_friend")
+    ):
+        prompt += format_known_speaker_identity_block(person_name, session_person_type)
+
     from core.config import HONESTY_POLICY_BLOCK_ENABLED
     if HONESTY_POLICY_BLOCK_ENABLED:
         prompt += (
@@ -2279,7 +2360,52 @@ def render_session_stable_prefix(
             "Prefer \"I'm not sure\" over a confident fabrication. Silence and "
             "hedging are always better than a false memory — but hedging NEVER "
             "means contradicting your own prior-turn statements in the same "
-            "conversation.\n"
+            "conversation.\n\n"
+            "- MEMORY HONESTY DISCIPLINE (P0.S7.2 γ + P0.S7.4 strengthening, "
+            "2026-05-19): If the user references something you said or did "
+            "that you don't currently see in your context, you MUST call "
+            "search_memory IMMEDIATELY — on the FIRST mention, BEFORE "
+            "responding. Do NOT hedge first. Do NOT ask the user to clarify "
+            "first. Do NOT wait for the user to explicitly tell you to check "
+            "memory. The first response to an unrecognized self-reference "
+            "MUST be a search_memory tool call, not a verbal hedge.\n"
+            "    Forbidden first-response patterns (call search_memory "
+            "instead):\n"
+            "        \"I'm not sure what you're referring to, could you "
+            "clarify...\"\n"
+            "        \"I don't recall having a conversation about...\"\n"
+            "        \"I don't think I said...\"\n"
+            "        \"I didn't actually...\"\n"
+            "        \"Can you remind me what we discussed?\"\n"
+            "    Required first-response pattern: call search_memory with the "
+            "speaker_name and topic keyword from the user's reference. "
+            "AFTER retrieval:\n"
+            "        If search_memory returns matching facts → respond with "
+            "what you found (\"I remember — we discussed X...\").\n"
+            "        If search_memory returns nothing → THEN you may hedge "
+            "(\"I checked my notes and don't have clear records on that — "
+            "can you remind me?\"). The hedge MUST acknowledge the "
+            "retrieval attempt.\n"
+            "    False denial OR pre-retrieval hedging of your own prior "
+            "actions is a hard correctness failure — it makes the system "
+            "untrustworthy.\n"
+            "- FABRICATED ABSENCE (P0.S7.5 canary 2026-05-19): NEVER "
+            "claim \"no one was here\", \"I was alone\", \"nothing "
+            "happened\", \"I was just waiting for you\", or similar "
+            "absence-of-presence statements WITHOUT conclusive "
+            "retrieved evidence the room was empty during the period "
+            "in question. Absence of memory is NOT evidence of "
+            "absence. If you searched and got empty results, hedge "
+            "honestly (\"I checked and don't have clear records of "
+            "who was here during that period — can you remind me?\") "
+            "instead of asserting nobody was there. The canary "
+            "failure: brain answered \"No one, Jagan, I was just "
+            "waiting for you to come back\" when Lexi had in fact "
+            "visited; this is a fabrication on TWO axes — (a) "
+            "asserting nobody visited (no retrieval evidence supports "
+            "this), (b) describing the brain's own activity (\"just "
+            "waiting\") which is also fabricated. NEVER fabricate "
+            "either axis.\n"
             "<<<END HONESTY POLICY>>>"
         )
 
@@ -2365,12 +2491,23 @@ def render_session_stable_prefix(
         and session_person_type == "stranger"
         and session_user_turns >= STRANGER_IDENTITY_BLOCK_MIN_TURNS
     ):
+        # P0.S7.5.2 D5 — restructure block as NUMBERED CONTRAST (Rule 1 / Rule 2).
+        # Canary 3 (2026-05-20): Lexi turn 1 asked "I know you very well but I'm not
+        # sure if you know me" — brain mis-called report_identity_mismatch because
+        # the old block only taught self-intros (Rule 1 above); the question-shape
+        # had no explicit anti-pattern. Plan v2 §5.2 locks the contrastive shape:
+        # symmetric Rule 1 (statements → call update_person_name) + Rule 2 (questions
+        # → DO NOT call report_identity_mismatch) with concrete examples on both
+        # sides and forward-reference from Rule 2 back to Rule 1.
         prompt += (
             "\n\n<<<STRANGER IDENTITY>>>\n"
             "The current speaker is still an anonymous stranger in the "
-            "system (person_type='stranger'). If at any point they state "
-            "their name — even casually, even as an aside — you MUST call "
-            "`update_person_name` to promote them from stranger to a "
+            "system (person_type='stranger'). Two rules govern your "
+            "interaction with them, distinguished by what they say:\n\n"
+
+            "RULE 1 — STATEMENTS about their identity (CALL `update_person_name`):\n"
+            "If they STATE their name — even casually, even as an aside — you "
+            "MUST call `update_person_name` to promote them from stranger to a "
             "named person.\n\n"
             "Concrete triggers (CALL the tool):\n"
             "  - \"My name is Lexi\"\n"
@@ -2384,7 +2521,22 @@ def render_session_stable_prefix(
             "in the same turn. Without the tool call, their voice profile, "
             "conversation turns, and extracted facts stay orphaned from "
             "their real name — the system accumulates dangling shadow data "
-            "instead of recognizing them on future visits.\n"
+            "instead of recognizing them on future visits.\n\n"
+
+            "RULE 2 — QUESTIONS about your knowledge of them (DO NOT call `report_identity_mismatch`):\n"
+            "If they ASK a question about whether YOU know them — they are "
+            "NOT denying their own identity. Examples:\n"
+            "  - \"Do you know me?\"\n"
+            "  - \"Do you remember me?\"\n"
+            "  - \"I know you very well but I'm not sure if you know me\"\n"
+            "  - \"Have we met before?\"\n"
+            "  - \"Do you recognize me?\"\n\n"
+            "DO NOT call `report_identity_mismatch` on these. That tool is "
+            "ONLY for the current speaker denying their OWN identity (e.g. "
+            "\"I'm not Jagan\"). Respond conversationally — ask the stranger "
+            "for their name: \"I don't think we've met — what's your name?\" "
+            "If they then state their name in their reply, THAT triggers "
+            "RULE 1 (call `update_person_name`).\n"
             "<<<END STRANGER IDENTITY>>>"
         )
 
@@ -2696,6 +2848,17 @@ def _build_system_prompt(
     _room_block = (vision_state or {}).get("room_block")
     if _room_block:
         prompt += f"\n\n{_room_block}"
+
+    # P0.S7 D-A — <<<SHARED CONTEXT>>> block: persisted room-scoped conversation
+    # history pulled from conversation_log via FaceDB.get_recent_room_conversation.
+    # Sits AFTER ROOM block (in-memory state) and BEFORE EMOTIONAL CONTEXT per
+    # Plan v2 §6 prompt ordering — the brain reads in-memory context first,
+    # then the persisted history that survives session expiry, then mood.
+    # Pipeline-side `_build_shared_context_block` returns None on flag-off,
+    # single-person, missing room_session_id, or disputed caller.
+    _shared_ctx_block = (vision_state or {}).get("shared_context")
+    if _shared_ctx_block:
+        prompt += f"\n\n{_shared_ctx_block}"
 
     # Phase 3B.6 — <<<RECENT ROOMS>>> context for greeting enrichment.
     # vision_state["recent_room_context"] is a dict from

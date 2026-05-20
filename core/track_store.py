@@ -19,6 +19,17 @@ class TrackEntry:
     embedding: Any = None             # np.ndarray | None — from _unrecognized_embeddings
     stranger_pid: Optional[str] = None   # from _stranger_track_map
     identity_pid: Optional[str] = None  # from _track_identity
+    # P0.S1 D2.b — anti-spoof verdict carried alongside embedding (C0 atomicity).
+    # Set via upsert_embedding_with_verdict only — never via set_embedding alone.
+    # `anti_spoof_live` is tri-state:
+    #   True  → liveness confirmed (ANTI_SPOOF_REASON_PASSED)
+    #   False → liveness rejected (ANTI_SPOOF_REASON_REJECTED)
+    #   None  → no verdict captured (ANTI_SPOOF_REASON_UNAVAILABLE or NO_VERDICT)
+    anti_spoof_live: Optional[bool] = None
+    anti_spoof_score: Optional[float] = None
+    anti_spoof_reason: Optional[str] = None
+    captured_at: float = 0.0
+    bbox: Optional[tuple] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +39,12 @@ class TrackSnapshot:
     embedding: Any
     stranger_pid: Optional[str]
     identity_pid: Optional[str]
+    # P0.S1 fields mirroring TrackEntry. Snapshot is the read-side view.
+    anti_spoof_live: Optional[bool] = None
+    anti_spoof_score: Optional[float] = None
+    anti_spoof_reason: Optional[str] = None
+    captured_at: float = 0.0
+    bbox: Optional[tuple] = None
 
 
 class TrackStore(Store):
@@ -55,6 +72,35 @@ class TrackStore(Store):
             if track_id not in self._data:
                 self._data[track_id] = TrackEntry()
             self._data[track_id].embedding = embedding
+
+    async def upsert_embedding_with_verdict(
+        self,
+        track_id: Any,
+        embedding: Any,
+        anti_spoof_live: Optional[bool],
+        anti_spoof_score: Optional[float],
+        anti_spoof_reason: Optional[str],
+        captured_at: float,
+        bbox: Optional[tuple] = None,
+    ) -> None:
+        """P0.S1 D2.b — atomic upsert of embedding + verdict (C0 contract).
+
+        Sets embedding and all four anti-spoof fields under one lock acquisition
+        so peek_snapshot can never return a torn state where embedding is set
+        but verdict is unset (or vice versa). Producer (background vision loop)
+        is the only writer of this method; consumer (progressive_enroll) reads
+        via peek_anti_spoof_verdict.
+        """
+        async with self._lock:
+            if track_id not in self._data:
+                self._data[track_id] = TrackEntry()
+            e = self._data[track_id]
+            e.embedding = embedding
+            e.anti_spoof_live = anti_spoof_live
+            e.anti_spoof_score = anti_spoof_score
+            e.anti_spoof_reason = anti_spoof_reason
+            e.captured_at = captured_at
+            e.bbox = bbox
 
     async def mint_stranger(self, track_id: Any, stranger_pid: str) -> None:
         async with self._lock:
@@ -125,6 +171,11 @@ class TrackStore(Store):
             embedding=e.embedding,
             stranger_pid=e.stranger_pid,
             identity_pid=e.identity_pid,
+            anti_spoof_live=e.anti_spoof_live,
+            anti_spoof_score=e.anti_spoof_score,
+            anti_spoof_reason=e.anti_spoof_reason,
+            captured_at=e.captured_at,
+            bbox=e.bbox,
         )
 
     def peek_all_track_ids(self) -> list[Any]:
@@ -138,9 +189,29 @@ class TrackStore(Store):
                 embedding=e.embedding,
                 stranger_pid=e.stranger_pid,
                 identity_pid=e.identity_pid,
+                anti_spoof_live=e.anti_spoof_live,
+                anti_spoof_score=e.anti_spoof_score,
+                anti_spoof_reason=e.anti_spoof_reason,
+                captured_at=e.captured_at,
+                bbox=e.bbox,
             )
             for tid, e in self._data.items()
         ]
+
+    def peek_anti_spoof_verdict(
+        self, track_id: Any
+    ) -> tuple[Optional[bool], Optional[float], Optional[str]]:
+        """P0.S1 D2.b — sync read of (live, score, reason) for one track.
+
+        Returns (None, None, None) when track is unknown. Consumer
+        (progressive_enroll) calls this at gate-pass time to obtain the
+        verdict for the same frame the embedding was captured from
+        (single-thread asyncio safety contract; no lock).
+        """
+        e = self._data.get(track_id)
+        if e is None:
+            return (None, None, None)
+        return (e.anti_spoof_live, e.anti_spoof_score, e.anti_spoof_reason)
 
     def peek_stranger_pid(self, track_id: Any, default: Optional[str] = None) -> Optional[str]:
         e = self._data.get(track_id)

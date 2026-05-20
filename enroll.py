@@ -70,13 +70,15 @@ def enroll(name: str, n_frames: int = 10, headless: bool = False):
                     print(f"[Enroll] Frame {i+1}: yaw {yaw:.0f}° — skipped")
                     continue
 
-            # Anti-spoofing: reject photo/screen attacks during enrollment
-            if not verify_live(frame, det.bbox, anti_spoof):
+            # Anti-spoofing: reject photo/screen attacks during enrollment.
+            # P0.S1 D1 — capture verdict for the catch-all in add_embedding below.
+            _en_verdict = verify_live(frame, det.bbox, anti_spoof)
+            if not _en_verdict:
                 print(f"[Enroll] Frame {i+1}: liveness check failed — skipped")
                 continue
 
             embedding = embedder.embed(face_crop)
-            pending_embeddings.append(embedding)
+            pending_embeddings.append((embedding, _en_verdict))
             if photo_frame is None:
                 photo_frame = frame
             print(f"[Enroll] Frame {i+1}: good embedding ({len(pending_embeddings)} total)")
@@ -91,8 +93,8 @@ def enroll(name: str, n_frames: int = 10, headless: bool = False):
             photo_path = str(FACES_DIR / f"{person_id}.jpg")
             cv2.imwrite(photo_path, photo_frame)
         db.add_person(person_id, name, photo_path)
-        for emb in pending_embeddings:
-            db.add_embedding(person_id, emb, "enrollment")
+        for emb, _verdict in pending_embeddings:
+            db.add_embedding(person_id, emb, "enrollment", anti_spoof_verdict=_verdict)
         print(f"[Enroll] ✓ Enrolled '{name}' as {person_id} with {len(pending_embeddings)} embeddings")
     finally:
         camera.release()

@@ -43,6 +43,7 @@ from core.config import (
     BRAIN_AGENT_POLL_INTERVAL,
     BRAIN_AGENT_CONTEXT_TURNS,
     BRAIN_AGENT_MIN_WORDS,
+    ASSISTANT_TURN_EXTRACT_MIN_CHARS,
     PREF_AUTO_CONFIRM_THRESHOLD,
     PREF_ANALYSIS_TURNS,
     EXTRACT_MODEL, EXTRACT_BASE_URL, EXTRACT_API_KEY,
@@ -760,6 +761,14 @@ class Extraction:
     # sync-path agents (RoutineAgent, store_temporal_fact) hard-code the tier
     # because they emit a small closed set of attributes.
     privacy_level:   str = PRIVACY_LEVEL_DEFAULT
+    # P0.S7.2 Plan v2 §4.2 — per-participant scope for multi-person assistant-
+    # turn fan-out. Single-person extraction paths leave this None and the
+    # downstream storage path uses the turn-speaker's person_id (existing
+    # behavior). The κ fan-out emits one Extraction per participant with the
+    # participant's pid here so the storage layer routes each fact to the
+    # right person_id row. Additive + optional — backward-compat for the
+    # existing single-person extraction shape.
+    person_id:       "str | None" = None
 
 
 # ── BrainDB ────────────────────────────────────────────────────────────────────
@@ -1491,10 +1500,17 @@ class BrainDB:
         self._conn.commit()
 
     def get_all_knowledge_rows(self) -> list[dict]:
-        """Return all knowledge rows (including invalidated) for graph rebuild."""
+        """Return all knowledge rows (including invalidated) for graph rebuild.
+
+        P0.S7.D-B: ``privacy_level`` added so the v3 graph rebuild can
+        thread the tier onto every RELATES_TO edge. Pre-S106 rows that
+        lack the column fall back at the caller via
+        ``row.get("privacy_level") or PRIVACY_LEVEL_DEFAULT``.
+        """
         rows = self._conn.execute(
             "SELECT entity, entity_type, attribute, value, confidence,"
-            " is_temporal, valid_until, invalidated_at, source_turn_id, created_at, valid_at"
+            " is_temporal, valid_until, invalidated_at, source_turn_id, created_at, valid_at,"
+            " privacy_level"
             " FROM knowledge"
         ).fetchall()
         return [
@@ -1503,7 +1519,7 @@ class BrainDB:
                 "value": r[3], "confidence": r[4], "is_temporal": r[5],
                 "valid_until": r[6], "invalidated_at": r[7],
                 "source_turn_id": r[8], "created_at": r[9],
-                "valid_at": r[10],
+                "valid_at": r[10], "privacy_level": r[11],
             }
             for r in rows
         ]
@@ -3019,15 +3035,31 @@ class BrainDB:
             old_name = meta.get("visitor_name") or ""
             meta["visitor_name"] = new_name
             meta["visitor_type"] = "known"
+            # P0.S7.5.1 D1 — regex-replace the [visitor_name:...] marker
+            # regardless of what placeholder is currently in content. The
+            # previous literal-substring check (Session 114 Part 5) only
+            # fired when the old_name from metadata matched the marker —
+            # but _run_visitor_alert writes ASYMMETRIC content
+            # (marker="[visitor_name:unknown]") and metadata
+            # (visitor_name="visitor") for stranger sessions, so the old
+            # check silently no-op'd on every stranger promotion.
+            # Regex-replace is robust to the asymmetry (and to any future
+            # placeholder drift).
+            #
+            # Use a LAMBDA replacement (callable) so the replacement
+            # string is used verbatim — no interpretation of regex
+            # backreferences (\1, \g<name>, \\). Defense-in-depth against
+            # future visitor names containing regex special chars in
+            # replacement-string context.
+            #
+            # Canary 2 evidence: 2026-05-19 terminal_output.md:857 + :1187.
             new_content = content
-            # Rewrite the embedded `[visitor_name:...]` marker so any
-            # downstream reader that parses content (Session 100 Bug G)
-            # sees the canonical name. Defensive — only swap when the
-            # marker is present.
-            if old_name and f"[visitor_name:{old_name}]" in (content or ""):
-                new_content = content.replace(
-                    f"[visitor_name:{old_name}]",
-                    f"[visitor_name:{new_name}]",
+            if content:
+                new_marker = f"[visitor_name:{new_name}]"
+                new_content = re.sub(
+                    r"\[visitor_name:[^\]]+\]",
+                    lambda _m: new_marker,
+                    content,
                 )
             self._conn.execute(
                 "UPDATE proactive_nudges SET content = ?, metadata = ? "
@@ -3499,6 +3531,11 @@ class GraphDB:
             "name STRING, entity_type STRING, PRIMARY KEY (name))"
         )
         # valid_at added in GRAPH_SCHEMA_VERSION=1 (Item 3).
+        # privacy_level added in GRAPH_SCHEMA_VERSION=3 (P0.S7.D-B). Edge-level
+        # placement (D2): privacy is per-fact granularity, not per-entity. Same
+        # target entity (e.g. 'diabetes') can appear in multiple edges with
+        # different attribute names + different privacy_levels. Cross-person
+        # `find_shared_entities` filters at `r.privacy_level = 'public'`.
         # Kuzu does not support ALTER TABLE on rel tables — schema changes require
         # BrainOrchestrator._ensure_graph_sync() to wipe + rebuild from SQLite.
         self._conn.execute(
@@ -3506,7 +3543,8 @@ class GraphDB:
             "FROM Entity TO Entity,"
             "attribute STRING, value STRING, confidence DOUBLE,"
             "is_temporal BOOLEAN, valid_until DOUBLE, valid_at DOUBLE,"
-            "invalidated BOOLEAN, source_turn_id INT64, created_at DOUBLE)"
+            "invalidated BOOLEAN, source_turn_id INT64, created_at DOUBLE,"
+            "privacy_level STRING)"
         )
 
     def upsert_entity(self, name: str, entity_type: str) -> None:
@@ -3526,13 +3564,19 @@ class GraphDB:
         confidence: float, is_temporal: bool,
         valid_until: float | None, valid_at: float | None,
         invalidated: bool, source_turn_id: int, created_at: float,
+        privacy_level: str = "personal",
     ) -> None:
+        # P0.S7.D-B D4: privacy_level defaults to 'personal' (matches
+        # PRIVACY_LEVEL_DEFAULT from S106). Legacy callers OR forgotten
+        # kwargs get the safest tier. Phase 3 inverse-check guards that
+        # every production caller passes privacy_level= explicitly.
         self._conn.execute(
             "MATCH (src:Entity {name: $src}), (tgt:Entity {name: $tgt})"
             " CREATE (src)-[:RELATES_TO {"
             "attribute: $attr, value: $val, confidence: $conf,"
             "is_temporal: $temporal, valid_until: $valid_until, valid_at: $valid_at,"
-            "invalidated: $inv, source_turn_id: $turn_id, created_at: $now"
+            "invalidated: $inv, source_turn_id: $turn_id, created_at: $now,"
+            "privacy_level: $privacy"
             "}]->(tgt)",
             {
                 "src": src, "tgt": tgt,
@@ -3541,6 +3585,7 @@ class GraphDB:
                 "valid_until": valid_until, "valid_at": valid_at,
                 "inv": invalidated,
                 "turn_id": source_turn_id, "now": created_at,
+                "privacy": privacy_level,
             },
         )
 
@@ -3548,6 +3593,9 @@ class GraphDB:
         now = time.time()
         self.upsert_entity(ext.entity, ext.entity_type)
         self.upsert_entity(ext.value, "value")
+        # P0.S7.D-B: thread Extraction.privacy_level (set by S106
+        # _classify_privacy_level) onto the edge so find_shared_entities
+        # can filter cross-person traversal at Cypher level.
         self._create_edge(
             src=ext.entity, tgt=ext.value,
             attribute=ext.attribute, value=ext.value,
@@ -3555,6 +3603,7 @@ class GraphDB:
             valid_until=_valid_until(ext.is_temporal, ext.valid_for_hours, now),
             valid_at=now,
             invalidated=False, source_turn_id=turn_id, created_at=now,
+            privacy_level=ext.privacy_level,
         )
 
     def invalidate_fact(self, entity: str, attribute: str) -> None:
@@ -3582,6 +3631,9 @@ class GraphDB:
             self.upsert_entity(entity_name, "person")
             for row in rows:
                 self.upsert_entity(row["value"], "value")
+                # P0.S7.D-B: thread privacy_level from brain.db row.
+                # Fail-closed to PRIVACY_LEVEL_DEFAULT ('personal') for
+                # pre-S106 rows that lack the column.
                 self._create_edge(
                     src=entity_name,
                     tgt=row["value"],
@@ -3594,24 +3646,61 @@ class GraphDB:
                     invalidated=False,
                     source_turn_id=row.get("source_turn_id") or 0,
                     created_at=row.get("created_at") or time.time(),
+                    privacy_level=row.get("privacy_level") or PRIVACY_LEVEL_DEFAULT,
                 )
             print(f"[GraphDB] rebuild_entity_from_knowledge: '{entity_name}' ({len(rows)} edges)")
         except Exception as e:
             print(f"[GraphDB] rebuild_entity_from_knowledge error: {e}")
 
-    def get_graph_context(self, entity_name: str) -> str | None:
+    def get_graph_context(
+        self,
+        entity_name: str,
+        caller_pid: "str | None" = None,
+        best_friend_id: "str | None" = None,
+    ) -> str | None:
         """Return formatted 1-hop context for LLM injection. None if entity unknown.
 
         Confidence filter is applied in Python (not Kuzu Cypher) so that decay is
         respected: a 0.80-confidence fact from 2 years ago won't appear in context.
+
+        P0.S7.D-B (DEFENSE-IN-DEPTH): Cypher WHERE adds a privacy filter
+        mirroring the SQL `_visibility_clause` semantic:
+          - ``caller_pid == entity_name`` (owner) → all tiers visible
+            except 'system_only' (matches SQL best_friend / owner-of-fact)
+          - ``caller_pid == best_friend_id`` (household owner) → all
+            tiers visible except 'system_only'
+          - ``caller_pid is None`` OR caller is neither owner nor
+            best_friend → fail-closed public-only (Plan v1 P1, Plan v2
+            §3.3)
+
+        D3 framing (Plan v2 §3.4): this filter is **defense-in-depth**.
+        The existing ``if not _filtering:`` skip at the single production
+        caller (``BrainOrchestrator.get_context`` site) was already
+        preventing the cross-person leak. The Cypher filter raises the
+        floor against future code-path additions that bypass the
+        defensive skip. D1's ``find_shared_entities`` filter is the
+        load-bearing privacy fix; D3 is hardening, not active-leak
+        closure.
         """
         now = time.time()
+        # D3 fail-closed default — when caller identity is unknown,
+        # filter to public-only. caller_pid == entity_name treated as
+        # the "self-query" / owner-override branch (matches owner-check
+        # arm of SQL _visibility_clause).
+        if caller_pid is not None and (
+            caller_pid == entity_name
+            or (best_friend_id is not None and caller_pid == best_friend_id)
+        ):
+            _privacy_clause = "AND r.privacy_level <> 'system_only'"
+        else:
+            _privacy_clause = "AND r.privacy_level = 'public'"
         try:
             result = self._conn.execute(
                 "MATCH (src:Entity {name: $name})-[r:RELATES_TO]->()"
                 " WHERE r.invalidated = false"
                 " AND (r.valid_until IS NULL OR r.valid_until > $now)"
                 " AND r.confidence >= 0.30"
+                f" {_privacy_clause}"
                 " RETURN r.attribute, r.value, r.confidence, r.is_temporal, r.valid_until,"
                 " r.valid_at, r.created_at"
                 " ORDER BY r.created_at DESC",
@@ -3658,43 +3747,61 @@ class GraphDB:
         like "diabetes") would surface as a shared entity without any
         tier filter.
 
-        Session 112 Part 4 — session-isolation audit (DECISION:
-        option (a) — skip v3 bump, SQL filter is sufficient):
-          - Cross-person inference matches entity VALUES (names like
-            "Lexi", "cousin Ravi", "cricket"). Yesterday's shared
-            entity and today's shared entity are both legitimate
-            cross-person matches — a fact that Jagan "knows Lexi" from
-            last week is still TRUE today, not a stale-session bug.
-            Session boundaries don't meaningfully change the correctness
-            of shared-entity output.
-          - The sensitive-value leak concern (Session 107 wording) is
-            already bounded by Session 106 Migration 2's SQL filter
-            (`privacy_level != 'system_only'` on the recipient's
-            DISTINCT values SELECT). Health conditions / safety flags
-            with privacy_level='personal' DO still appear in the graph's
-            RELATES_TO edges — but cross-person matching on shared
-            entity names ("diabetes") only surfaces when BOTH persons
-            independently have that entity in their graphs, which is
-            itself a weak coincidence signal the brain handles with
-            hedged phrasing ("you both mentioned X").
-          - Full Kuzu v3 (privacy_level on Entity nodes + Cypher filter)
-            is deferred to Phase 3B proper, when the audience_ids + room
-            retrieval wiring for conversation_log arrives and the graph
-            visibility model is re-visited end-to-end. Shipping it now
-            would add schema-version plumbing + a v2→v3 rebuild step
-            without a concrete active leak to fix.
-        Status: documented, deferred. No v3 bump.
+        Session 112 Part 4 — session-isolation audit (DECISION at
+        the time: option (a) skip v3 bump, SQL filter is sufficient
+        because cross-person matches were entity-name-only and
+        personal-tier room-context facts weren't being written to
+        OTHER speakers' graphs). The decision was correct AT THE TIME
+        — but was reversed by P0.S7.D-B below.
+
+        P0.S7.D-B (2026-05-19) — Kuzu v3 schema bump SHIPPED. The
+        S107 + S112 deferral premise was falsified by P0.S7.2 κ
+        multi-person assistant-turn extraction (2026-05-19): κ writes
+        personal-tier `received_*` / `witnessed_*` facts to brain.db;
+        graph rebuild ingests them as RELATES_TO edges. Without the
+        privacy_level filter, third-party visitors could surface
+        another person's personal-tier facts through cross-person
+        matching. The S112 deferral was load-bearing in light of κ;
+        D-B is the active-leak fix.
+
+        v3 fix (LOAD-BEARING):
+          - RELATES_TO edges now carry `privacy_level STRING` (D2
+            edge-level placement — same target entity name can appear
+            in multiple edges with different attribute names AND
+            different privacy_levels).
+          - Cypher WHERE filter `r.privacy_level = 'public'` applied
+            here: ONLY public-tier edges participate in cross-person
+            traversal. Personal/household/system_only are filtered at
+            Cypher level (Plan v2 §4 D1 lock).
+          - Cross-person owner-override (P0.S7 P1 (ii)) does NOT apply
+            to graph traversal — owner-override is for `query_knowledge_for`
+            where the requester is identified; graph queries are
+            recipient-agnostic by nature.
+
+        Schema-concept clarifier (Plan v2 §4 LOW 2):
+        each RELATES_TO edge has three relevant properties — `attribute`
+        (the predicate, e.g. 'discussed_topic'), `value` (the target
+        entity's name, mirrored from the target node), and `privacy_level`
+        (the v3 property). The same target entity (same `value`) can
+        appear in multiple edges with different attribute names AND
+        different privacy_levels. The cross-person filter operates on
+        `edge.privacy_level`, NOT on `entity.name`.
         """
         now = time.time()
 
         def _get_facts(name: str) -> dict[str, list[tuple[str, str]]]:
-            """Return {value_lower: [(attribute, value), ...]} for a person."""
+            """Return {value_lower: [(attribute, value), ...]} for a person.
+
+            P0.S7.D-B: Cypher WHERE adds `r.privacy_level = 'public'`.
+            ONLY public-tier edges participate in cross-person traversal.
+            """
             try:
                 result = self._conn.execute(
                     "MATCH (src:Entity {name: $name})-[r:RELATES_TO]->(tgt:Entity)"
                     " WHERE r.invalidated = false"
                     " AND (r.valid_until IS NULL OR r.valid_until > $now)"
                     " AND r.confidence >= $conf"
+                    " AND r.privacy_level = 'public'"
                     " RETURN r.attribute, r.value, tgt.entity_type",
                     {"name": name, "now": now, "conf": min_confidence},
                 )
@@ -3734,7 +3841,13 @@ class GraphDB:
         return rows[0][0] if rows else 0
 
     def rebuild(self, knowledge_rows: list[dict]) -> None:
-        """Populate graph from SQLite knowledge rows (startup sync)."""
+        """Populate graph from SQLite knowledge rows (startup sync).
+
+        P0.S7.D-B: each row's `privacy_level` is threaded through to the
+        edge so cross-person `find_shared_entities` traversal can filter
+        at Cypher level. Legacy rows without the column fall back to
+        ``PRIVACY_LEVEL_DEFAULT`` ('personal').
+        """
         for row in knowledge_rows:
             self.upsert_entity(row["entity"], row["entity_type"])
             self.upsert_entity(row["value"], "value")
@@ -3748,6 +3861,7 @@ class GraphDB:
                     invalidated=row["invalidated_at"] is not None,
                     source_turn_id=row["source_turn_id"],
                     created_at=row["created_at"],
+                    privacy_level=row.get("privacy_level") or PRIVACY_LEVEL_DEFAULT,
                 )
             except Exception as e:
                 print(f"[GraphDB] Rebuild skipped edge {row['entity']}.{row['attribute']}: {e}")
@@ -3814,8 +3928,23 @@ class TriageAgent:
         role: str,
         content: str,
         prior_assistant_turn: str | None = None,
+        *,
+        room_participant_count: int = 1,
     ) -> tuple[bool, str]:
-        # Only user turns carry facts about the person
+        # P0.S7.2 Phase 2 — multi-person assistant-turn extraction. Brain
+        # responses in multi-person rooms carry topic-bearing content that
+        # participants need in their knowledge graphs for cross-session
+        # retrieval. D5 min-chars guard filters acknowledgments / KAIROS
+        # check-ins / filler.
+        if role == "assistant":
+            if (
+                room_participant_count >= 2
+                and len(content or "") >= ASSISTANT_TURN_EXTRACT_MIN_CHARS
+            ):
+                return True, "multi_person_assistant_turn"
+            return False, "assistant turn"
+        # Non-user, non-assistant roles (defensive — schema enumerates
+        # user/assistant only but guard against future role values).
         if role != "user":
             return False, "assistant turn"
 
@@ -3838,6 +3967,137 @@ class TriageAgent:
             return False, "noise only"
 
         return True, "ok"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# P0.S7.2 Phase 2 — multi-person assistant-turn extraction helpers (κ)
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Plan v2 P1 — locked 5-value action_type enum. Brain-asks-question turns are
+# common; `asked_question` captures them with semantic precision instead of
+# falling into the engaged_general_discussion catch-all.
+_VALID_ACTION_TYPES: frozenset[str] = frozenset({
+    "shared_information",
+    "answered_question",
+    "asked_question",
+    "made_suggestion",
+    "engaged_general_discussion",
+})
+
+_ASSISTANT_ROOM_EXTRACT_SYSTEM = """\
+You analyze a single assistant turn that occurred during a multi-person
+conversation. Extract structured information about what was discussed.
+
+Output STRICT JSON:
+{{
+  "topic": "<concise topic phrase, =60 chars, e.g., 'cheese cookies recipe'>",
+  "action_type": "<one of: shared_information | answered_question |
+                   asked_question | made_suggestion |
+                   engaged_general_discussion>",
+  "primary_subject_name": "<participant name the assistant ADDRESSED (NOT
+                            the topic-subject); see counter-example below>",
+  "key_details": "<=80 chars of distinctive content; null if action_type is
+                   engaged_general_discussion or content is non-substantive>"
+}}
+
+PRIMARY_SUBJECT_NAME SEMANTIC: the participant the assistant SPOKE TO, not
+the participant they spoke ABOUT.
+
+Counter-example: assistant says "Jagan, Lexi mentioned earlier she likes
+cooking" -- primary_subject_name = "Jagan" (addressee), NOT "Lexi" (topic).
+Lexi appears in topic content; she's covered separately by the system as
+a witness in the room.
+
+ACTION_TYPE GUIDANCE:
+- shared_information: assistant offers facts/recipe/instructions/explanation
+- answered_question: assistant directly responds to a participant's question
+- asked_question: assistant probes for info (e.g., "Lexi, what's the deadline?")
+- made_suggestion: assistant proposes an action/option
+- engaged_general_discussion: catch-all for substantive turns that don't fit
+  the 4 above; topic + key_details should still be extracted
+
+If the assistant turn is non-substantive (acknowledgment, filler, KAIROS
+check-in), output {{"topic": null}}. Do NOT extract anything.
+
+Participants in the room: {participants}
+"""
+
+
+def _fan_out_to_participants(
+    extracted: "dict | None",
+    participant_names: "list[str]",
+    participant_pids: "list[str]",
+    disputed_pids: "set[str]",
+) -> "list[Extraction]":
+    """P0.S7.2 Plan v2 §4.2 — fan-out helper.
+
+    Emits per-participant Extraction objects from the topic-level LLM
+    extraction. Skips disputed pids (P3) — pollution into a disputed-id
+    knowledge graph would be a correctness failure (S91 / S73).
+
+    primary_subject_name semantic = ADDRESSEE (P2). Topic-subjects who happen
+    to be participants get witnessed_* facts. Topic-subjects who are NOT
+    participants do not appear in the fan-out at all (their data isn't being
+    written to anyone's graph by this path).
+
+    Enum-validation belt-and-braces (auditor Q1 follow-up): an LLM-emitted
+    action_type outside the 5-enum collapses to engaged_general_discussion.
+    """
+    if not extracted or not extracted.get("topic"):
+        return []  # non-substantive turn — no facts
+
+    topic = str(extracted["topic"]).strip()
+    if not topic:
+        return []
+
+    raw_action = extracted.get("action_type") or "engaged_general_discussion"
+    action_type = (
+        raw_action
+        if raw_action in _VALID_ACTION_TYPES
+        else "engaged_general_discussion"
+    )
+
+    primary_subject_name = extracted.get("primary_subject_name")
+    if primary_subject_name is not None:
+        primary_subject_name = str(primary_subject_name).strip() or None
+
+    raw_details = extracted.get("key_details")
+    key_details = str(raw_details).strip() if raw_details else ""
+
+    # Compose value strings per Plan v2 §4.2.
+    if primary_subject_name and primary_subject_name in participant_names:
+        primary_value = topic if not key_details else f"{topic}: {key_details}"
+        witness_value = f"{topic} to_{primary_subject_name}"
+    else:
+        # Primary subject not a participant (or null) — all participants are
+        # witnesses; no `received_*` fact emitted.
+        primary_subject_name = None
+        primary_value = None
+        witness_value = topic if not key_details else f"{topic}: {key_details}"
+
+    facts: "list[Extraction]" = []
+    for name, pid in zip(participant_names, participant_pids):
+        # P3 — disputed-skip gate. Don't pollute disputed-id knowledge graph.
+        if pid in disputed_pids:
+            continue
+        if name == primary_subject_name:
+            attr  = f"received_{action_type}"
+            value = primary_value
+        else:
+            attr  = f"witnessed_{action_type}"
+            value = witness_value
+        facts.append(Extraction(
+            entity          = name,
+            entity_type     = "person",
+            attribute       = attr,
+            value           = value or "",
+            confidence      = 0.85,
+            is_temporal     = False,
+            valid_for_hours = None,
+            privacy_level   = "personal",  # D6
+            person_id       = pid,         # P0.S7.2 — per-participant scope
+        ))
+    return facts
 
 
 # ── Agent 2: ExtractionAgent ───────────────────────────────────────────────────
@@ -4166,6 +4426,48 @@ class ExtractionAgent:
             except (KeyError, ValueError, TypeError):
                 continue
         return results
+
+    async def extract_assistant_room_turn(
+        self,
+        assistant_content: str,
+        participant_names: "list[str]",
+        participant_pids: "list[str]",
+        disputed_pids: "set[str] | None" = None,
+    ) -> "list[Extraction]":
+        """P0.S7.2 Plan v2 §4.2 — multi-person assistant-turn extraction.
+
+        ONE LLM call (L1.c) returning topic-level structured data + mechanical
+        fan-out per participant via `_fan_out_to_participants`.
+
+        Returns a list of Extraction objects, one per non-disputed
+        participant, all with `privacy_level='personal'` (D6).
+        """
+        if not assistant_content or not participant_names:
+            return []
+        system_prompt = _ASSISTANT_ROOM_EXTRACT_SYSTEM.format(
+            participants=", ".join(participant_names),
+        )
+        response = await _call_llm_chat(
+            self._http,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": assistant_content[:1500]},
+            ],
+            agent_name="ExtractAssistantRoomTurn",
+            response_format={"type": "json_object"},
+            timeout=5.0,
+            max_tokens=250,
+        )
+        if response is None:
+            return []  # LLM failure — fail safe; no extractions
+        extracted = _parse_json(response) or {}
+
+        return _fan_out_to_participants(
+            extracted,
+            participant_names,
+            participant_pids,
+            disputed_pids or set(),
+        )
 
     async def _call_together(self, user_msg: str, system_prompt: str = _EXTRACT_SYSTEM) -> str | None:
         if not EXTRACT_API_KEY:
@@ -6106,6 +6408,74 @@ class WatchdogAgent:
             f"{victim_name} blocked {block_count} attempts → {claimed_name!r}"
         )
 
+    def report_anti_spoof_rejection(
+        self,
+        track_id: str,
+        reason: str,
+        score: "float | None",
+        person_id: "str | None" = None,
+    ) -> None:
+        """P0.S1 Phase 3 — record a per-instance anti-spoof rejection.
+
+        Severity="info" because a single rejection is usually a transient
+        false negative or one frame in a normal scan; the meaningful signal
+        is the burst aggregator (`report_anti_spoof_burst`). Operators
+        watching the dashboard see these as fine-grained activity entries.
+        """
+        self._db.store_alert(
+            "ANTI_SPOOF_REJECTION",
+            "info",
+            f"Anti-spoof rejected face for track={track_id} "
+            f"reason={reason} score={score!r} person={person_id!r}",
+            {
+                "track_id":  track_id,
+                "reason":    reason,
+                "score":     score,
+                "person_id": person_id,
+            },
+        )
+
+    def report_anti_spoof_burst(
+        self,
+        track_id: str,
+        count: int,
+        window_secs: float,
+        threshold: int,
+        person_id: "str | None" = None,
+    ) -> None:
+        """P0.S1 Phase 3 + §14b.1 — burst-threshold alert (fires once at the
+        exact-equality trigger `count == THRESHOLD`).
+
+        Severity="warning" because a sustained burst suggests an active
+        attack — repeated photo/screen presentations against the same
+        SORT track. The pipeline-side caller guarantees this fires at
+        most once per burst window per track (exact-equality + state
+        management on the rejection store).
+        """
+        message = (
+            f"Anti-spoof burst threshold reached for track={track_id}: "
+            f"{count} rejection(s) within {window_secs:.0f}s "
+            f"(threshold={threshold}). "
+            f"Likely active presentation attack — check camera view and "
+            f"recent enrollment attempts."
+        )
+        self._db.store_alert(
+            "ANTI_SPOOF_BURST",
+            "warning",
+            message,
+            {
+                "track_id":    track_id,
+                "count":       count,
+                "window_secs": window_secs,
+                "threshold":   threshold,
+                "person_id":   person_id,
+            },
+        )
+        print(
+            f"[WatchdogAgent] ANTI_SPOOF_BURST (warning): "
+            f"track={track_id} count={count}/{threshold} in {window_secs:.0f}s"
+        )
+
     def resolve_camera_failure(self) -> None:
         """Call from pipeline when camera reconnects successfully."""
         self._db.resolve_alerts_by_type("CAMERA_FAILURE")
@@ -6318,8 +6688,23 @@ class BrainOrchestrator:
             knowledge_rows = self._brain_db.get_all_knowledge_rows()
             try:
                 if knowledge_rows:
+                    # P0.S7.D-B observability — surface scale-of-pain in canary logs
+                    # (auditor obs B). Measures wall-clock + emits entity_count +
+                    # edge_count so production rebuilds (v2→v3 schema upgrade) can
+                    # be reasoned about empirically. Stored_version captured BEFORE
+                    # the SQL bump above; report the actual jump explicitly.
+                    _rebuild_t0 = time.time()
                     self._graph_db.rebuild(knowledge_rows)
-                    print(f"[BrainAgent] Graph rebuilt from {len(knowledge_rows)} SQLite rows")
+                    _rebuild_secs = time.time() - _rebuild_t0
+                    _ent_count = self._graph_db.entity_count()
+                    print(
+                        f"[BrainAgent] Graph rebuilt from {len(knowledge_rows)} SQLite rows"
+                    )
+                    print(
+                        f"[Schema] Graph rebuild v{stored_version}\u2192v{GRAPH_SCHEMA_VERSION} "
+                        f"completed in {_rebuild_secs:.2f}s "
+                        f"({_ent_count} entities, {len(knowledge_rows)} edges)"
+                    )
                 self._clear_kuzu_dirty()
             except Exception as e:
                 self._kuzu_degraded = True
@@ -6864,6 +7249,38 @@ class BrainOrchestrator:
         """Mark API_FAILURE alerts resolved after recovery."""
         self._watchdog.resolve_api_failure()
 
+    def report_anti_spoof_rejection(
+        self,
+        track_id: str,
+        reason: str,
+        score: "float | None",
+        person_id: "str | None" = None,
+    ) -> None:
+        """P0.S1 Phase 3 — surface a per-instance anti-spoof rejection."""
+        self._watchdog.report_anti_spoof_rejection(
+            track_id=track_id,
+            reason=reason,
+            score=score,
+            person_id=person_id,
+        )
+
+    def report_anti_spoof_burst(
+        self,
+        track_id: str,
+        count: int,
+        window_secs: float,
+        threshold: int,
+        person_id: "str | None" = None,
+    ) -> None:
+        """P0.S1 Phase 3 + §14b.1 — surface burst-threshold alert (warning)."""
+        self._watchdog.report_anti_spoof_burst(
+            track_id=track_id,
+            count=count,
+            window_secs=window_secs,
+            threshold=threshold,
+            person_id=person_id,
+        )
+
     def report_disk_threshold(
         self,
         level: int,
@@ -6919,8 +7336,12 @@ class BrainOrchestrator:
     async def _poll_once(self) -> None:
         last_id = self._brain_db.get_last_turn_id()
 
+        # P0.S7.2 Phase 2 — select audience_ids alongside the turn so
+        # _process_turn can route multi-person assistant turns to
+        # extract_assistant_room_turn with the room snapshot at turn time.
         rows = self._faces_conn.execute(
-            """SELECT cl.id, cl.person_id, cl.role, cl.content, cl.ts, p.name
+            """SELECT cl.id, cl.person_id, cl.role, cl.content, cl.ts, p.name,
+                      cl.audience_ids
                FROM   conversation_log cl
                LEFT JOIN persons p ON p.id = cl.person_id
                WHERE  cl.id > ?
@@ -6940,7 +7361,7 @@ class BrainOrchestrator:
         ).fetchall()
         context: list[dict] = [{"role": r[0], "content": r[1]} for r in reversed(recent)]
 
-        for turn_id, person_id, role, content, ts, person_name in rows:
+        for turn_id, person_id, role, content, ts, person_name, audience_ids_json in rows:
             try:
                 await self._process_turn(
                     turn_id     = turn_id,
@@ -6950,6 +7371,7 @@ class BrainOrchestrator:
                     content     = content,
                     context     = context,
                     ts          = ts,
+                    audience_ids_json = audience_ids_json,
                 )
             except Exception as e:
                 import traceback
@@ -6969,6 +7391,7 @@ class BrainOrchestrator:
         content:     str,
         context:     list[dict],
         ts:          float = 0.0,
+        audience_ids_json: "str | None" = None,
     ) -> None:
         t0 = time.time()
 
@@ -6984,7 +7407,23 @@ class BrainOrchestrator:
 
         # ── Stage 1: Triage ────────────────────────────────────────────────────
         prior_assistant = _get_prior_assistant_turn(context)
-        ok, reason = self._triage.should_process(role, content, prior_assistant_turn=prior_assistant)
+        # P0.S7.2 Phase 2 — parse this turn's audience_ids so triage sees the
+        # room-participant count. audience_ids JSON is the canonical room
+        # snapshot at turn time (P0.S7 Phase 1 _compute_room_audience).
+        _room_participant_pids: "list[str]" = []
+        if audience_ids_json:
+            try:
+                _loaded = json.loads(audience_ids_json)
+                if isinstance(_loaded, list):
+                    _room_participant_pids = [str(p) for p in _loaded if p]
+            except (json.JSONDecodeError, TypeError, ValueError):
+                _room_participant_pids = []
+        _room_count = len(_room_participant_pids)
+        ok, reason = self._triage.should_process(
+            role, content,
+            prior_assistant_turn=prior_assistant,
+            room_participant_count=_room_count if _room_count else 1,
+        )
         self._brain_db.log_agent(turn_id, "triage", "process" if ok else "skip", reason)
         # Session 116 P1 #6 — triage rationale: surface the signals the
         # decision was based on (word_count, role, person_type) so an
@@ -7034,12 +7473,42 @@ class BrainOrchestrator:
 
         # ── Stage 2: Extract entities + facts ─────────────────────────────────
         t1 = time.time()
-        extractions = await self._extractor.extract(
-            content, person_name, context,
-            prior_ai_claim=prior_ai_claim,
-            prior_assistant_turn=prior_assistant,
-            system_name=self._system_name,
-        )
+        if reason == "multi_person_assistant_turn":
+            # P0.S7.2 Phase 2 — κ branch. ONE LLM call + mechanical fan-out.
+            # Resolve participant pids → names via persons table.
+            _names_by_pid: "dict[str, str]" = {}
+            try:
+                _placeholders = ",".join("?" * len(_room_participant_pids))
+                if _placeholders:
+                    _name_rows = self._faces_conn.execute(
+                        f"SELECT id, name FROM persons WHERE id IN ({_placeholders})",
+                        _room_participant_pids,
+                    ).fetchall()
+                    _names_by_pid = {pid: nm for pid, nm in _name_rows}
+            except Exception as _name_ex:
+                # OPTIONAL: name-lookup failure must not block the turn; we fall
+                # back to using pids as names so the LLM still gets a participant
+                # list (degraded but not dropped).
+                print(f"[BrainAgent] room-participant name lookup failed: {_name_ex!r}")
+            _names: "list[str]" = []
+            _pids: "list[str]" = []
+            for _pid in _room_participant_pids:
+                _nm = _names_by_pid.get(_pid) or _pid
+                _names.append(_nm)
+                _pids.append(_pid)
+            extractions = await self._extractor.extract_assistant_room_turn(
+                assistant_content=content,
+                participant_names=_names,
+                participant_pids=_pids,
+                disputed_pids=self._disputed_persons,
+            )
+        else:
+            extractions = await self._extractor.extract(
+                content, person_name, context,
+                prior_ai_claim=prior_ai_claim,
+                prior_assistant_turn=prior_assistant,
+                system_name=self._system_name,
+            )
         extract_ms  = (time.time() - t1) * 1000
 
         if not extractions:
@@ -7589,9 +8058,20 @@ class BrainOrchestrator:
                     ctx = (ctx + "\n\n" + household_ctx) if ctx else household_ctx
                 return ctx
 
-        # Graph path: skip when privacy filtering is active — Kuzu has no privacy_level field.
+        # Graph path: P0.S7.D-B added `privacy_level` to Kuzu RELATES_TO
+        # edges, so the graph can now filter at Cypher level. We thread
+        # caller_pid + best_friend_id through; get_graph_context applies
+        # the SQL `_visibility_clause`-equivalent semantic.
+        # The existing `if not _filtering:` defensive skip is PRESERVED
+        # as belt-and-braces (Plan v2 §3.4) — it remains correct even
+        # though the Cypher filter now also enforces the same property.
+        # Future cleanup PR may remove the skip once v3 is canary-validated.
         if not _filtering:
-            ctx = self._graph_db.get_graph_context(person_name)
+            ctx = self._graph_db.get_graph_context(
+                person_name,
+                caller_pid=requester_person_id,
+                best_friend_id=best_friend_id,
+            )
         else:
             ctx = None
 
@@ -7880,7 +8360,19 @@ class BrainOrchestrator:
 
         Synchronous SQLite reads (<2ms total). Returns None when nothing pending.
         Called every turn in conversation_turn() — same pattern as get_context().
-        One nudge is consumed per call (marked injected so it's not shown again).
+
+        P0.S7.5 D1 — nudge consumption gates on `ONE_SHOT_NUDGE_TYPES`
+        membership. One-shot proactive types (CROSS_PERSON_HYPOTHESIS,
+        INTENTION_FOLLOWUP, MEMORY_PROMPT) get mark_nudge_injected on
+        first delivery (legacy behavior). Persistent context types
+        (VISITOR_ALERT) stay pending until naturally expired or
+        dismissed — owner needs the visitor context whenever they
+        ask, not just on the first re-engagement turn.
+
+        Canary 2026-05-19 root cause: VISITOR_ALERT was being consumed
+        on the first turn of Jagan's re-engagement; the next turn's
+        addendum had nudge=no, the VISITOR CONTEXT block went dormant,
+        and brain fabricated "No one was here, I was just waiting."
         """
         parts: list[str] = []
         pref_text = self._brain_db.get_prompt_addendum(person_id)
@@ -7893,7 +8385,22 @@ class BrainOrchestrator:
                 f"[Proactive — work naturally into conversation if the moment fits: "
                 f"{nudge['content']}]"
             )
-            self._brain_db.mark_nudge_injected(nudge["id"])
+            # D1: only mark one-shot types as injected. Persistent
+            # context types (VISITOR_ALERT) re-inject every turn.
+            from core.config import ONE_SHOT_NUDGE_TYPES
+            _nudge_type = nudge.get("nudge_type") or ""
+            if _nudge_type in ONE_SHOT_NUDGE_TYPES:
+                self._brain_db.mark_nudge_injected(nudge["id"])
+            else:
+                # LOW 2 (Plan v2 §3.2) — re-injection observability for
+                # re-canary cost validation. Counts log lines per
+                # session: bounded (~1-3 turns) = healthy; excessive
+                # (~20+ turns) = signal to file follow-up for
+                # auto-dismiss heuristic.
+                print(
+                    f"[PromptPrefAgent] persistent nudge re-injected "
+                    f"(type={_nudge_type}, id={nudge['id']})"
+                )
         if parts:
             print(f"[PromptPrefAgent] {len(parts)} addendum part(s) injected for {person_id} (prefs={'yes' if pref_text else 'no'}, nudge={'yes' if nudges else 'no'})")
         return "\n\n".join(parts) if parts else None

@@ -144,7 +144,7 @@ async def test_rebuild_async_replays_pending_adds(db):
     def _add_in_thread():
         nonlocal added
         emb = _random_embedding()
-        db.add_embedding("p1", emb, source="enrollment", confidence=0.9)
+        db.add_embedding("p1", emb, source="enrollment", confidence=0.9, anti_spoof_verdict=True)
         added = True
 
     t = threading.Thread(target=_add_in_thread)

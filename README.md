@@ -36,6 +36,21 @@ venv\Scripts\activate       # Windows
 pip install -r requirements.txt
 ```
 
+### 1a. Pre-commit hook (P0.S6 secrets-scanning)
+
+Install once per dev machine so staged commits get scanned for accidentally-leaked
+secrets via [detect-secrets](https://github.com/Yelp/detect-secrets):
+
+```bash
+pip install pre-commit detect-secrets
+pre-commit install
+```
+
+The `.secrets.baseline` file is the allowlist snapshot of known false positives
+(ML embeddings, git SHAs, etc.). New high-entropy findings outside the baseline
+fail the commit. To refresh the baseline after legitimately adding a new
+high-entropy file: `detect-secrets scan --baseline .secrets.baseline --update`.
+
 ### 2. Download models
 
 Place these in `models/`:

@@ -31,12 +31,52 @@ from core.config import (
 )
 
 
+# P0.S1 D4 — `legacy_unknown` DELETED 2026-05-18 (no production callers; doc-grep
+# clean per Plan v2 §1). Every add_embedding call must now declare `source`
+# explicitly and pass anti_spoof_verdict=True. Restoring legacy_unknown requires
+# explicit architect approval — it's the only backdoor that bypasses the gate.
 VALID_EMBEDDING_SOURCES: frozenset[str] = frozenset({
     "enrollment",           # explicit human-supervised capture
     "recognition_update",   # self-update from live recognition
     "progressive_enroll",   # gate-pass during active session
-    "legacy_unknown",       # one-time migration only — do not use in new code
 })
+
+
+def _escape_like_pid(pid: str) -> str:
+    """P0.S7 D-A — escape pid for safe substring use in a SQLite LIKE pattern.
+
+    SQLite LIKE treats ``_`` as a single-character wildcard and ``%`` as a
+    multi-char wildcard. Every pid in this codebase contains ``_`` (e.g.
+    ``jagan_001``, ``stranger_a0d44122``), so a naked pid in a LIKE pattern
+    collides with any string of the same length sharing the surrounding
+    context (``"jaganX001"``, ``"jaganA001"``, etc.).
+
+    Escape order is LOAD-BEARING:
+      1. Backslash first (otherwise steps 2+3 produce double-escaped sequences)
+      2. Underscore  → ``\\_``
+      3. Percent     → ``\\%``
+
+    The consuming query MUST include the ``ESCAPE '\\'`` clause so SQLite
+    recognises backslash as the escape character. Plan v2 §2 CRITICAL 1.
+    """
+    return (
+        pid
+        .replace("\\", "\\\\")
+        .replace("_", "\\_")
+        .replace("%", "\\%")
+    )
+
+
+# P0.S1 D1 — sources whose writes require an explicit anti-spoof verdict.
+# Every production call site for these sources MUST pass `anti_spoof_verdict=True`
+# to `add_embedding` (the catch-all rejects False/None). Equals
+# VALID_EMBEDDING_SOURCES after the D4 deletion — every valid source is gated.
+#
+# AST invariant `test_every_protected_source_call_site_has_upstream_verify_live`
+# scans pipeline.py + enroll.py and asserts every literal-source add_embedding
+# call with source ∈ this set has an upstream verify_live(...) in the same
+# function body (Plan v2 §3.1).
+ALLOWED_EMBEDDING_SOURCES_REQUIRING_ANTI_SPOOF: frozenset[str] = VALID_EMBEDDING_SOURCES
 
 
 class FaceDB:
@@ -572,20 +612,43 @@ class FaceDB:
         ]
 
     def add_embedding(self, person_id: str, embedding: np.ndarray,
-                      source: str = "legacy_unknown", confidence: float = 0.0) -> bool:
+                      source: str, confidence: float = 0.0,
+                      anti_spoof_verdict: "bool | None" = None) -> bool:
         """Add one face embedding for a person using diversity-based gallery management.
 
-        Returns False if the gallery is full or the new embedding is too similar
-        to an existing one (same angle/condition already covered).
+        Returns False if the gallery is full, the new embedding is too similar
+        to an existing one (same angle/condition already covered), or the
+        anti-spoof catch-all rejects the write (P0.S1 D1).
 
         First N_INITIAL_FACE embeddings bypass diversity (enrollment baseline).
         Beyond that: only stored if cosine similarity to every existing embedding
         is below FACE_DIVERSITY_THRESHOLD — i.e. it covers a new angle or condition.
+
+        P0.S1 D1 — anti-spoof catch-all: every source in
+        ALLOWED_EMBEDDING_SOURCES_REQUIRING_ANTI_SPOOF (currently all valid
+        sources) requires `anti_spoof_verdict=True`. False or None blocks the
+        write with a `[FaceDB]` log line. Callers MUST compute the verdict
+        upstream via `verify_live(...)` (or `_anti_spoof_ok`) and pass it
+        through. Plan v2 §1 / §3.1.
         """
         assert source in VALID_EMBEDDING_SOURCES, (
             f"add_embedding called with unknown source={source!r}. "
             f"Add it to VALID_EMBEDDING_SOURCES in db.py first."
         )
+
+        # P0.S1 D1 catch-all — structural backstop for the per-call-site
+        # upstream gates. Sites 1-4 already gate at their call point via
+        # verify_live; site 5 (progressive_enroll, Phase 3) closes the gap.
+        # The catch-all ensures that *any* future caller using a protected
+        # source is blocked at the DB layer if they forget the upstream gate.
+        if source in ALLOWED_EMBEDDING_SOURCES_REQUIRING_ANTI_SPOOF:
+            if anti_spoof_verdict is not True:
+                print(
+                    f"[FaceDB] add_embedding rejected for {person_id} "
+                    f"source={source} verdict={anti_spoof_verdict!r} — "
+                    f"anti-spoof gate blocks write (P0.S1 D1 catch-all)"
+                )
+                return False
         # Normalize first — all stored vectors are L2-normalized for cosine via inner product
         emb = embedding.astype(np.float32).reshape(1, -1)
         faiss.normalize_L2(emb)
@@ -1230,6 +1293,144 @@ class FaceDB:
         ).fetchone()
         return int(row[0]) if row else 0
 
+    def get_recent_room_conversation(
+        self,
+        room_session_id: str,
+        requester_pid: str,
+        best_friend_id: "str | None",
+        limit: int = 10,
+    ) -> "list[dict]":
+        """P0.S7 D-A — return last ``limit`` turns from ``conversation_log``
+        scoped to ``room_session_id``, filtered by audience visibility (T-B
+        option β) with best_friend owner override (P1 option ii), with safe
+        SQLite LIKE-escape on requester_pid (CRITICAL 1).
+
+        Visibility rules (composed in SQL for one round-trip):
+          - ``best_friend_id == requester_pid`` → owner override; sees ALL
+            rows under the room_session_id regardless of audience_ids.
+          - ``audience_ids IS NULL`` → legacy backfill row, default-visible.
+          - ``audience_ids`` LIKE-substring contains the requester pid
+            (quote-bounded + ESCAPE '\\' for safe `_` handling).
+
+        Returns ordered list (oldest-first via ``ORDER BY ts ASC``) of
+        ``{person_id, role, text, ts, audience_ids, addressed_to}`` dicts.
+
+        Returns ``[]`` on:
+          - ``room_session_id`` None / empty (no exception)
+          - ``sqlite3.OperationalError`` (logged)
+          - no matching rows
+
+        Plan v2 §5.
+        """
+        if not room_session_id:
+            return []
+        escaped_pid = _escape_like_pid(requester_pid)
+        try:
+            rows = self._conn.execute(
+                # CRITICAL 1 — ESCAPE '\\' clause activates backslash as
+                # the escape character; the Python-side _escape_like_pid
+                # has already double-escaped \\, _, %.  Two binds for the
+                # same conceptual pid: equality vs LIKE-substring.
+                "SELECT person_id, role, content, ts, audience_ids "
+                "FROM conversation_log "
+                "WHERE room_session_id = :room_session_id "
+                "  AND ( "
+                "    (:best_friend_id IS NOT NULL "
+                "       AND :requester_pid = :best_friend_id) "
+                "    OR audience_ids IS NULL "
+                "    OR audience_ids LIKE '%\"' || :escaped_pid || '\"%' "
+                "       ESCAPE '\\' "
+                "  ) "
+                "ORDER BY ts ASC LIMIT :limit",
+                {
+                    "room_session_id": room_session_id,
+                    "best_friend_id":  best_friend_id,
+                    "requester_pid":   requester_pid,
+                    "escaped_pid":     escaped_pid,
+                    "limit":           limit,
+                },
+            ).fetchall()
+        except sqlite3.OperationalError as e:
+            print(f"[FaceDB] get_recent_room_conversation OperationalError: {e!r}")
+            return []
+        results: list[dict] = []
+        import json as _json_grc
+        for pid, role, content, ts, aud_json in rows:
+            try:
+                audience = _json_grc.loads(aud_json) if aud_json else None
+            except Exception:
+                audience = None
+            results.append({
+                "person_id":    pid,
+                "role":         role,
+                "text":         content,
+                "ts":           ts,
+                "audience_ids": audience,
+                "addressed_to": None,  # field reserved; future room_log JOIN
+            })
+        return results
+
+    def get_recent_audience_rooms(
+        self,
+        requester_pid: str,
+        best_friend_id: "str | None" = None,
+        hours_back: float = 24.0,
+        limit: int = 5,
+    ) -> "list[str]":
+        """P0.S7.5 D2 — return distinct ``room_session_id``s from the past
+        ``hours_back`` window where ``requester_pid`` appears in
+        ``audience_ids`` OR requester IS ``best_friend`` (owner override
+        per 3A.4.6). Most-recent first; capped at ``limit``.
+
+        Used by ``RoomOrchestrator.build_shared_context_block`` when the
+        current scene is single-person but the owner returns and asks
+        about prior multi-person rooms. Without this widening, the
+        SHARED CONTEXT block gate fires "single_person → skip" and the
+        persisted room history is invisible (canary 2026-05-19 root
+        cause #2).
+
+        Visibility composition mirrors ``get_recent_room_conversation``:
+          - ``best_friend_id == requester_pid`` (owner override) → all
+            rooms regardless of audience
+          - ``audience_ids`` LIKE-substring contains requester pid
+            (CRITICAL 1 ESCAPE clause for safe ``_`` handling)
+          - ``audience_ids IS NULL`` (legacy backfill) → default-visible
+
+        Returns ``[]`` on empty result OR ``sqlite3.OperationalError``.
+        """
+        if not requester_pid:
+            return []
+        _cutoff_ts = time.time() - (hours_back * 3600.0)
+        escaped_pid = _escape_like_pid(requester_pid)
+        try:
+            rows = self._conn.execute(
+                "SELECT room_session_id, MAX(ts) AS max_ts "
+                "FROM conversation_log "
+                "WHERE ts >= :cutoff_ts "
+                "  AND room_session_id IS NOT NULL "
+                "  AND ( "
+                "    (:best_friend_id IS NOT NULL "
+                "       AND :requester_pid = :best_friend_id) "
+                "    OR audience_ids IS NULL "
+                "    OR audience_ids LIKE '%\"' || :escaped_pid || '\"%' "
+                "       ESCAPE '\\' "
+                "  ) "
+                "GROUP BY room_session_id "
+                "ORDER BY max_ts DESC LIMIT :limit",
+                {
+                    "cutoff_ts":       _cutoff_ts,
+                    "best_friend_id":  best_friend_id,
+                    "requester_pid":   requester_pid,
+                    "escaped_pid":     escaped_pid,
+                    "limit":           limit,
+                },
+            ).fetchall()
+        except sqlite3.OperationalError as e:
+            print(f"[FaceDB] get_recent_audience_rooms OperationalError: {e!r}")
+            return []
+        return [row[0] for row in rows if row[0]]
+
+
     def search_room_turns(
         self,
         room_session_id: str,
@@ -1360,6 +1561,13 @@ class FaceDB:
         First N_INITIAL_VOICE embeddings bypass diversity (enrollment baseline).
         Beyond that: only stored if cosine similarity to every existing embedding
         is below VOICE_DIVERSITY_THRESHOLD — i.e. it covers a new condition.
+
+        P0.S7.5.2 D3: also enforces centroid-distance gate once the gallery
+        has ≥ VOICE_CENTROID_GATE_MIN_SAMPLES — proposed embedding must cosine
+        ≥ VOICE_SELF_UPDATE_CENTROID_MIN to the current gallery centroid.
+        Mirrors face-gallery's Session 51 SELF_UPDATE_CENTROID_MIN discipline;
+        prevents the slow centroid drift that produced canary 3's Jagan
+        v_score 0.3-0.4 against his own mature profile.
         """
         emb = np.asarray(embedding, dtype=np.float32)
 
@@ -1377,6 +1585,39 @@ class FaceDB:
                 existing = np.frombuffer(vec_bytes, dtype=np.float32).copy()
                 if float(np.dot(emb, existing)) > VOICE_DIVERSITY_THRESHOLD:
                     return False  # too similar to an existing sample — skip
+
+        # P0.S7.5.2 D3 — centroid-distance gate. Recomputes the centroid per
+        # add via np.mean(embeddings, axis=0) + L2-normalize. O(N≤50) at <5ms
+        # on dev CPU; negligible relative to upstream ECAPA embed (~50ms).
+        # Plan v2 §3.1 LOCKED recompute (NOT cache): cache-invalidation would
+        # require enumerating 6+ gallery-write sites (this method, delete_person,
+        # prune_old_strangers, prune_zero_value_stranger, prune_stale_stranger_voice,
+        # factory reset paths) and AST-asserting every site invalidates — same
+        # inverse-check discipline as P0.5's PAIRED_WRITE_METHODS. Not worth
+        # it for ~5ms saved on a rare event. If profiling later shows centroid-
+        # recompute as a hot spot, revisit with bench numbers. Bootstrap-safe:
+        # gate only fires once the gallery has ≥ VOICE_CENTROID_GATE_MIN_SAMPLES
+        # so early enrollment isn't blocked by an unstable centroid.
+        from core.config import (
+            VOICE_SELF_UPDATE_CENTROID_MIN,
+            VOICE_CENTROID_GATE_MIN_SAMPLES,
+        )
+        if count >= VOICE_CENTROID_GATE_MIN_SAMPLES:
+            existing_embeddings = [
+                np.frombuffer(r[0], dtype=np.float32).copy() for r in rows
+            ]
+            centroid = np.mean(existing_embeddings, axis=0).astype(np.float32)
+            norm = float(np.linalg.norm(centroid))
+            if norm > 0:
+                centroid = centroid / norm
+                cosine_to_centroid = float(np.dot(emb, centroid))
+                if cosine_to_centroid < VOICE_SELF_UPDATE_CENTROID_MIN:
+                    print(
+                        f"[Voice] Skipped accum for {person_id}: "
+                        f"centroid-distance {cosine_to_centroid:.3f} < "
+                        f"{VOICE_SELF_UPDATE_CENTROID_MIN}"
+                    )
+                    return False
 
         self._conn.execute(
             "INSERT INTO voice_embeddings (person_id, vector, captured_at, source, confidence_at_write)"
@@ -1588,6 +1829,15 @@ def wipe_all() -> None:
     Caller must close any open FaceDB / BrainOrchestrator before calling this,
     then re-instantiate them after it returns.
     Each deletion is independent: a missing file is not an error.
+
+    P0.S2 preservation invariant: `.dashboard_token` is INTENTIONALLY NOT
+    deleted by this function. The dashboard's authentication token survives
+    factory reset because re-issuing the auth URL on every reset is hostile
+    UX and the token is single-user-scoped (one machine, one user — no
+    cross-tenant risk). The .dashboard_auth_url file (one-shot) is also
+    preserved here; it auto-deletes on first /api/auth success. If a future
+    spec needs token rotation, add it as an explicit
+    `rotate_dashboard_token()` function, not via this catch-all.
     """
     # faces.db (+ WAL siblings)
     for suffix in ("", "-shm", "-wal"):

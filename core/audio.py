@@ -434,8 +434,14 @@ def record_until_silence(
                 # addendum_count (0.35s). If the person resumes speaking within that
                 # grace window, smart_turn_fired resets and recording continues.
                 # If they stay silent for 0.35s more, the hard-stop below fires.
+                #
+                # P0.S7.5.2 D4 — broaden the silent_streak guard from `==` to `>=`
+                # so a missed boundary chunk doesn't skip Smart-Turn for the
+                # whole streak; the `not smart_turn_fired` flag (reset on resumed
+                # speech, line 418) is the debounce — invariant "fires at most
+                # once per silence streak" preserved.
                 if (not smart_turn_fired
-                        and silent_streak == smart_turn_count
+                        and silent_streak >= smart_turn_count
                         and speech_chunks >= min_speech):
                     smart_turn_fired = True
                     prob = _smart_turn_predict(np.concatenate(audio_chunks))
@@ -561,6 +567,25 @@ def transcribe(audio: np.ndarray) -> tuple[str, str]:
             if first == rest:
                 print(f"[Audio] STT: (phrase repetition filtered): '{text[:80]}'")
                 return "", "en"
+
+    # P0.S7.5.2 D4 — 1-word artifact filter. Canary 3 (2026-05-20) surfaced
+    # multiple turns where Whisper emitted bare "You", "Yeah", "Thank" with
+    # no terminal punctuation — phantom acknowledgments that triggered
+    # phantom routing/extraction work. Accept 1-word transcripts ONLY when
+    # EITHER (a) terminated with .!? — "Stop.", "Help!" — OR (b) lowercase
+    # word matches the known-imperative allowlist. Otherwise reject as
+    # Whisper noise. Allowlist expansion procedure documented in
+    # core/config.py STT_KNOWN_IMPERATIVES docstring.
+    from core.config import MIN_STT_WORD_COUNT, STT_KNOWN_IMPERATIVES
+    _t_stripped = text.strip()
+    _raw_words = _t_stripped.split()
+    if len(_raw_words) < MIN_STT_WORD_COUNT:
+        _terminated = _t_stripped.endswith(('.', '!', '?'))
+        _word_lower = _t_stripped.lower().rstrip('.!?,;:')
+        _allowed = _word_lower in STT_KNOWN_IMPERATIVES
+        if not (_terminated or _allowed):
+            print(f"[Audio] STT: (1-word artifact filtered): {_t_stripped!r}")
+            return "", "en"
 
     # Raw STT log — pipeline.py attaches speaker attribution in its own [STT] line;
     # this ensures paths that don't go through the inner conversation loop

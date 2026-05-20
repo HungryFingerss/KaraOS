@@ -2932,7 +2932,10 @@ async def test_kairos_tick_logs_turns_and_notifies_brain():
 
     orig_last_speech = pipeline._pipeline_state_store.peek_last_user_speech_at()
     orig_last_kairos = pipeline._pipeline_state_store.peek_last_kairos_at()
-    await pipeline._pipeline_state_store.set_last_user_speech_at(_time_mod.time() - 60)   # past 30s threshold
+    # P0.S7.3 — threshold bumped 30s → 120s + baseline now = max(last_user_speech_at, _tts_end_time).
+    # Seed 150s past last_user_speech (clears 120s threshold via the user-speech baseline);
+    # _tts_end_time defaults to 0.0 module init, so the max resolves to the user-speech ts.
+    await pipeline._pipeline_state_store.set_last_user_speech_at(_time_mod.time() - 150)
     await pipeline._pipeline_state_store.set_last_kairos_at(_time_mod.time() - 200)  # past 120s cooldown
 
     async def fake_ask_stream(*args, **kwargs):
@@ -6012,7 +6015,7 @@ def test_facedb_faiss_roundtrip_survives_reload(tmp_path):
     db1.add_person("p1", "Alice")
     emb = np.random.rand(512).astype(np.float32)
     emb /= np.linalg.norm(emb)
-    db1.add_embedding("p1", emb.reshape(1, -1))
+    db1.add_embedding("p1", emb.reshape(1, -1), source="enrollment", anti_spoof_verdict=True)
     db1._conn.close()
 
     # Reload — simulates pipeline restart
@@ -7340,7 +7343,10 @@ def test_gate_pass_stores_face_embedding_when_track_available(tmp_path):
 
     _gate_track = next((tid for tid, p in pipeline._stranger_track_map.items() if p == pid), None)
     assert _gate_track == 42
-    added = db.add_embedding(pid, pipeline._unrecognized_embeddings[_gate_track])
+    added = db.add_embedding(
+        pid, pipeline._unrecognized_embeddings[_gate_track],
+        source="progressive_enroll", anti_spoof_verdict=True,
+    )
     assert added is True
 
     count = db._conn.execute(
@@ -8149,7 +8155,11 @@ async def test_accumulate_voice_replenishes_bootstrap_for_engaged_stranger():
     mock_db.add_voice_embedding = MagicMock(return_value=True)
     mock_db.load_voice_profile_for = MagicMock(return_value=np.ones(192, dtype=np.float32) / (192**0.5))
     mock_db.voice_embedding_count = MagicMock(return_value=3)
-    audio = np.zeros(16000, dtype=np.float32)
+    # P0.S7.5.2 D3 — audio must be ≥ MIN_VOICE_ACCUM_DURATION_SECS=1.5s
+    # (24000 samples at 16kHz) to pass the duration gate. Pre-D3 this test
+    # used 1.0s (16000 samples) and was implicitly passing the gate that
+    # didn't exist; D3 added the floor.
+    audio = np.zeros(24000, dtype=np.float32)
     # Patch identify so the self-match branch doesn't attempt real ECAPA.
     # For bootstrap path, v_pid doesn't need to match person_id.
     with patch("pipeline.voice_mod.identify", return_value=(None, 0.0)), \
@@ -8521,12 +8531,21 @@ def test_scene_block_disputed_best_friend_labeled_disputed():
     assert "(best friend)" not in result
 
 
-def test_cross_person_excerpts_disputed_best_friend_labeled_disputed():
+def test_cross_person_excerpts_disputed_best_friend_labeled_disputed(monkeypatch):
     """Finding M — same rule for the cross-person excerpts helper: disputed
-    session suppresses the best_friend role label."""
+    session suppresses the best_friend role label.
+
+    P0.S7.D-C Stage 1 flag-gates the body behind
+    `CROSS_PERSON_EXCERPTS_ENABLED` (default False). P0.S7.D-D moves the
+    body into RoomOrchestrator with the gate preserved (D-C Phase 3 test
+    10 verifies). To exercise the legacy render path, flip the flag for
+    this test only — banked as D-D Phase 2 fixture clarification.
+    """
     import pipeline as _pl
     import time as _t
+    from core import config as _cfg
     from core.session_state import SessionSnapshot, VoiceEvidence
+    monkeypatch.setattr(_cfg, "CROSS_PERSON_EXCERPTS_ENABLED", True)
     _now = _t.time()
     sessions = (
         SessionSnapshot(
@@ -9113,14 +9132,14 @@ def test_graph_db_delete_person_entity(tmp_path):
     gdb.store_fact(ext, turn_id=1)
 
     # Verify Alice's node exists before deletion
-    ctx_before = gdb.get_graph_context("Alice")
+    ctx_before = gdb.get_graph_context("Alice", caller_pid="Alice")
     assert ctx_before is not None, "Alice should have graph context before deletion"
 
     ok = gdb.delete_person_entity("Alice")
     assert ok is True
 
     # After deletion, context should be None (no node = no edges)
-    ctx_after = gdb.get_graph_context("Alice")
+    ctx_after = gdb.get_graph_context("Alice", caller_pid="Alice")
     assert ctx_after is None, "Alice's graph context should be None after deletion"
     gdb.close()
 
@@ -9230,7 +9249,7 @@ def test_add_embedding_rejects_unknown_source(tmp_path):
     db._conn.commit()
     emb = np.random.randn(512).astype(np.float32)
     with pytest.raises(AssertionError, match="unknown source"):
-        db.add_embedding("p1", emb, source="typo_source")
+        db.add_embedding("p1", emb, source="typo_source", anti_spoof_verdict=True)
     db._conn.close()
 
 
@@ -9246,8 +9265,7 @@ def test_add_embedding_valid_sources_accepted(tmp_path):
     db._conn.commit()
     for src in VALID_EMBEDDING_SOURCES:
         emb = np.random.randn(512).astype(np.float32)
-        db.add_embedding("p1", emb, source=src)  # must not raise
-    db._conn.close()
+        db.add_embedding("p1", emb, source=src, anti_spoof_verdict=True)  # must not raise
 
 
 # ── Finding F — RECOGNITION_SOFT_THRESHOLD removed ────────────────────────────
@@ -9492,11 +9510,11 @@ def test_add_embedding_centroid_gate_rejects_outlier_recognition_update(tmp_path
     base = np.ones(512, dtype=np.float32)
     for i in range(5):
         jitter = np.random.randn(512).astype(np.float32) * 0.001
-        db.add_embedding("p1", base + jitter, source="enrollment", confidence=0.95)
+        db.add_embedding("p1", base + jitter, source="enrollment", confidence=0.95, anti_spoof_verdict=True)
 
     # Outlier in opposite direction — centroid cosine will be ~-1.0
     outlier = -np.ones(512, dtype=np.float32)
-    stored = db.add_embedding("p1", outlier, source="recognition_update", confidence=0.46)
+    stored = db.add_embedding("p1", outlier, source="recognition_update", confidence=0.46, anti_spoof_verdict=True)
     try:
         assert stored is False, \
             f"Outlier recognition_update write should have been rejected (min={SELF_UPDATE_CENTROID_MIN})"
@@ -9518,12 +9536,12 @@ def test_add_embedding_centroid_gate_allows_same_cluster(tmp_path):
     base = np.ones(512, dtype=np.float32)
     for i in range(5):
         jitter = rng.standard_normal(512).astype(np.float32) * 0.8
-        db.add_embedding("p1", base + jitter, source="enrollment", confidence=0.95)
+        db.add_embedding("p1", base + jitter, source="enrollment", confidence=0.95, anti_spoof_verdict=True)
 
     # New vector in the same general direction — adds moderate noise so its
     # cosine to the existing cluster is in (0.55, 0.92): passes both gates.
     new_jitter = rng.standard_normal(512).astype(np.float32) * 0.8
-    stored = db.add_embedding("p1", base + new_jitter, source="recognition_update", confidence=0.55)
+    stored = db.add_embedding("p1", base + new_jitter, source="recognition_update", confidence=0.55, anti_spoof_verdict=True)
     try:
         assert stored is True, "Same-cluster recognition_update write should have been accepted"
     finally:
@@ -11614,9 +11632,12 @@ def test_transcribe_prints_stt_with_timestamp_and_latency(capsys, monkeypatch):
     from core import audio as _audio
 
     # Stub Whisper so we don't pull models in the test.
+    # P0.S7.5.2 D4 — STT 1-word filter rejects bare "hello" (no terminal
+    # punctuation, not in allowlist). Use a multi-word transcript so the
+    # filter doesn't intercept this observability test.
     class _FakeSeg:
         def __init__(self):
-            self.text = "hello"
+            self.text = "hello there"
             self.no_speech_prob = 0.1
             self.avg_logprob = -0.3
     class _FakeModel:
@@ -11628,9 +11649,9 @@ def test_transcribe_prints_stt_with_timestamp_and_latency(capsys, monkeypatch):
     capsys.readouterr()  # clear
     text, lang = _audio.transcribe(fake_audio)
     out = capsys.readouterr().out
-    assert text == "hello"
+    assert text == "hello there"
     # STT line must have timestamp + latency tag
-    assert re.search(r"\[STT\] \d{2}:\d{2}:\d{2}\.\d{3} \(\d+ms\) 'hello'", out), \
+    assert re.search(r"\[STT\] \d{2}:\d{2}:\d{2}\.\d{3} \(\d+ms\) 'hello there'", out), \
         f"expected timestamped STT line, got: {out!r}"
     # Module global is populated for pipeline.py's attributed log line to use
     assert _audio._last_stt_elapsed_ms > 0
@@ -11829,21 +11850,34 @@ def test_s112_kairos_preferred_speaker_single_session_returns_only_pid():
 
 
 def test_s112_kuzu_audit_documented_not_v3_bumped():
-    """Session 112 Part 4 — audit decision (a): skip v3 bump, SQL
-    filter is sufficient. Regression guard via source-inspection
-    that the audit comment on `find_shared_entities` captures the
-    Session 112 decision (so a future maintainer sees the reasoning
-    and doesn't assume it's just deferred). No behavior change — the
-    method's body is unchanged from Session 107."""
+    """Session 112 Part 4 audit + P0.S7.D-B reversal — historical trail
+    must survive in-source so future readers see the full reasoning
+    arc: S112 deferred v3, P0.S7.2 κ ship falsified the deferral
+    premise, P0.S7.D-B shipped v3.
+
+    Originally a no-v3-bump regression guard; after D-B (2026-05-19)
+    repurposed to assert (a) the S112 audit reasoning STILL appears
+    in-source (historical trail preserved) AND (b) the D-B reversal
+    narrative is documented alongside it so the chain of decisions
+    is legible. A future maintainer reading the find_shared_entities
+    docstring sees BOTH the original deferral AND the reversal.
+    """
     import inspect
     from core.brain_agent import GraphDB
     src = inspect.getsource(GraphDB.find_shared_entities)
+    # Historical S112 reasoning preserved.
     assert "Session 112 Part 4" in src, (
-        "Part 4 audit decision must be documented in-source so future "
-        "readers see why v3 wasn't bumped"
+        "S112 Part 4 audit reasoning must remain in-source so the "
+        "deferral-then-reversal arc is legible to future readers"
     )
-    assert "option (a)" in src.lower() or "SQL filter is sufficient" in src, (
-        "audit decision (option a — skip) must be named explicitly"
+    # P0.S7.D-B reversal documented in the same docstring.
+    assert "P0.S7.D-B" in src, (
+        "P0.S7.D-B reversal narrative must be documented alongside "
+        "the S112 deferral so the chain of decisions is legible"
+    )
+    assert "falsified" in src.lower() or "load-bearing" in src.lower(), (
+        "D-B narrative must name the deferral-premise falsification "
+        "(or the load-bearing framing) explicitly"
     )
 
 
@@ -12558,6 +12592,356 @@ def test_s3b1_vision_state_wires_room_block():
     )
     assert 'room_block' in src_kairos and '_build_room_block(' in src_kairos, (
         "_kairos_tick vision_state must populate room_block via the helper"
+    )
+
+
+# ── P0.S7.D-C Phase 1 — flag-gate + D3 disputed-identity / best_friend role ─
+
+def test_p0_s7_dc_cross_person_excerpts_enabled_flag_defaults_false():
+    """P0.S7.D-C Plan v1 §6 Phase 1 test 1 — the flag MUST default to False.
+
+    Stage 1 of the two-stage deletion: flag-gate the legacy
+    `_build_cross_person_excerpts` block (pipeline.py:1202) so runtime
+    renders only <<<ROOM>>> + <<<SHARED CONTEXT>>>. Function stays in
+    source; rollback path is one-flag-flip. If this flag silently flips
+    back to True (via a careless config edit), Stage 2's hard-delete
+    trigger condition (bundled-queue canary passes WITH the flag off)
+    would no longer be valid — the canary would actually be validating
+    the legacy block, not the new blocks alone."""
+    from core import config as _cfg
+    assert hasattr(_cfg, "CROSS_PERSON_EXCERPTS_ENABLED"), (
+        "CROSS_PERSON_EXCERPTS_ENABLED config flag missing — Plan v1 §6 test 1"
+    )
+    assert isinstance(_cfg.CROSS_PERSON_EXCERPTS_ENABLED, bool), (
+        "flag must be a bool — got "
+        f"{type(_cfg.CROSS_PERSON_EXCERPTS_ENABLED).__name__}"
+    )
+    assert _cfg.CROSS_PERSON_EXCERPTS_ENABLED is False, (
+        "Stage 1 default MUST be False so runtime renders <<<ROOM>>> + "
+        "<<<SHARED CONTEXT>>> only. Stage 2 hard-deletes the flag entirely."
+    )
+
+
+def test_p0_s7_dc_build_cross_person_excerpts_call_site_guarded_by_flag():
+    """P0.S7.D-C Plan v1 §6 Phase 1 test 2 — source-inspection: the legacy
+    block call site in `conversation_turn` MUST be guarded by the flag.
+
+    Without the guard, every multi-person turn would still render the
+    legacy block regardless of the flag's value. The guard is the
+    structural anchor that makes Stage 2 hard-delete safe — if someone
+    later inserts a new `_build_cross_person_excerpts(` call site
+    without the flag guard, this test fails."""
+    import inspect, pipeline
+    src = inspect.getsource(pipeline.conversation_turn)
+    assert "CROSS_PERSON_EXCERPTS_ENABLED" in src, (
+        "conversation_turn source must reference the flag name"
+    )
+    assert "_build_cross_person_excerpts(" in src, (
+        "the legacy call site must still be present under the guard "
+        "(Stage 1 keeps the function callable; Stage 2 deletes it)"
+    )
+    # Stronger contract: the flag check must PRECEDE the legacy call
+    # within conversation_turn. Source-text approximation — find the
+    # earliest occurrence of each and assert ordering.
+    _flag_idx = src.find("CROSS_PERSON_EXCERPTS_ENABLED")
+    _call_idx = src.find("_build_cross_person_excerpts(")
+    assert _flag_idx != -1 and _call_idx != -1, "both anchors must exist"
+    assert _flag_idx < _call_idx, (
+        "flag check must precede the legacy call so the guard actually "
+        "fires; got flag_idx={} call_idx={}".format(_flag_idx, _call_idx)
+    )
+
+
+@pytest.mark.parametrize(
+    "n_disputed,n_total,case_name",
+    [
+        (0, 3, "no_disputed"),
+        (1, 3, "one_disputed"),
+        (2, 3, "n_disputed"),
+        (3, 3, "all_disputed"),
+    ],
+    ids=["0_disputed", "1_disputed", "N_disputed", "all_disputed"],
+)
+def test_p0_s7_dc_build_room_block_section1_renders_disputed_identity(
+    n_disputed, n_total, case_name,
+):
+    """P0.S7.D-C Plan v1 §6 Phase 1 test 3 + LOW#2 parametrize expansion.
+
+    Section 1 of `_build_room_block` MUST render `(disputed identity)`
+    for any active participant whose session is in disputed state —
+    mirrors the SCENE block (pipeline.py:1800) and legacy block
+    (pipeline.py:1234) pattern.
+
+    Without this, flag-gating the legacy block drops the "Lexi
+    (disputed identity)" signal in multi-person scenes where the
+    disputed participant isn't the current speaker (the
+    <<<IDENTITY DISPUTED>>> block in brain.py only fires for the
+    speaker — see Plan v1 §3.1).
+
+    Parametrized over 4 cases per LOW#2: 0 / 1 / N / all participants
+    disputed. The 0-case is a negative control — a session-store with
+    no disputed snapshots must NOT emit any "disputed identity" labels."""
+    import pipeline as _pl
+    import time as _t
+    _pl._session_store._sessions.clear()
+    now = _t.time()
+    _pids = [f"p{i+1}" for i in range(n_total)]
+    _names = [f"P{i+1}" for i in range(n_total)]
+    sessions = tuple(
+        _s3b1_sess(pid, name, ptype="known")
+        for pid, name in zip(_pids, _names)
+    )
+    # Seed _session_store so `_is_disputed(pid)` returns True for the
+    # first N participants. The other participants stay non-disputed.
+    for i, pid in enumerate(_pids):
+        asyncio.run(_pl._session_store.open_session(
+            pid, _names[i], "known", "face", now=now
+        ))
+        if i < n_disputed:
+            asyncio.run(_pl._session_store.transition_to_disputed(
+                pid, None, "test dispute", now=now,
+            ))
+    convo = {pid: [] for pid in _pids}
+    out = _pl._build_room_block(
+        active_sessions=sessions,
+        conversation=convo,
+        emotion_agents={},
+        room_start_ts=now - 60,
+        turn_cap=10,
+    )
+    assert out is not None, f"multi-person room must render block; case={case_name}"
+    # Each disputed participant gets exactly one `(disputed identity)`
+    # label in Section 1.
+    assert out.count("(disputed identity)") == n_disputed, (
+        f"case={case_name}: expected {n_disputed} disputed-identity labels, "
+        f"got {out.count('(disputed identity)')}. Block:\n{out}"
+    )
+    # Each non-disputed participant gets `(known)` in Section 1.
+    assert out.count("(known)") == n_total - n_disputed, (
+        f"case={case_name}: expected {n_total - n_disputed} '(known)' "
+        f"labels; got {out.count('(known)')}. Block:\n{out}"
+    )
+    # Cleanup — drain the session_store so subsequent parametrize cases
+    # start clean.
+    _pl._session_store._sessions.clear()
+
+
+def test_p0_s7_dc_build_room_block_section1_renders_best_friend_role():
+    """P0.S7.D-C Plan v1 §6 Phase 1 test 4 — Section 1 MUST render
+    `(best_friend)` for the participant whose pid matches the passed
+    `best_friend_id` kwarg.
+
+    Companion to the disputed-identity test: the full role hierarchy
+    mirrors SCENE + legacy blocks (disputed → best_friend → person_type).
+    Without the best_friend branch, a best_friend whose session
+    `person_type` somehow says "stranger" or "known" (rename-path edge
+    case) would render with the raw type instead of the privileged
+    role, breaking parity with the legacy block.
+
+    Non-disputed best_friend takes the best_friend label; disputed
+    best_friend takes "disputed identity" (verified in test 3 case
+    all_disputed via the strictly-higher-precedence dispute check)."""
+    import pipeline as _pl
+    import time as _t
+    _pl._session_store._sessions.clear()
+    now = _t.time()
+    # Jagan as best_friend — session person_type is "known" so the
+    # default path (without the elif branch) would mislabel. The
+    # elif `pid == best_friend_id` branch is the one being exercised.
+    sessions = (
+        _s3b1_sess("jagan_bf", "Jagan", ptype="known"),
+        _s3b1_sess("lexi_001", "Lexi",  ptype="stranger"),
+    )
+    convo = {"jagan_bf": [], "lexi_001": []}
+    # Seed sessions so _is_disputed returns False for both.
+    asyncio.run(_pl._session_store.open_session(
+        "jagan_bf", "Jagan", "known", "face", now=now
+    ))
+    asyncio.run(_pl._session_store.open_session(
+        "lexi_001", "Lexi", "stranger", "face", now=now
+    ))
+    out = _pl._build_room_block(
+        active_sessions=sessions,
+        conversation=convo,
+        emotion_agents={},
+        room_start_ts=now - 60,
+        turn_cap=10,
+        best_friend_id="jagan_bf",
+    )
+    assert out is not None, "multi-person room must render block"
+    assert "Jagan (best_friend)" in out, (
+        f"Jagan must render as (best_friend) when pid matches "
+        f"best_friend_id. Block:\n{out}"
+    )
+    # Negative — Lexi (stranger, not best_friend_id) keeps her raw type.
+    assert "Lexi (stranger)" in out, (
+        f"Lexi must keep her raw person_type label (stranger). Block:\n{out}"
+    )
+    _pl._session_store._sessions.clear()
+
+
+def test_p0_s7_dc_brain_context_summary_room_field_repointed_to_active_sessions():
+    """P0.S7.D-C Plan v1 §6 Phase 2 test 5 — `[Brain] Context:` log line's
+    `room=yes/no` field MUST be derived from `len(_all_snaps_ct) >= 2`
+    (i.e. multi-person session active), NOT from `room_context`
+    truthiness.
+
+    Under the Stage 1 flag-gate, `room_context` is always None →
+    legacy formula would always print `room=no` even in multi-person
+    scenes. The repoint preserves the field's semantic ("multi-person
+    context in scope this turn") despite the implementation source
+    flipping from "legacy block rendered" → "multi-person session
+    exists." Grep tooling that reads this field for canary
+    multi-person assertions stays unbroken.
+
+    Source-inspection on conversation_turn — asserts the new
+    `_multi_person = len(_all_snaps_ct) >= 2` derivation precedes the
+    `[Brain] Context:` print AND the print uses `_multi_person` not
+    `room_context` for the `room=` field.
+    """
+    import inspect, pipeline
+    src = inspect.getsource(pipeline.conversation_turn)
+    assert "_multi_person = len(_all_snaps_ct) >= 2" in src, (
+        "the [Brain] Context: log line must derive room=yes/no from "
+        "_multi_person = len(_all_snaps_ct) >= 2 (Plan v1 §5.2)"
+    )
+    # The print statement must use _multi_person for room=, NOT room_context.
+    # Find the [Brain] Context: print line and assert its room= clause.
+    _print_idx = src.find("[Brain] Context: history=")
+    assert _print_idx != -1, "[Brain] Context: log line missing"
+    _print_line_end = src.find("\n", _print_idx)
+    _print_line = src[_print_idx:_print_line_end]
+    assert "'yes' if _multi_person else 'no'" in _print_line, (
+        "room= clause must read _multi_person; got line:\n"
+        f"  {_print_line}"
+    )
+    # Negative — the room= clause MUST NOT reference room_context (legacy).
+    # The room_context local can still exist (Stage 1 keeps the legacy
+    # callable under the flag); the assertion is that the LOG line no
+    # longer uses it for the room field.
+    assert "'yes' if room_context else 'no'" not in _print_line, (
+        "room= clause must NOT reference room_context (legacy source);"
+        f" got line:\n  {_print_line}"
+    )
+
+
+def test_p0_s7_dc_no_room_context_prepending_when_flag_off():
+    """P0.S7.D-C Plan v1 §6 Phase 3 test 6 + D7 structural invariant.
+
+    AST scan of `conversation_turn`: any code path that prepends a
+    multi-person room block to `prompt_addendum` MUST be guarded by
+    `CROSS_PERSON_EXCERPTS_ENABLED`. Forward-property invariant —
+    blocks any future change that re-introduces the legacy block's
+    prompt_addendum injection path outside the flag guard.
+
+    Two structural assertions:
+      (1) Every `room_context = _build_cross_person_excerpts(...)`
+          assignment sits inside an `If` whose test references
+          `CROSS_PERSON_EXCERPTS_ENABLED`.
+      (2) Every `prompt_addendum = room_context + ...` prepending
+          sits inside an `If` that mentions both `room_context` and
+          `CROSS_PERSON_EXCERPTS_ENABLED` (defensive guard).
+
+    Source-inspection alone is insufficient — string-match would not
+    catch a refactor that nests the call inside a `for` or different
+    `if` structure. AST walk with parent tracking proves the
+    structural enclosure regardless of source layout.
+    """
+    import ast, inspect, pipeline
+
+    src = inspect.getsource(pipeline.conversation_turn)
+    tree = ast.parse(src)
+
+    # Annotate parents so we can walk upwards from any node.
+    for _parent in ast.walk(tree):
+        for _child in ast.iter_child_nodes(_parent):
+            _child.parent = _parent  # type: ignore[attr-defined]
+
+    def _enclosing_if_tests(node):
+        """Collect the source-text of every `If` test enclosing `node`."""
+        _tests = []
+        _cur = getattr(node, "parent", None)
+        while _cur is not None:
+            if isinstance(_cur, ast.If):
+                _tests.append(ast.unparse(_cur.test))
+            _cur = getattr(_cur, "parent", None)
+        return _tests
+
+    # (1) Every `room_context = _build_cross_person_excerpts(...)` assignment
+    # is inside an `If` mentioning the flag.
+    _excerpt_call_assignments = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not (
+            len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "room_context"
+        ):
+            continue
+        # Skip the `room_context = None` else-branch.
+        if isinstance(node.value, ast.Constant) and node.value.value is None:
+            continue
+        # The legacy-call form must be inside the flag guard.
+        if isinstance(node.value, ast.Call):
+            _fn = node.value.func
+            _name = _fn.attr if isinstance(_fn, ast.Attribute) else getattr(_fn, "id", "")
+            if _name == "_build_cross_person_excerpts":
+                _excerpt_call_assignments.append(node)
+                _tests = _enclosing_if_tests(node)
+                _flag_seen = any("CROSS_PERSON_EXCERPTS_ENABLED" in t for t in _tests)
+                assert _flag_seen, (
+                    "D7 invariant violation: `room_context = "
+                    "_build_cross_person_excerpts(...)` at line "
+                    f"{node.lineno} is NOT inside an `if CROSS_PERSON_"
+                    f"EXCERPTS_ENABLED:` guard. Enclosing If tests: {_tests}"
+                )
+    assert len(_excerpt_call_assignments) >= 1, (
+        "D7 invariant: at least one `room_context = "
+        "_build_cross_person_excerpts(...)` call site expected in "
+        "conversation_turn (Stage 1 keeps the legacy callable under "
+        "the flag); none found — has Stage 2 already fired?"
+    )
+
+    # (2) Every `prompt_addendum = room_context + ...` prepending sits
+    # inside an `If` mentioning BOTH `room_context` and the flag.
+    _prepending_count = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not (
+            len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "prompt_addendum"
+        ):
+            continue
+        # Value must reference room_context for this to be the legacy
+        # prepending path; other `prompt_addendum = ...` assignments
+        # (override, brain-agent fallback) are out of scope.
+        _val_src = ast.unparse(node.value)
+        if "room_context" not in _val_src:
+            continue
+        _prepending_count += 1
+        _tests = _enclosing_if_tests(node)
+        _room_ctx_in_test = any("room_context" in t for t in _tests)
+        _flag_in_test     = any("CROSS_PERSON_EXCERPTS_ENABLED" in t for t in _tests)
+        assert _room_ctx_in_test, (
+            "D7 invariant violation: `prompt_addendum = room_context "
+            f"+ ...` at line {node.lineno} is NOT inside an `if "
+            f"room_context ...` guard. Enclosing If tests: {_tests}"
+        )
+        assert _flag_in_test, (
+            "D7 invariant violation: `prompt_addendum = room_context "
+            f"+ ...` at line {node.lineno} is NOT inside an `if "
+            f"... CROSS_PERSON_EXCERPTS_ENABLED ...` guard "
+            "(defensive belt-and-braces). Enclosing If tests: "
+            f"{_tests}"
+        )
+    assert _prepending_count >= 1, (
+        "D7 invariant: at least one `prompt_addendum = room_context "
+        "+ ...` prepending expected in conversation_turn (Stage 1 "
+        "keeps the legacy prepending callable under the dual guard); "
+        "none found — has Stage 2 already fired?"
     )
 
 
@@ -14791,12 +15175,18 @@ def test_s111_conversation_entries_carry_ts_and_addressed_to():
     )
 
 
-def test_s111_cross_person_excerpts_filter_by_session_boundary():
+def test_s111_cross_person_excerpts_filter_by_session_boundary(monkeypatch):
     """Session 111 Critical #2: `_build_cross_person_excerpts` must
     exclude messages whose ts predates the other session's
     started_at. Yesterday's turns shouldn't bleed into today's room
-    context. Behavioral test with a realistic 2-person setup."""
+    context. Behavioral test with a realistic 2-person setup.
+
+    P0.S7.D-D Phase 2 in-flight: flip CROSS_PERSON_EXCERPTS_ENABLED for
+    the body to render under D-C Stage 1 flag-gating.
+    """
     import pipeline, types
+    from core import config as _cfg
+    monkeypatch.setattr(_cfg, "CROSS_PERSON_EXCERPTS_ENABLED", True)
     now = 2000.0
     active = (
         types.SimpleNamespace(person_id="jagan_001", person_name="Jagan",
@@ -14834,13 +15224,19 @@ def test_s111_cross_person_excerpts_filter_by_session_boundary():
     )
 
 
-def test_s111_cross_person_excerpts_render_addressee_and_age():
+def test_s111_cross_person_excerpts_render_addressee_and_age(monkeypatch):
     """Session 111 Critical #3 + HIGH timestamps: assistant excerpts
     render 'you [to X]' when addressed_to is present; each line gets
     '(Xm ago)' / '(just now)' suffix so the brain can judge freshness.
     Uses real wall-clock `time.time()` values because the helper calls
-    `time.time()` internally to compute the age suffix."""
+    `time.time()` internally to compute the age suffix.
+
+    P0.S7.D-D Phase 2 in-flight: flip CROSS_PERSON_EXCERPTS_ENABLED for
+    the body to render under D-C Stage 1 flag-gating.
+    """
     import pipeline, time as _t, types
+    from core import config as _cfg
+    monkeypatch.setattr(_cfg, "CROSS_PERSON_EXCERPTS_ENABLED", True)
     now = _t.time()
     active = (
         types.SimpleNamespace(person_id="jagan_001", person_name="Jagan",

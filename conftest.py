@@ -55,6 +55,7 @@ def _reset_pipeline_state_between_tests():
         "_classifier_cache_store", # P0.6.5
         "_pipeline_state_store",   # P0.6.6
         "_vision_frame_store",     # P0.6.7v2
+        "_anti_spoof_rejection_store",  # P0.S1 MED 5
     )
     try:
         from core.session_state import SessionStore
@@ -76,6 +77,20 @@ def _reset_pipeline_state_between_tests():
             _pipeline._pipeline_state_store = _pipeline.PipelineStateStore(
                 initial_pipeline_state=_pipeline.PipelineState.WATCHING,
                 initial_cloud_state=_pipeline.CloudState.ONLINE,
+            )
+        # P0.S7.D-D — re-init RoomOrchestrator with fresh stores. The class
+        # composes over the 6 dependencies; some (face_db, brain_orchestrator)
+        # may be None in test contexts that don't touch those subsystems.
+        # The class __init__ stores all deps without asserting; per-method
+        # None checks handle the gaps (Plan v2 §4 refined 3-layer defense).
+        if hasattr(_pipeline, "RoomOrchestrator"):
+            _pipeline._room_orchestrator = _pipeline.RoomOrchestrator(
+                session_store=_pipeline._session_store,
+                pipeline_state_store=_pipeline._pipeline_state_store,
+                face_db=getattr(_pipeline, "_face_db_ref", None),
+                brain_orchestrator=getattr(_pipeline, "_brain_orchestrator", None),
+                conversation_store=_pipeline._conversation_store,
+                emotion_agents=getattr(_pipeline, "_emotion_agents", {}),
             )
     except Exception as _e:
         print(f"[conftest] store reset failed: {_e!r}")

@@ -1,0 +1,69 @@
+# P0.S6 D4 — TruffleHog history scan (CI side).
+#
+# Per Plan v2 §4 (MED 3 — auditor caught the single-job design flaw on
+# scheduled runs where `base == head == main` produces empty-diff scans).
+# Two-job split with `github.event_name` gating:
+#
+#   - trufflehog-pr-diff      — PR commits only (base/head diff, fast)
+#   - trufflehog-full-history — full repo history (schedule + manual dispatch)
+#
+# `--results=verified` filters out unverified entropy findings — TruffleHog
+# calls each candidate's provider API to verify the credential is valid before
+# flagging. Reduces noise to ~zero false positives.
+#
+# Both jobs fail the build on any verified finding (D8 closure-gate).
+
+name: trufflehog-history-scan
+
+on:
+  schedule:
+    - cron: "0 4 * * 0"   # Sundays at 04:00 UTC (after slow.yml)
+  workflow_dispatch:
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  # PR job — diff scan on commits introduced by the PR.
+  # Catches new secrets added in the PR's commits without scanning all history.
+  # Fast (~30 sec); runs on every PR.
+  trufflehog-pr-diff:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (full history for diff context)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog diff scan (PR commits only)
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.pull_request.base.sha }}
+          head: ${{ github.event.pull_request.head.sha }}
+          extra_args: --results=verified --json
+
+  # Full-history job — runs Sunday 04:00 UTC + manual dispatch.
+  # Scans the ENTIRE repo history for any secret ever committed. Slower (~5 min);
+  # catches the long-tail risk (something briefly committed years ago).
+  trufflehog-full-history:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog full-history scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          # No base/head args — full repo scan.
+          extra_args: --results=verified --json

@@ -74,7 +74,9 @@ def faces_db(tmp_path):
             person_id TEXT NOT NULL,
             role      TEXT NOT NULL,
             content   TEXT NOT NULL,
-            ts        REAL NOT NULL DEFAULT (unixepoch('now', 'subsec'))
+            ts        REAL NOT NULL DEFAULT (unixepoch('now', 'subsec')),
+            room_session_id  TEXT,
+            audience_ids     TEXT
         )
     """)
     conn.execute("""
@@ -972,7 +974,9 @@ class TestBrainOrchestrator:
                 person_id TEXT NOT NULL,
                 role      TEXT NOT NULL,
                 content   TEXT NOT NULL,
-                ts        REAL NOT NULL DEFAULT 0
+                ts        REAL NOT NULL DEFAULT 0,
+                room_session_id TEXT,
+                audience_ids    TEXT
             );
             CREATE TABLE IF NOT EXISTS persons (
                 id   TEXT PRIMARY KEY,
@@ -1457,7 +1461,8 @@ class TestBrainOrchestratorPrefs:
             CREATE TABLE IF NOT EXISTS conversation_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 person_id TEXT NOT NULL, role TEXT NOT NULL,
-                content TEXT NOT NULL, ts REAL NOT NULL DEFAULT 0
+                content TEXT NOT NULL, ts REAL NOT NULL DEFAULT 0,
+                room_session_id TEXT, audience_ids TEXT
             );
             CREATE TABLE IF NOT EXISTS persons (
                 id TEXT PRIMARY KEY, name TEXT NOT NULL
@@ -1590,19 +1595,19 @@ class TestGraphDB:
     def test_store_fact_creates_relationship(self, graph):
         ext = Extraction("Jagan", "person", "works_at", "Infosys", 0.9, False, None)
         graph.store_fact(ext, turn_id=1)
-        ctx = graph.get_graph_context("Jagan")
+        ctx = graph.get_graph_context("Jagan", caller_pid="Jagan")
         assert ctx is not None
         assert "works at" in ctx
         assert "Infosys" in ctx
 
     def test_get_graph_context_none_for_unknown_entity(self, graph):
-        assert graph.get_graph_context("nobody") is None
+        assert graph.get_graph_context("nobody", caller_pid="nobody") is None
 
     def test_get_graph_context_excludes_invalidated(self, graph):
         ext = Extraction("Jagan", "person", "lives_in", "Hyderabad", 0.9, False, None)
         graph.store_fact(ext, turn_id=1)
         graph.invalidate_fact("Jagan", "lives_in")
-        ctx = graph.get_graph_context("Jagan")
+        ctx = graph.get_graph_context("Jagan", caller_pid="Jagan")
         assert ctx is None
 
     def test_get_graph_context_excludes_expired(self, graph):
@@ -1622,7 +1627,7 @@ class TestGraphDB:
             "invalidated: false, source_turn_id: 1, created_at: 1.0"
             "}]->(tgt)",
         )
-        ctx = graph.get_graph_context("Jagan")
+        ctx = graph.get_graph_context("Jagan", caller_pid="Jagan")
         assert ctx is None
 
     def test_wipe_removes_all_entities(self, graph):
@@ -1650,7 +1655,7 @@ class TestGraphDB:
         assert g.is_empty()
         ext2 = Extraction("Jagan", "person", "lives_in", "Mumbai", 0.8, False, None)
         g.store_fact(ext2, turn_id=2)  # must not raise 'Cannot find property valid_at'
-        ctx = g.get_graph_context("Jagan")
+        ctx = g.get_graph_context("Jagan", caller_pid="Jagan")
         assert ctx is not None and "Mumbai" in ctx
         g.close()
 
@@ -1664,7 +1669,7 @@ class TestGraphDB:
             }
         ]
         graph.rebuild(rows)
-        ctx = graph.get_graph_context("Jagan")
+        ctx = graph.get_graph_context("Jagan", caller_pid="Jagan")
         assert ctx is not None
         assert "vegetarian" in ctx
 
@@ -1673,7 +1678,7 @@ class TestGraphDB:
         # but below the "uncertain" threshold (0.70) so it gets the label.
         ext = Extraction("Jagan", "person", "hobby", "painting", 0.65, False, None)
         graph.store_fact(ext, turn_id=1)
-        ctx = graph.get_graph_context("Jagan")
+        ctx = graph.get_graph_context("Jagan", caller_pid="Jagan")
         assert "(uncertain)" in ctx
 
     async def test_orchestrator_process_turn_writes_to_graph(self, tmp_path):
@@ -1689,7 +1694,8 @@ class TestGraphDB:
             CREATE TABLE conversation_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 person_id TEXT NOT NULL, role TEXT NOT NULL,
-                content TEXT NOT NULL, ts REAL NOT NULL DEFAULT 0
+                content TEXT NOT NULL, ts REAL NOT NULL DEFAULT 0,
+                room_session_id TEXT, audience_ids TEXT
             );
             CREATE TABLE persons (id TEXT PRIMARY KEY, name TEXT NOT NULL);
         """)
@@ -1732,7 +1738,7 @@ class TestGraphDB:
         facts = orch._brain_db.get_active_knowledge("Jagan")
         assert any(f["attribute"] == "dietary_preference" for f in facts)
         # Graph has the fact too
-        ctx = orch._graph_db.get_graph_context("Jagan")
+        ctx = orch._graph_db.get_graph_context("Jagan", caller_pid="Jagan")
         assert ctx is not None and "vegetarian" in ctx
         await orch.close()
 
@@ -1781,7 +1787,7 @@ class TestGraphDB:
         assert all(r[0] == "Ajay" for r in rows), f"Expected entity='Ajay', got {rows}"
 
         # Kuzu: new node created under 'Ajay'
-        assert orch._graph_db.get_graph_context("Ajay") is not None
+        assert orch._graph_db.get_graph_context("Ajay", caller_pid="Ajay") is not None
 
         orch._brain_db.close()
         orch._graph_db.close()
@@ -1797,14 +1803,14 @@ class TestGraphDB:
             }
         ]
         graph.rebuild_entity_from_knowledge("Ajay", rows)
-        ctx = graph.get_graph_context("Ajay")
+        ctx = graph.get_graph_context("Ajay", caller_pid="Ajay")
         assert ctx is not None
         assert "engineer" in ctx
 
     def test_rebuild_entity_from_knowledge_noop_on_empty_rows(self, graph):
         """Empty rows list must not raise and must leave graph unchanged."""
         graph.rebuild_entity_from_knowledge("Ajay", [])
-        assert graph.get_graph_context("Ajay") is None
+        assert graph.get_graph_context("Ajay", caller_pid="Ajay") is None
 
     def test_rebuild_entity_from_knowledge_does_not_delete_old_entity(self, graph):
         """The old 'visitor' node must remain intact after rebuild under new name."""
@@ -1820,9 +1826,9 @@ class TestGraphDB:
         ]
         graph.rebuild_entity_from_knowledge("Ajay", rows)
         # new entity created
-        assert graph.get_graph_context("Ajay") is not None
+        assert graph.get_graph_context("Ajay", caller_pid="Ajay") is not None
         # old entity untouched
-        assert graph.get_graph_context("visitor") is not None
+        assert graph.get_graph_context("visitor", caller_pid="visitor") is not None
 
 
 # ── G5b: on_identity_confirmed shadow promotion integration ───────────────────
@@ -2342,8 +2348,15 @@ class TestBrainOrchestratorEmbeddings:
         assert ctx.index("hobby") < ctx.index("works at")
 
     def test_get_context_falls_back_to_graph_when_no_embeddings(self, tmp_path):
+        # P0.S7.D-B: get_context with no requester_person_id falls back
+        # to the public-only filter at the Cypher level (defense-in-depth
+        # mirror of SQL `_visibility_clause`). Test intent here is the
+        # graph fallback path itself; we explicitly mark the seeded fact
+        # as public-tier so the privacy filter doesn't accidentally
+        # eclipse the path-coverage signal.
         orch = self._make_orch(tmp_path)
-        ext  = Extraction("Jagan", "person", "lives_in", "Hyderabad", 0.9, False, None)
+        ext  = Extraction("Jagan", "person", "lives_in", "Hyderabad", 0.9, False, None,
+                          privacy_level="public")
         orch._graph_db.store_fact(ext, turn_id=1)
 
         ctx = orch.get_context("Jagan", query_embedding=None)
@@ -2666,7 +2679,8 @@ class TestParallelContradictionChecks:
             orch._faces_conn.executescript("""
                 CREATE TABLE conversation_log (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    person_id TEXT, role TEXT, content TEXT, ts REAL DEFAULT 0
+                    person_id TEXT, role TEXT, content TEXT, ts REAL DEFAULT 0,
+                    room_session_id TEXT, audience_ids TEXT
                 );
                 CREATE TABLE persons (id TEXT PRIMARY KEY, name TEXT);
                 INSERT INTO persons VALUES ('jagan', 'Jagan');
@@ -3633,6 +3647,11 @@ class TestGraphDBFindSharedEntities:
 
     def test_shared_entity_detected(self, g):
         # Both persons have a "cousin" fact pointing to "Ravi"
+        # P0.S7.D-B: cross-person traversal now filters at Cypher level
+        # to public-tier only; legitimate cross-person matches in
+        # production (e.g. shared cousin names, shared cities) are
+        # public-tier by definition. Test fixtures updated to reflect
+        # the production semantic.
         g.upsert_entity("Jagan", "person")
         g.upsert_entity("Ravi", "value")
         g.upsert_entity("Stranger", "person")
@@ -3643,6 +3662,7 @@ class TestGraphDBFindSharedEntities:
             confidence=0.80, is_temporal=False,
             valid_until=None, valid_at=now,
             invalidated=False, source_turn_id=1, created_at=now,
+            privacy_level="public",
         )
         g._create_edge(
             src="Stranger", tgt="Ravi",
@@ -3650,6 +3670,7 @@ class TestGraphDBFindSharedEntities:
             confidence=0.70, is_temporal=False,
             valid_until=None, valid_at=now,
             invalidated=False, source_turn_id=2, created_at=now,
+            privacy_level="public",
         )
         result = g.find_shared_entities("Jagan", "Stranger")
         assert len(result) == 1
@@ -3681,7 +3702,11 @@ class TestGraphDBFindSharedEntities:
         assert result == []
 
     def test_case_insensitive_match(self, g):
-        """Values differing only by case should still match."""
+        """Values differing only by case should still match.
+
+        P0.S7.D-B: city/hometown matches are public-tier; fixtures
+        updated to reflect production semantic.
+        """
         g.upsert_entity("Person_A", "person")
         g.upsert_entity("person_b", "person")
         g.upsert_entity("Chennai", "value")
@@ -3693,6 +3718,7 @@ class TestGraphDBFindSharedEntities:
             confidence=0.80, is_temporal=False,
             valid_until=None, valid_at=now,
             invalidated=False, source_turn_id=1, created_at=now,
+            privacy_level="public",
         )
         g._create_edge(
             src="person_b", tgt="chennai",
@@ -3700,6 +3726,7 @@ class TestGraphDBFindSharedEntities:
             confidence=0.80, is_temporal=False,
             valid_until=None, valid_at=now,
             invalidated=False, source_turn_id=2, created_at=now,
+            privacy_level="public",
         )
         result = g.find_shared_entities("Person_A", "person_b")
         assert len(result) == 1
@@ -5874,23 +5901,27 @@ class TestHonestyPolicyBlock:
             "— that's the failure mode the block exists to prevent"
         )
 
-    def test_stranger_identity_block_absent_below_turn_threshold(self):
-        """Session 97 Fix 1: on turn 1 of a stranger session, the block
-        must NOT appear — threshold MIN_TURNS=2 ensures we don't nudge
-        the brain before the speaker has had a chance to share their
-        name naturally. Premature firing would push the brain to call
-        update_person_name when no name has been stated yet."""
+    def test_stranger_identity_block_fires_on_first_turn(self):
+        """P0.S7.5.2 D5: STRANGER_IDENTITY_BLOCK_MIN_TURNS dropped 2 → 0.
+        Block fires on every stranger turn (including turn 0/1) so canary-3
+        question-shapes hit Rule 2 guidance immediately. The original
+        Session 97 Fix 1 framing (threshold MIN_TURNS=2 to avoid premature
+        firing) is REVERSED by D5 — the canary 3 Lexi turn-1 mis-tooling
+        demonstrated the threshold caused MORE harm than premature firing.
+        """
         from core.brain import _build_system_prompt
         prompt = _build_system_prompt(
             person_name="visitor",
             vision_state={
                 "session_person_type": "stranger",
-                "session_user_turns":  1,
+                "session_user_turns":  0,
             },
             system_name="Kara",
         )
-        assert "<<<STRANGER IDENTITY>>>" not in prompt, (
-            "Block fired at turn 1 — threshold gate is not honored"
+        assert "<<<STRANGER IDENTITY>>>" in prompt, (
+            "P0.S7.5.2 D5: block MUST fire on turn 0 of stranger session "
+            "(MIN_TURNS=0). Without this, canary-3-shape questions miss the "
+            "Rule 2 anti-pattern on the first turn — the exact failure mode."
         )
 
     def test_stranger_identity_block_absent_for_non_stranger_sessions(self):

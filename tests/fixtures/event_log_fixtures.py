@@ -603,6 +603,102 @@ def build_dispute_path(
 # ──────────────────────────────────────────────────────────────────────────
 
 
+def build_multi_person_assistant_extraction(
+    brain_orchestrator: "Any",
+    *,
+    owner_name: str = "Jagan",
+    owner_pid: str = "j_001",
+    visitor_name: str = "Lexi",
+    visitor_pid: str = "l_002",
+    assistant_turn_content: str = (
+        "To make cheese cookies, you'll need butter, sugar, eggs, "
+        "flour, and cheese — I can try to walk you through a basic "
+        "recipe if you'd like."
+    ),
+    extracted_facts_stub: "Any" = None,
+    canned_llm_output: "dict | None" = None,
+) -> "dict[str, Any]":
+    """P0.S7.2 Plan v2 §6 P4 — chain 5 fixture.
+
+    Seeds κ extraction facts into ``brain_orchestrator.brain_db`` as if
+    Session A's multi-person assistant turn had been processed. The LLM
+    call is deterministic — the caller supplies either:
+
+      * ``extracted_facts_stub`` — pre-built ``list[Extraction]`` (advanced).
+      * ``canned_llm_output``    — dict matching the
+        ``_ASSISTANT_ROOM_EXTRACT_SYSTEM`` JSON schema; the fixture runs
+        ``_fan_out_to_participants`` to produce the Extractions.
+      * Neither — defaults to a cheese-cookies-recipe canned payload
+        targeting visitor_name as the addressee.
+
+    Session B is "ready" once Session A's facts persist — the caller mints
+    a fresh owner-only session and exercises the cross-session retrieval
+    path via ``_make_memory_search_fn``.
+
+    Args:
+        brain_orchestrator: a BrainOrchestrator instance whose ``brain_db``
+            holds the knowledge table.
+        owner_name / owner_pid: best_friend who returns in Session B.
+        visitor_name / visitor_pid: visitor present in Session A's room.
+        assistant_turn_content: the assistant text (for log fidelity; not
+            used directly when LLM output is canned).
+        extracted_facts_stub: pre-built Extraction list (overrides everything).
+        canned_llm_output: simulates an LLM response; if None and stub is None,
+            a default cheese-cookies payload is used.
+
+    Returns:
+        ``{
+          'session_a_room_session_id': str,    # the room id Session A used
+          'extractions_stored':        list[Extraction],
+          'session_b_ready':           bool,   # True once persistence completes
+        }``
+    """
+    # Resolve canonical Extraction list.
+    if extracted_facts_stub is not None:
+        extractions = list(extracted_facts_stub)
+    else:
+        # Default payload — addressee = visitor; topic = cheese cookies recipe.
+        # Targets the exact 2026-05-18 canary scenario from `tests/p0_s7_2_spec.md`.
+        payload = canned_llm_output or {
+            "topic": "cheese cookies recipe",
+            "action_type": "shared_information",
+            "primary_subject_name": visitor_name,
+            "key_details": "butter, sugar, eggs, flour, and cheese",
+        }
+        # Import here to avoid circulars at module-load time.
+        from core.brain_agent import _fan_out_to_participants
+        extractions = _fan_out_to_participants(
+            extracted=payload,
+            participant_names=[owner_name, visitor_name],
+            participant_pids=[owner_pid, visitor_pid],
+            disputed_pids=set(),
+        )
+
+    # Mint a deterministic room_session_id so the test can correlate the
+    # write site with Session A's room.
+    session_a_room_id = f"room_session_a_{owner_pid}_{visitor_pid}"
+
+    # Persist each Extraction under the participant-scoped person_id. The
+    # store_knowledge contract takes a single person_id arg; we call once
+    # per participant slice so the row's person_id matches the fact's
+    # subject scope. turn_id=0 is the "synthetic-seed" marker.
+    brain_db = brain_orchestrator.brain_db
+    for ext in extractions:
+        pid_for_row = ext.person_id or owner_pid
+        brain_db.store_knowledge(
+            extractions=[ext],
+            turn_id=0,
+            person_id=pid_for_row,
+            agent="p0_s7_2_chain5_seed",
+        )
+
+    return {
+        "session_a_room_session_id": session_a_room_id,
+        "extractions_stored":        extractions,
+        "session_b_ready":           True,
+    }
+
+
 __all__ = [
     "ReplayContext",
     "replay_session_fixture",
@@ -610,4 +706,5 @@ __all__ = [
     "build_stranger_first_encounter",
     "build_multi_person_room",
     "build_dispute_path",
+    "build_multi_person_assistant_extraction",
 ]
