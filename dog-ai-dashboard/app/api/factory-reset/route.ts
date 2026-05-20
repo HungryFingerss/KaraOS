@@ -10,6 +10,16 @@ const RESET_RESULT_PATH  = path.join(FACES_DIR, 'reset_result.json')
 // Files and directories to delete during a factory reset.
 // Mirrors the logic in core/db.py wipe_all() — done here in Node.js so we
 // don't need to shell out to Python when the pipeline is offline.
+//
+// P0.S2 preservation invariant: `.dashboard_token` and `.dashboard_auth_url`
+// are INTENTIONALLY NOT in the deletion list below. The dashboard's
+// authentication token survives factory reset — re-issuing the auth URL
+// on every reset is hostile UX and the token is single-user-scoped
+// (one machine, one user — no cross-tenant risk). The .dashboard_auth_url
+// (one-shot) is preserved here; if present it auto-deletes on first
+// /api/auth success. Future token rotation would be its own dedicated
+// endpoint, NOT via this catch-all wipe. Mirrors core/db.py::wipe_all
+// preservation comment.
 function wipeAllFiles(): void {
   const filesToDelete = [
     path.join(FACES_DIR, 'faces.db'),
@@ -27,6 +37,8 @@ function wipeAllFiles(): void {
     path.join(FACES_DIR, 'enroll_result.json'),
     path.join(FACES_DIR, 'reset_request.json'),
     path.join(FACES_DIR, 'reset_result.json'),
+    // NOTE: `.dashboard_token` and `.dashboard_auth_url` deliberately
+    // absent per the P0.S2 preservation invariant documented above.
   ]
 
   for (const f of filesToDelete) {

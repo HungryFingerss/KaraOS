@@ -61,6 +61,26 @@ faces/*.db-shm
 faces/*.db-wal
 faces/*.broken
 
+# =============================================================================
+# P0.S2 dashboard auth secrets — CARVE-OUT from the "faces/ backup" policy.
+# These are per-install auth tokens that MUST stay machine-local. Committing
+# them would embed the auth secret in git history + tie the auth state to a
+# specific commit. Per P0.S2 §3.11 known-limitation: "users sharing faces/
+# directly leak .dashboard_token" — this gitignore is the structural defense
+# against that limitation when the share-vector is git push.
+#
+# .dashboard_token              ← canonical 43-char urlsafe auth secret
+# .dashboard_auth_url           ← one-shot URL containing the token verbatim
+# .dashboard_token.corrupt.*    ← Plan v2 §3.13 corruption-recovery backups
+#                                  (may contain old valid tokens or garbage)
+# .dashboard_token.tmp.*        ← atomic-write tmp artifacts (transient,
+#                                  but could leak partial tokens on crash)
+# =============================================================================
+faces/.dashboard_token
+faces/.dashboard_auth_url
+faces/.dashboard_token.corrupt.*
+faces/.dashboard_token.tmp.*
+
 # Vision-frame sidecar JPEGs from P0.0.7 event_log H2 hook.
 # Per the D2 design decision in tests/p0_07_plan_v2.md, frames are stored
 # as separate files (frame_path on the event payload) rather than inline
