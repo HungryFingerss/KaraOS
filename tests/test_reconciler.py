@@ -3,12 +3,14 @@
 Phase 3 of the Voice/Vision Independence refactor.
 
 This file contains:
-  - 3 STRUCTURAL tests (this commit, #175):
+  - 3 STRUCTURAL tests (#175, landed 2026-04-29):
     * Import-boundary (reconciler.py must not depend on pipeline)
     * Cascade ordering invariants (5 explicit assertions)
-    * Build-routing-inputs shape (lands in #177)
-  - 22 PER-RULE acceptance tests (land in #176, one per rule, in lockstep
-    with the rule body).
+    * Build-routing-inputs shape (landed in #177)
+  - 22 PER-RULE acceptance tests (#176, landed 2026-04-29 onward; 23rd
+    test added at P0.B6 closure 2026-05-21 for post-TODO rule).
+  - D4 AST forward-property tripwire (P0.B6, 2026-05-21) — enforces
+    rule-to-test coverage via _CASCADE membership scan.
 
 Reference docs: RECONCILER_DESIGN.md (sections 1, 5).
 """
@@ -24,6 +26,7 @@ from core.reconciler import (
     _p0_short_utterance_ambiguous_multi_session,
     _p0_short_utterance_hard_mismatch,
     _p0_pure_noise_hold_current,
+    _p0_short_utterance_gap_hold_current,
     _p0_short_utterance_no_session,
     _p1_confident_voice_switch,
     _p2_midrange_face_assist_below_floor,
@@ -689,6 +692,43 @@ def test_p0_short_utterance_no_session_skips():
     assert decision.pid is None
 
 
+def test_p0_short_utterance_gap_holds_current():
+    """Short-utterance gap band (0.3-0.5s) with active cur_pid → hold session.
+
+    P0.10 Phase 1 rule closing the Bug-W coverage gap: utterances in
+    [0.3, 0.5)s with an active session hold the current session rather
+    than falling through to gallery scoring (which would phantom-stranger
+    on the noisy gap-band audio).
+
+    P0.B6 D3: this test closes the 23rd-rule coverage gap surfaced at
+    Phase 0 (the original TODO #176 enumerated 22 tests; this rule was
+    added post-TODO in P0.10 Phase 1, so the original enumeration didn't
+    include it).
+    """
+    from core.voice_channel import IdentityClaim
+    from core.vision_channel import PresenceState
+    from core.reconciler_state import SessionState
+
+    # 0.4s in [0.3, 0.5) gap band + cur_pid → hold current
+    claim = IdentityClaim(
+        pid="jagan_abc", confidence=0.40, n_diarize_segments=1,
+        utterance_duration=0.4, reasoning="test",
+    )
+    presence = PresenceState(visible_pids=("jagan_abc",), unrecognized_track_ids=())
+    session = SessionState(
+        cur_pid="jagan_abc", cur_person_type="best_friend", n_active_sessions=1,
+        voice_gallery_sizes={"jagan_abc": 20}, cur_holder_voice_n=20, now=0.0,
+    )
+
+    decision = reconcile(claim, presence, session)
+    assert decision.action == "current", (
+        f"Gap-band regression — utterance 0.3-0.5s with cur_pid must hold "
+        f"current, got {decision.action!r} from {decision.rule_fired!r}"
+    )
+    assert decision.rule_fired == _p0_short_utterance_gap_hold_current.__name__
+    assert decision.pid == "jagan_abc"
+
+
 def test_p1_confident_switch_to_other_pid():
     """Confident voice match for a different enrolled person → switch_enrolled.
 
@@ -1331,31 +1371,136 @@ def test_cascade_walks_all_22_rules_only_rule_21_matches_empty_state():
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# Per-rule acceptance tests — land in #176, one per rule body
+# Per-rule acceptance tests — landed in PR #176 (lockstep with rule bodies)
 # ══════════════════════════════════════════════════════════════════════════
 #
-# TODO(#176): land 22 tests in lockstep with rule bodies.
-# Sequence per reviewer 2026-04-29:
-#   1. test_p4_pyannote_vouched_stranger_opens_session  (live-bug rule first)
-#   2. test_p0_tier1_hard_mismatch_drops
-#   3. test_p0_tier2_ambiguous_drops_in_multi_session
-#   4. test_p0_short_utterance_holds_current
-#   5. test_p0_short_utterance_no_session_skips
-#   6. test_p1_confident_switch_to_other_pid
-#   7. test_p2_midrange_face_assist_switches
-#   8. test_p2_midrange_face_assist_below_floor_returns_ambiguous
-#   9. test_p2_midrange_no_face_assist_returns_ambiguous
-#  10. test_p3_below_self_match_floor_returns_ambiguous
-#  11. test_p3_thin_stranger_skips_offscreen_floor
-#       — checkpoint here: full pytest + canary inspection per reviewer note
-#  12. test_p3_offscreen_mature_floors_apply
-#  13. test_p3_self_match_with_face_holds_current
-#  14. test_p3_5_bootstrapping_stranger_holds_current
-#  15. test_p4_multi_segment_mismatch_drops_in_multi_known
-#  16. test_p4_new_stranger_below_threshold
-#  17. test_p4_single_segment_mismatch_drops_in_multi_known
-#  18. test_p4_voice_ambiguous_no_candidates_holds_current
-#  19. test_p4_voice_ambiguous_with_candidates_returns_ambiguous
-#  20. test_p5_no_session_opens_stranger
-#  21. test_p5_no_session_returns_no_action
-#  22. test_last_resort_ambiguous_when_low_score_other_pid
+# Coverage: 22 per-rule acceptance tests landed 2026-04-29 onward.
+# 23rd test (test_p0_short_utterance_gap_holds_current) landed at P0.B6
+# closure 2026-05-21 for the post-TODO `_p0_short_utterance_gap_hold_current`
+# rule (Bug-W coverage gap from P0.10 Phase 1).
+#
+# Skeptic1-2026-05-20 Attack 3 ("22 tests NOT landed") was based on this
+# section's stale TODO comment — premise FALSIFIED by grep at P0.B6 Phase 0.
+# Resolved per P0.B6 closure 2026-05-21.
+#
+# D4 AST forward-property tripwire (test_b6_d4_cascade_membership_covered)
+# enforces rule-to-test coverage going forward — any future rule added to
+# `_CASCADE` without an accompanying per-rule acceptance test fails CI.
+
+
+def test_b6_d1_stale_todo_marker_removed():
+    """P0.B6 D1 source-inspection: the stale `TODO(#176): land 22 tests`
+    marker comment must be gone from tests/test_reconciler.py.
+
+    Skeptic1-2026-05-20 Attack 3 ("22 per-rule acceptance tests NOT landed")
+    was based on this stale TODO comment. Phase 0 grep confirmed all 22 tests
+    WERE landed; the TODO marker was documentation-vs-reality drift. D1 removes
+    the marker; this test prevents regression to the stale-marker state.
+
+    Assertion narrowed to the SPECIFIC stale marker phrase (`TODO(#176): land
+    22 tests in lockstep with rule bodies`) so this test's own docstring and
+    sibling test docstrings (which DO reference `TODO(#176)` as historical
+    context) don't false-positive.
+    """
+    import inspect
+    src = inspect.getsource(inspect.getmodule(test_b6_d1_stale_todo_marker_removed))
+    # Stale-marker fingerprint: the original TODO comment's verbatim leading text.
+    # Sibling docstrings may reference `TODO(#176)` for historical context — that's
+    # intentional. The specific stale marker line is what D1 removed.
+    # Self-reference dodge: assemble the forbidden marker from parts at runtime so
+    # this test's own source bytes do NOT contain the literal forbidden string
+    # (banked as Plan-v1-Pass-2-grep-undercount 3rd instance at P0.B6 closure —
+    # the test's own literal was the missed surface in the original D1 anchor).
+    _todo_tag = "TODO" + "(" + "#" + "176)"
+    _stale_phrase = ": land 22 tests in lockstep with rule bodies"
+    forbidden = _todo_tag + _stale_phrase
+    assert forbidden not in src, (
+        f"P0.B6 D1: stale TODO marker `{forbidden}` must be removed from "
+        "tests/test_reconciler.py. The 22 enumerated tests landed 2026-04-29 "
+        "onward; restoring the TODO would re-introduce the documentation drift "
+        "that surfaced via skeptic1 Attack 3."
+    )
+
+
+def test_b6_d2_file_docstring_past_tense():
+    """P0.B6 D2 source-inspection: the file's top-of-file docstring must
+    narrate the work in past tense ("landed") with explicit P0.B6 closure
+    reference + D4 tripwire mention.
+
+    Pre-fix: docstring used past-future tense ("land in #176"), feeding the
+    same drift class as the D1 stale TODO marker. Post-fix: past tense +
+    explicit P0.B6 closure reference + D4 AST tripwire mention.
+    """
+    import inspect
+    src = inspect.getsource(inspect.getmodule(test_b6_d2_file_docstring_past_tense))
+    tree = ast.parse(src)
+    module_doc = ast.get_docstring(tree) or ""
+
+    # Past-tense markers per Plan v1 §2.2 verbatim "After" docstring text.
+    assert "#176, landed" in module_doc, (
+        "P0.B6 D2: docstring must use past-tense `#176, landed` "
+        "(NOT past-future `(land in #176)` form which fed the original drift)"
+    )
+    assert "P0.B6 closure 2026-05-21" in module_doc, (
+        "P0.B6 D2: docstring must reference the P0.B6 closure date explicitly"
+    )
+    assert "D4 AST forward-property tripwire" in module_doc, (
+        "P0.B6 D2: docstring must mention the D4 AST tripwire so future readers "
+        "see the structural-invariant maintenance contract"
+    )
+    # Defense-in-depth: the past-future tense form must NOT remain.
+    assert "(land in #176" not in module_doc, (
+        "P0.B6 D2: pre-fix past-future tense `(land in #176)` must be gone"
+    )
+
+
+def test_b6_d4_cascade_membership_covered():
+    """P0.B6 D4 (Bug 9 family / structural tripwire): every rule function in
+    `core/reconciler.py::_CASCADE` MUST have a corresponding per-rule
+    acceptance test in this file.
+
+    Per Q3 LOCK ACCEPT: uses `_CASCADE` MEMBERSHIP (not name-prefix grep)
+    as the authoritative rule registry. Future rule additions to `_CASCADE`
+    that ship without an accompanying per-rule acceptance test FAIL CI at
+    PR review time. Closes the documentation-vs-reality drift class that
+    surfaced at P0.B6 Phase 0 (stale TODO marker survived 22-test landing
+    completion).
+
+    Test pattern: for each rule_fn in `_CASCADE`, assert that EITHER (a) a
+    `test_<rule_name>_*` function exists OR (b) the rule_name appears in
+    a `decision.rule_fired ==` or `rule_fired == ...__name__` assertion in
+    some test body (covers tests that exercise the rule via rule_fired
+    assertion without using the rule name in the test function name).
+    """
+    import inspect
+    from core.reconciler import _CASCADE
+
+    # Extract test function names + bodies from this file.
+    src = inspect.getsource(inspect.getmodule(test_b6_d4_cascade_membership_covered))
+    tree = ast.parse(src)
+    test_func_names = {
+        node.name for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")
+    }
+
+    violations = []
+    for rule_fn in _CASCADE:
+        rule_name = rule_fn.__name__
+        # Strategy (a): test name contains rule's name fragment after stripping "_p<N>_" prefix.
+        name_fragment = rule_name.lstrip("_")
+        name_matches = [t for t in test_func_names if name_fragment.split("_", 1)[-1] in t]
+        # Strategy (b): rule_fired assertion against rule's __name__ exists somewhere in src.
+        rule_fired_pattern = f"rule_fired == {rule_name}.__name__"
+        body_matches = rule_fired_pattern in src
+
+        if not name_matches and not body_matches:
+            violations.append(rule_name)
+
+    assert not violations, (
+        f"P0.B6 D4 AST forward-property violation: {len(violations)} rule(s) in _CASCADE "
+        f"have NO per-rule acceptance test coverage: {violations}. "
+        "Per the P0.B6 closure, every rule in _CASCADE MUST have either (a) a test "
+        "function named `test_<rule_name>_*` OR (b) a `decision.rule_fired == "
+        "<rule_name>.__name__` assertion in some test body. Future rule additions "
+        "to _CASCADE without test coverage fail CI at PR review time."
+    )

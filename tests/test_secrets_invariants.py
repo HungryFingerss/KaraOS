@@ -101,10 +101,19 @@ _ENV_VAR_ACCESS_ALLOWLIST: dict[tuple[str, str, str], str] = {
         "Module-level os.environ assignment to suppress InsightFace's chatty "
         "logger. Plan v2 MED 2 documented write-context exception — writes are "
         "flagged by default; this one explicitly allowed with rationale.",
-    ("core/voice.py", "HF_TOKEN", "read"):
-        "pyannote gated-repo access. Lazy read — cannot move to config.py "
-        "because config.py loads at import time; voice.py lazily decides "
-        "whether to load pyannote. Read site is hygienic (verified Phase 0).",
+    ("core/heavy_worker.py", "HF_TOKEN", "read"):
+        "P0.R6.Z D2: pyannote gated-repo access from subprocess-side "
+        "_get_subprocess_pyannote() singleton. Lazy read at subprocess "
+        "spawn time — cannot move to config.py because config.py loads at "
+        "main-process import time; subprocess inherits env vars via "
+        "Python multiprocessing semantics per Q6 (a) lock. Migrated from "
+        "core/voice.py at P0.R6.Z when pyannote pipeline moved to "
+        "subprocess. Read site is hygienic (verified Plan v1 §2.2).",
+    ("core/heavy_worker.py", "HUGGING_FACE_HUB_TOKEN", "read"):
+        "P0.R6.Z D2: HF Hub fallback env-var name. huggingface_hub "
+        "supports both HF_TOKEN and HUGGING_FACE_HUB_TOKEN; subprocess "
+        "tries HF_TOKEN first, falls back to HUGGING_FACE_HUB_TOKEN. "
+        "Same rationale as HF_TOKEN entry above — lazy subprocess read.",
 }
 
 

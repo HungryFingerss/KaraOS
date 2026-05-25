@@ -3,7 +3,7 @@ System health snapshot and log formatting.
 Wave 5 / Item 19 — observability for production operations.
 """
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -36,6 +36,73 @@ class HealthSnapshot:
     # signal; an event-about-a-dropped-event could itself be dropped.
     event_log_drops: int = 0
     event_log_emit_failures: int = 0
+    # P0.B3 D2 — Kuzu graph degraded-mode observability.
+    # `kuzu_degraded`: True iff BrainOrchestrator._kuzu_degraded is True in
+    #     the current process. Set when graph schema upgrade fails (drop_schema
+    #     or _init_schema raises) or when boot rebuild from knowledge rows
+    #     raises. In degraded mode: graph queries silently return empty;
+    #     cross-person privacy traversal (find_shared_entities) is broken;
+    #     the P0.S7.D-B privacy-on-edges fix is bypassed. Recovery requires
+    #     operator intervention: stop pipeline + delete the Kuzu directory
+    #     + restart (brain.db facts will rebuild on next start). The
+    #     format_health_alerts() output embeds the recovery procedure
+    #     verbatim — operator never needs to grep logs or read source.
+    # In-memory flag only — does not persist across process restarts.
+    # Next boot's _ensure_graph_sync may set or clear it anew depending on
+    # actual schema-state convergence (see P0.B3 audit §3.5).
+    kuzu_degraded: bool = False
+    # P0.R3 D3 — vision-loop watchdog observability.
+    # `vision_degraded`: True iff the supervised vision-loop restart failed
+    #     (cancel+respawn either raised an exception OR the new task didn't
+    #     emit a heartbeat advance within VISION_WATCHDOG_RESTART_TIMEOUT_SECS).
+    #     Cleared automatically when the next successful heartbeat advance
+    #     fires (D4 restart-success path). Observability-only; pipeline
+    #     continues running while degraded (audio + brain stay alive — the
+    #     "keep audio alive" invariant under D4).
+    vision_degraded: bool = False
+    # P0.R6 D4 — heavy-worker pool health observability.
+    # Mapping of task_name → status ∈ {"healthy", "degraded", "unknown"}.
+    # Empty dict at boot before any pool spawn; populated by
+    # `pipeline.run()` startup after `hw.get_or_create_pool("adaface_embed")`.
+    # Conditional health-line emit fires when any pool has status != "healthy"
+    # (see `format_health_line` below). Future P0.R6.X/Y/Z migrations add
+    # entries for whisper + ecapa + pyannote pools using the same shape.
+    heavy_worker_status: "dict[str, str]" = field(default_factory=dict)
+    # P0.R8 D5 — per-pool crash count within HEAVY_WORKER_RESTART_BURST_WINDOW_SECS
+    # rolling window. Empty dict at boot before any pool spawn; populated by
+    # `gather_health_snapshot` via `hw.count_recent_crashes` per pool. Surfaces
+    # the watchdog's burst-detection signal at the observability layer; when
+    # any value > 0, `format_health_line` emits `heavy_worker_crashes=N`.
+    heavy_worker_crash_counts: "dict[str, int]" = field(default_factory=dict)
+    # P0.R11 D3 — recent persisted crash diagnostics (forensic JSON files in
+    # faces/crash_logs/). Empty list at boot before any crash event; populated
+    # by `gather_health_snapshot` via `crash_logs.list_recent_crash_logs(...)`
+    # capped at HEALTH_CRASH_LOG_RECENT_LIMIT. When non-empty,
+    # `format_health_line` emits `crash_logs=N` and `format_health_alerts`
+    # emits an operator-actionable alert pointing at faces/crash_logs/ for
+    # post-mortem analysis. Surfaces the persistence-side observability that
+    # complements P0.R8's in-memory burst-detection signal.
+    recent_crash_logs: "list[dict]" = field(default_factory=list)
+    # P0.R9 D6 — VRAM budget guard observability.
+    # `vram_budget` dict carries 2 keys: `refused_pools` (sorted list of
+    # task_names refused by check_vram_budget) + `active_pools` (sorted list
+    # of task_names currently spawned). Empty dict at boot before any pool
+    # spawn / refusal. Populated by `gather_health_snapshot` via
+    # `core.heavy_worker.peek_refused_pools()` + `_HEAVY_WORKER_POOLS` keys.
+    # When `refused_pools` non-empty, `format_health_line` emits
+    # `vram_refused=N` and `format_health_alerts` emits an operator-actionable
+    # alert with config-tuning guidance.
+    vram_budget: "dict[str, list[str]]" = field(default_factory=dict)
+    # P0.R10 D5 — audio device failure resilience observability.
+    # `audio_degraded` dict carries per-channel boolean keyed by 'mic' /
+    # 'speaker' indicating whether the rolling failure count exceeds
+    # AUDIO_DEVICE_BURST_THRESHOLD within AUDIO_DEVICE_BURST_WINDOW_SECS.
+    # Empty dict at boot before any failure event. Populated by
+    # `gather_health_snapshot` via `core.audio.count_recent_audio_failures`.
+    # When any channel True, `format_health_line` emits
+    # `audio_degraded=mic,speaker` and `format_health_alerts` emits an
+    # operator-actionable alert.
+    audio_degraded: "dict[str, bool]" = field(default_factory=dict)
 
 
 def gather_health_snapshot(
@@ -133,6 +200,106 @@ def gather_health_snapshot(
         evlog_drops = 0
         evlog_emit_failures = 0
 
+    # P0.B3 D2 — Kuzu degraded-mode observable. Defensive getattr so
+    # brain_orchestrator may be partial during boot; missing attribute
+    # defaults to False (not-degraded) so the health snapshot doesn't
+    # false-alarm during early-boot windows.
+    try:
+        kuzu_degraded = bool(getattr(brain_orchestrator, "_kuzu_degraded", False))
+    except Exception:
+        # CLEANUP: defensive — see comment block above. Same fail-safe shape.
+        kuzu_degraded = False
+
+    # P0.R3 D3 — vision-loop watchdog degraded-mode observable. Same
+    # defensive shape as kuzu_degraded above; reads from PipelineStateStore's
+    # `_vision_degraded` flag (set/cleared by D4 restart helper).
+    try:
+        from pipeline import _pipeline_state_store as _pss
+        vision_degraded = bool(_pss.peek_vision_degraded())
+    except Exception:
+        # OPTIONAL: pipeline module not yet importable (very early boot)
+        # OR the store predates P0.R3 fields. Default False; the health
+        # snapshot stays clean rather than emitting a false alert.
+        vision_degraded = False
+
+    # P0.R6 D4 — heavy-worker pool health. Defensive read mirroring the
+    # vision_degraded pattern above: peeker returns a COPY so we don't
+    # share-by-reference with the store's internal dict.
+    try:
+        from pipeline import _pipeline_state_store as _pss_hw
+        heavy_worker_status = _pss_hw.peek_heavy_worker_status()
+    except Exception:
+        # OPTIONAL: store predates P0.R6 fields OR pipeline not yet
+        # importable. Empty dict keeps the health line clean.
+        heavy_worker_status = {}
+
+    # P0.R8 D5 — per-pool crash count within rolling burst window.
+    # Defensive read: if heavy_worker module isn't loaded yet (very early
+    # boot) OR the config constants aren't available, return empty dict.
+    heavy_worker_crash_counts: "dict[str, int]" = {}
+    try:
+        import core.heavy_worker as _hw_health  # noqa: PLC0415
+        from core.config import HEAVY_WORKER_RESTART_BURST_WINDOW_SECS as _HW_WINDOW  # noqa: PLC0415
+
+        for task_name in list(_hw_health._HEAVY_WORKER_POOLS):
+            heavy_worker_crash_counts[task_name] = _hw_health.count_recent_crashes(
+                task_name, _HW_WINDOW
+            )
+    except Exception:
+        # OPTIONAL: heavy_worker not importable OR config not yet loaded.
+        heavy_worker_crash_counts = {}
+
+    # P0.R11 D3 — recent persisted crash diagnostics for HealthSnapshot.
+    # Defensive read: crash_logs module is lazily imported (FACES_DIR mkdir
+    # touches disk); if dir-create fails OR config constant unavailable, the
+    # list defaults to empty so the health line stays clean.
+    recent_crash_logs: "list[dict]" = []
+    try:
+        from core.crash_logs import list_recent_crash_logs as _list_crashes  # noqa: PLC0415
+        from core.config import HEALTH_CRASH_LOG_RECENT_LIMIT as _CRASH_LIMIT  # noqa: PLC0415
+        recent_crash_logs = _list_crashes(_CRASH_LIMIT)
+    except Exception:
+        # OPTIONAL: crash_logs module unavailable OR FACES_DIR access failure.
+        recent_crash_logs = []
+
+    # P0.R9 D6 — VRAM budget guard observability.
+    # Defensive read mirroring heavy_worker_crash_counts above; if heavy_worker
+    # module isn't loaded yet (very early boot), dict stays empty so the
+    # health line stays clean.
+    vram_budget: "dict[str, list[str]]" = {}
+    try:
+        import core.heavy_worker as _hw_vram  # noqa: PLC0415
+        vram_budget = {
+            "refused_pools": sorted(_hw_vram.peek_refused_pools()),
+            "active_pools": sorted(_hw_vram._HEAVY_WORKER_POOLS.keys()),
+        }
+    except Exception:
+        # OPTIONAL: heavy_worker not importable OR peek accessor unavailable.
+        vram_budget = {}
+
+    # P0.R10 D5 — audio device failure resilience observability.
+    # Defensive read mirroring vram_budget above; if audio module isn't
+    # loaded yet (very early boot) OR config constants unavailable, dict
+    # stays empty so the health line stays clean.
+    audio_degraded: "dict[str, bool]" = {}
+    try:
+        import core.audio as _audio_health  # noqa: PLC0415
+        from core.config import (  # noqa: PLC0415
+            AUDIO_DEVICE_BURST_THRESHOLD,
+            AUDIO_DEVICE_BURST_WINDOW_SECS,
+        )
+        audio_degraded = {
+            "mic": _audio_health.count_recent_audio_failures(
+                "mic", AUDIO_DEVICE_BURST_WINDOW_SECS
+            ) >= AUDIO_DEVICE_BURST_THRESHOLD,
+            "speaker": _audio_health.count_recent_audio_failures(
+                "speaker", AUDIO_DEVICE_BURST_WINDOW_SECS
+            ) >= AUDIO_DEVICE_BURST_THRESHOLD,
+        }
+    except Exception:
+        # OPTIONAL: audio module unavailable OR config not yet loaded.
+        audio_degraded = {}
+
     return HealthSnapshot(
         timestamp=now,
         active_sessions=len(active_sessions),
@@ -150,6 +317,13 @@ def gather_health_snapshot(
         thin_voice_galleries=thin,
         event_log_drops=evlog_drops,
         event_log_emit_failures=evlog_emit_failures,
+        kuzu_degraded=kuzu_degraded,
+        vision_degraded=vision_degraded,
+        heavy_worker_status=heavy_worker_status,
+        heavy_worker_crash_counts=heavy_worker_crash_counts,
+        recent_crash_logs=recent_crash_logs,
+        vram_budget=vram_budget,
+        audio_degraded=audio_degraded,
     )
 
 
@@ -191,6 +365,80 @@ def format_health_line(s: HealthSnapshot) -> str:
         evlog_parts.append(f"event_log_emit_failures={s.event_log_emit_failures}")
     evlog_str = (" | " + " ".join(evlog_parts)) if evlog_parts else ""
 
+    # P0.B3 D2 — surface kuzu_degraded only when True. Mirrors the evlog_parts
+    # conditional-emit pattern: clean health line in steady-state; non-zero
+    # state tags the surface explicitly so operators grep for "kuzu=degraded"
+    # without scanning the full alerts block.
+    kuzu_parts: list[str] = []
+    if s.kuzu_degraded:
+        kuzu_parts.append("kuzu=degraded")
+    kuzu_str = (" | " + " ".join(kuzu_parts)) if kuzu_parts else ""
+
+    # P0.R3 D3 — surface vision=degraded only when True. Same conditional-emit
+    # pattern as kuzu_parts above; clean steady-state line; degraded state
+    # tags the surface explicitly so operators grep `vision=degraded`.
+    vision_dgr_parts: list[str] = []
+    if s.vision_degraded:
+        vision_dgr_parts.append("vision=degraded")
+    vision_dgr_str = (" | " + " ".join(vision_dgr_parts)) if vision_dgr_parts else ""
+
+    # P0.R2 D5 — surface vision_provider=cpu only when active provider is CPU
+    # (CUDA failure triggered state-machine switch OR D3 graceful CPU-only boot).
+    # Mirrors evlog_parts/kuzu_parts conditional-emit pattern.
+    from core import vision_provider_state as _vps
+    vision_parts: list[str] = []
+    if _vps.get_active_provider() == "cpu":
+        vision_parts.append("vision_provider=cpu")
+    vision_str = (" | " + " ".join(vision_parts)) if vision_parts else ""
+
+    # P0.R6 D4 — surface heavy_workers=degraded only when any worker pool is
+    # non-healthy. Same conditional-emit pattern as vision_provider above;
+    # empty dict (no pools yet OR all healthy) keeps the line clean.
+    hw_parts: list[str] = []
+    if s.heavy_worker_status and any(
+        v != "healthy" for v in s.heavy_worker_status.values()
+    ):
+        hw_parts.append("heavy_workers=degraded")
+    hw_str = (" | " + " ".join(hw_parts)) if hw_parts else ""
+
+    # P0.R8 D5 — surface heavy_worker_crashes=N only when any pool has crash
+    # count > 0 in the rolling burst window. Aggregate total across all 4
+    # pools; per-pool breakdown lives in format_health_alerts when degraded.
+    hw_crash_parts: list[str] = []
+    if s.heavy_worker_crash_counts:
+        _hw_total = sum(s.heavy_worker_crash_counts.values())
+        if _hw_total > 0:
+            hw_crash_parts.append(f"heavy_worker_crashes={_hw_total}")
+    hw_crash_str = (" | " + " ".join(hw_crash_parts)) if hw_crash_parts else ""
+
+    # P0.R11 D3 — surface crash_logs=N only when persisted crash diagnostic
+    # files are present. Same conditional-emit pattern as hw_crash above; clean
+    # steady-state line until a crash event persists a JSON file.
+    crash_logs_parts: list[str] = []
+    if s.recent_crash_logs:
+        crash_logs_parts.append(f"crash_logs={len(s.recent_crash_logs)}")
+    crash_logs_str = (" | " + " ".join(crash_logs_parts)) if crash_logs_parts else ""
+
+    # P0.R9 D6 — surface vram_refused=N only when any pool was refused by the
+    # VRAM budget guard. Steady-state clean (no refusals); refusal state tags
+    # the surface explicitly so operators grep `vram_refused`.
+    vram_parts: list[str] = []
+    refused = s.vram_budget.get("refused_pools", []) if s.vram_budget else []
+    if refused:
+        vram_parts.append(f"vram_refused={len(refused)}")
+    vram_str = (" | " + " ".join(vram_parts)) if vram_parts else ""
+
+    # P0.R10 D5 — surface audio_degraded=mic,speaker only when any channel
+    # exceeds AUDIO_DEVICE_BURST_THRESHOLD within rolling window. Empty dict
+    # OR all-False keeps the line clean; degraded channels listed explicitly.
+    audio_parts: list[str] = []
+    _degraded_channels = [
+        c for c, deg in (s.audio_degraded or {}).items() if deg
+    ]
+    if _degraded_channels:
+        audio_parts.append(f"audio_degraded={','.join(_degraded_channels)}")
+    audio_str = (" | " + " ".join(audio_parts)) if audio_parts else ""
+
     return (
         f"[Health] {time_str} | sessions={sess_str} | "
         f"faces={s.persons_count}({s.total_face_embeddings}emb) | "
@@ -199,6 +447,14 @@ def format_health_line(s: HealthSnapshot) -> str:
         f"cloud={s.cloud_state} | disputes={s.active_disputes} | "
         f"alerts={s.unresolved_watchdog_alerts} | dream={dream_str}"
         f"{evlog_str}"
+        f"{kuzu_str}"
+        f"{vision_str}"
+        f"{vision_dgr_str}"
+        f"{hw_str}"
+        f"{hw_crash_str}"
+        f"{crash_logs_str}"
+        f"{vram_str}"
+        f"{audio_str}"
     )
 
 
@@ -253,6 +509,128 @@ def format_health_alerts(s: HealthSnapshot, brain_orchestrator: Any) -> "list[st
             f"— safe_emit_sync swallowed exception(s) from a producer hook. "
             f"Grep `[EventLog] WARN` in terminal_output for the type+message "
             f"of the first 3 (rate-limited)."
+        )
+
+    # P0.B3 D2 — Kuzu degraded-mode actionable recovery alert.
+    # Per Plan v1 §3.3 substring lock: alert text MUST contain
+    #   "Kuzu graph in degraded mode" + "Recovery: stop pipeline" +
+    #   "rm -rf <path>" + "restart" + "brain.db facts will rebuild"
+    # and MUST NOT contain any doc-URL form (no http:// / see-the-wiki /
+    # consult-docs etc.) — recovery is HARDCODED inline so the operator
+    # never has to grep logs or read source code.
+    if s.kuzu_degraded:
+        try:
+            from pathlib import Path
+            _gp = getattr(brain_orchestrator, "_graph_db_path", "<unknown>")
+            _gp_resolved = str(Path(_gp).resolve()) if _gp != "<unknown>" else "<unknown>"
+        except Exception:
+            # CLEANUP: path resolution failure — emit alert with placeholder so
+            # the recovery procedure stays visible even if path attr is missing.
+            _gp_resolved = "<graph_db_path>"
+        alerts.append(
+            f"[Health-Alert] Kuzu graph in degraded mode — graph queries "
+            f"returning empty (cross-person traversal broken; privacy "
+            f"enforcement on RELATES_TO edges bypassed). "
+            f"Recovery: stop pipeline, run `rm -rf {_gp_resolved}`, restart. "
+            f"brain.db facts will rebuild from SQLite on next start."
+        )
+
+    # P0.R3 D3 — vision-loop degraded actionable alert.
+    # Set when the supervised vision-loop restart (D4) failed: either the
+    # respawn raised an exception OR the new task's first heartbeat didn't
+    # advance within VISION_WATCHDOG_RESTART_TIMEOUT_SECS. Pipeline keeps
+    # running (audio + brain alive — "keep audio alive" invariant); vision
+    # subsystem is degraded until the next heartbeat advance auto-clears.
+    if s.vision_degraded:
+        alerts.append(
+            "[Health-Alert] Vision subsystem degraded — restart attempts failing; "
+            "check camera/driver state. "
+            "Recovery: verify USB camera connection + driver; "
+            "vision_degraded clears automatically on next successful heartbeat."
+        )
+
+    # P0.R6 D4 + P0.R8 D5 — heavy-worker pool degraded actionable alert.
+    # Set when any pool transitions to a non-healthy state (subprocess crash
+    # burst per P0.R8 watchdog; or future startup failure modes). Pipeline
+    # keeps running (asyncio loop alive); the affected inference path returns
+    # via P0.R1 D1 fallback semantic at each migrated call site.
+    # Verbatim substrings per Plan v1 §2.5 substring lock:
+    #   "Heavy-worker pool" (prefix) + "degraded" (state) + "auto-respawn"
+    #   (recovery mechanism) + "check logs" (operator action) +
+    #   "clears when crash rate drops" (recovery semantic).
+    _degraded_pools = [
+        name for name, status in s.heavy_worker_status.items()
+        if status != "healthy"
+    ]
+    if _degraded_pools:
+        # P0.R8 D5 — include per-pool crash counts in the alert when available
+        # so operators see WHICH pools are crashing AND HOW OFTEN within the
+        # rolling burst window.
+        _crash_details = []
+        for name in sorted(_degraded_pools):
+            count = s.heavy_worker_crash_counts.get(name, 0) if s.heavy_worker_crash_counts else 0
+            _crash_details.append(f"{name}={count} crashes")
+        _crash_summary = ", ".join(_crash_details) if _crash_details else "no crash counts available"
+        alerts.append(
+            f"[Health-Alert] Heavy-worker pool(s) degraded — "
+            f"{_crash_summary} in the recent burst window. "
+            f"ProcessPoolExecutor will auto-respawn subprocesses on next "
+            f"submit; check logs for crash root cause (CUDA OOM, model "
+            f"file corruption, etc.). Pool status clears when crash rate "
+            f"drops below the burst threshold within the rolling window."
+        )
+
+    # P0.R11 D3 — recent persisted crash diagnostics available alert.
+    # Verbatim substrings per Plan v1 §2.3 substring lock:
+    #   "Recent crash logs available" (prefix) +
+    #   "check faces/crash_logs/" (operator action) +
+    #   "CRASH_LOG_RETENTION_DAYS" (config knob naming).
+    # Fires whenever recent_crash_logs is non-empty (steady-state empty since
+    # crashes are rare; alert keeps surfaced until dream-loop prune clears
+    # the directory).
+    if s.recent_crash_logs:
+        most_recent = s.recent_crash_logs[0]
+        _task = most_recent.get("task_name", "<unknown>")
+        _ts = most_recent.get("timestamp", 0)
+        _ts_str = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(_ts))
+        alerts.append(
+            f"[Health-Alert] Recent crash logs available — "
+            f"most recent: task_name={_task} at {_ts_str}. "
+            f"check faces/crash_logs/ for forensic data; clears after "
+            f"CRASH_LOG_RETENTION_DAYS via dream-loop cleanup."
+        )
+
+    # P0.R9 D6 — VRAM budget refusal alert.
+    # Verbatim substrings per Plan v1 §2.6 substring lock (5 substrings):
+    #   "VRAM budget refusal" + "pools refused:" + "VRAM_POOL_PRIORITY" +
+    #   "VRAM_CEILING_PCT" + "HEAVY_WORKER_VRAM_ESTIMATES_MB"
+    # Surfaces operator-actionable config tuning guidance. Refusal state is
+    # immutable per process (cached in _REFUSED_POOLS; clears on restart);
+    # alert persists for the lifetime of the refusal.
+    _refused = s.vram_budget.get("refused_pools", []) if s.vram_budget else []
+    if _refused:
+        alerts.append(
+            f"[Health-Alert] VRAM budget refusal — "
+            f"pools refused: {', '.join(_refused)}. "
+            f"Caller fallback active. Tune VRAM_POOL_PRIORITY / "
+            f"VRAM_CEILING_PCT / HEAVY_WORKER_VRAM_ESTIMATES_MB at "
+            f"core/config.py + restart to recover."
+        )
+
+    # P0.R10 D5 — audio device degraded actionable alert.
+    # Verbatim substrings per Plan v1 §2.5 substring lock (5 substrings):
+    #   "Audio device degraded" + "channels:" + "USB/audio device connection"
+    #   + "driver" + "AUDIO_DEVICE_BURST_THRESHOLD"
+    # Fires when any channel's rolling failure count exceeds threshold.
+    _degraded_audio_channels = [
+        c for c, deg in (s.audio_degraded or {}).items() if deg
+    ]
+    if _degraded_audio_channels:
+        alerts.append(
+            f"[Health-Alert] Audio device degraded — channels: "
+            f"{', '.join(_degraded_audio_channels)}. Check USB/audio device "
+            f"connection + driver + permissions. Clears when failure rate "
+            f"drops below AUDIO_DEVICE_BURST_THRESHOLD."
         )
 
     return alerts

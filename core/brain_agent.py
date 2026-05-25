@@ -97,6 +97,7 @@ from core.config import (
     CORE_MEMORY_ATTRIBUTES,
 )
 from core.log_utils import _now_log_ts
+from core.sanitize import wrap_user_input
 
 
 # ── Shared utilities ───────────────────────────────────────────────────────────
@@ -337,6 +338,38 @@ def _is_safety_critical_attribute(attribute: str) -> bool:
     if not attribute:
         return False
     return any(r.match(attribute) for r in _SAFETY_CRITICAL_ATTR_RES)
+
+
+# ── P0.S4 D1 — privacy-level write-path validation ────────────────────────────
+def _assert_valid_privacy_level(value: str, context: str) -> None:
+    """Reject writes carrying a `privacy_level` outside `PRIVACY_LEVELS`.
+
+    Called at every write-path boundary that persists a tier value: brain.db
+    via `BrainDB.store_knowledge` (line ~1186) and Kuzu via
+    `GraphDB._create_edge` (line ~3567). The empty/invalid case is
+    programmer-error (Session 95 3A.4.5 legacy "private" reaching a writer
+    means an extraction-agent path missed the migration; the visibility
+    clause has no predicate matching it, so silently accepting it would
+    write data that's structurally invisible to every retrieval site).
+
+    Fail-loud disposition: raise `ValueError` naming the field, the
+    constraint constant the operator must consult, and the offending value
+    verbatim. Caller path is wrapped in `try/except Exception` at
+    `BrainOrchestrator._poll_once` (lines ~7365-7379) and at
+    `pipeline.py::_emotion_process_background`, so the raise logs the full
+    traceback + continues the background task — does NOT crash the pipeline.
+
+    Spec: tests/p0_s4_plan_v1.md §1.P4 (locked exact substrings).
+    """
+    if value not in PRIVACY_LEVELS:
+        raise ValueError(
+            f"Invalid privacy_level={value!r} at {context}. "
+            f"Must be a member of PRIVACY_LEVELS (config.py): "
+            f"{sorted(PRIVACY_LEVELS)}. If the legacy 2-tier name "
+            f"'private' surfaced, this is a Session 95 3A.4.5 migration "
+            f"regression — re-classify via _classify_privacy_level or "
+            f"explicitly set privacy_level='personal' at the agent boundary."
+        )
 
 
 # ── VISION_ROADMAP P3.2 / Session 95 3A.2 — privacy-level classifier ──────────
@@ -1193,6 +1226,17 @@ class BrainDB:
         now = time.time()
         count = 0
         for e in extractions:
+            # P0.S4 D1 — fail-loud at the brain.db write boundary if a tier
+            # value outside PRIVACY_LEVELS slipped through extraction. The
+            # _visibility_clause has no predicate matching an invalid tier,
+            # so silently writing one would produce a row that's structurally
+            # invisible to every retrieval site. Caller is wrapped in
+            # try/except at _poll_once + _emotion_process_background; the
+            # raise propagates up, logs traceback, continues to next turn.
+            _assert_valid_privacy_level(
+                e.privacy_level,
+                f"BrainDB.store_knowledge (agent={agent!r}, attribute={e.attribute!r})",
+            )
             valid_until = _valid_until(e.is_temporal, e.valid_for_hours, now)
             self._conn.execute(
                 """INSERT INTO knowledge
@@ -3293,43 +3337,47 @@ class BrainDB:
             return 0
         ph = ",".join("?" * len(person_ids))
         total = 0
-        for table in ("knowledge", "presence_log", "episodes", "prompt_prefs"):
+        # P0.S9 D2: explicit transaction wrap (was implicit single-commit pre-fix).
+        # Atomicity equivalent (BEGIN IMMEDIATE / COMMIT contract owned by the
+        # context manager); matches P0.9.1 ratchet for cross-DB destructive ops.
+        with self.transaction():
+            for table in ("knowledge", "presence_log", "episodes", "prompt_prefs"):
+                cur = self._conn.execute(
+                    f"DELETE FROM {table} WHERE person_id IN ({ph})", person_ids
+                )
+                total += cur.rowcount
             cur = self._conn.execute(
-                f"DELETE FROM {table} WHERE person_id IN ({ph})", person_ids
+                f"DELETE FROM proactive_nudges WHERE target_person_id IN ({ph})", person_ids
             )
             total += cur.rowcount
-        cur = self._conn.execute(
-            f"DELETE FROM proactive_nudges WHERE target_person_id IN ({ph})", person_ids
-        )
-        total += cur.rowcount
-        cur = self._conn.execute(
-            f"DELETE FROM social_mentions WHERE source_person_id IN ({ph})", person_ids
-        )
-        total += cur.rowcount
-        cur = self._conn.execute(
-            f"DELETE FROM inter_person_relationships WHERE person_a IN ({ph}) OR source_speaker IN ({ph})",
-            person_ids + person_ids,
-        )
-        total += cur.rowcount
-        # household_facts.source_speakers is a JSON list of person_ids — remove each deleted id.
-        for pid in person_ids:
-            rows = self._conn.execute(
-                "SELECT id, source_speakers FROM household_facts WHERE source_speakers LIKE ?",
-                (f'%{pid}%',),
-            ).fetchall()
-            for row_id, ss_json in rows:
-                try:
-                    speakers = json.loads(ss_json or "[]")
-                except (ValueError, TypeError):
-                    speakers = []
-                updated = [s for s in speakers if s != pid]
-                if updated != speakers:
-                    self._conn.execute(
-                        "UPDATE household_facts SET source_speakers = ? WHERE id = ?",
-                        (json.dumps(updated), row_id),
-                    )
-                    total += 1
-        self._conn.commit()
+            cur = self._conn.execute(
+                f"DELETE FROM social_mentions WHERE source_person_id IN ({ph})", person_ids
+            )
+            total += cur.rowcount
+            cur = self._conn.execute(
+                f"DELETE FROM inter_person_relationships WHERE person_a IN ({ph}) OR source_speaker IN ({ph})",
+                person_ids + person_ids,
+            )
+            total += cur.rowcount
+            # household_facts.source_speakers is a JSON list of person_ids — remove each deleted id.
+            for pid in person_ids:
+                rows = self._conn.execute(
+                    "SELECT id, source_speakers FROM household_facts WHERE source_speakers LIKE ?",
+                    (f'%{pid}%',),
+                ).fetchall()
+                for row_id, ss_json in rows:
+                    try:
+                        speakers = json.loads(ss_json or "[]")
+                    except (ValueError, TypeError):
+                        speakers = []
+                    updated = [s for s in speakers if s != pid]
+                    if updated != speakers:
+                        self._conn.execute(
+                            "UPDATE household_facts SET source_speakers = ? WHERE id = ?",
+                            (json.dumps(updated), row_id),
+                        )
+                        total += 1
+        # NO trailing self._conn.commit() — transaction context manager owns commit.
         return total
 
     def prune_shadows_mentioning(self, person_id: str, person_name: str) -> int:
@@ -3342,23 +3390,25 @@ class BrainDB:
             "SELECT shadow_id, known_via FROM shadow_persons"
         ).fetchall()
         affected = 0
-        for shadow_id, kv_json in rows:
-            try:
-                known_via = json.loads(kv_json or "[]")
-            except (ValueError, TypeError):
-                known_via = []
-            new_via = [entry for entry in known_via if entry.get("person_id") != person_id]
-            if len(new_via) == len(known_via):
-                continue
-            affected += 1
-            if new_via:
-                self._conn.execute(
-                    "UPDATE shadow_persons SET known_via = ? WHERE shadow_id = ?",
-                    (json.dumps(new_via), shadow_id),
-                )
-            else:
-                self._conn.execute("DELETE FROM shadow_persons WHERE shadow_id = ?", (shadow_id,))
-        self._conn.commit()
+        # P0.S9 D2: explicit transaction wrap (was implicit single-commit pre-fix).
+        with self.transaction():
+            for shadow_id, kv_json in rows:
+                try:
+                    known_via = json.loads(kv_json or "[]")
+                except (ValueError, TypeError):
+                    known_via = []
+                new_via = [entry for entry in known_via if entry.get("person_id") != person_id]
+                if len(new_via) == len(known_via):
+                    continue
+                affected += 1
+                if new_via:
+                    self._conn.execute(
+                        "UPDATE shadow_persons SET known_via = ? WHERE shadow_id = ?",
+                        (json.dumps(new_via), shadow_id),
+                    )
+                else:
+                    self._conn.execute("DELETE FROM shadow_persons WHERE shadow_id = ?", (shadow_id,))
+        # NO trailing self._conn.commit() — transaction context manager owns commit.
         return affected
 
     # ── P0.X graph-schema public API ─────────────────────────────────────────
@@ -3570,6 +3620,16 @@ class GraphDB:
         # PRIVACY_LEVEL_DEFAULT from S106). Legacy callers OR forgotten
         # kwargs get the safest tier. Phase 3 inverse-check guards that
         # every production caller passes privacy_level= explicitly.
+        # P0.S4 D1 — fail-loud at the Kuzu write boundary too. The graph
+        # filter at find_shared_entities reads r.privacy_level; an invalid
+        # tier slipping through would produce edges that are structurally
+        # invisible to cross-person matching. Same caller-side try/except
+        # wrapper protection as store_knowledge — raises propagate to the
+        # background-task wrapper and log without crashing the pipeline.
+        _assert_valid_privacy_level(
+            privacy_level,
+            f"GraphDB._create_edge (src={src!r}, attr={attribute!r})",
+        )
         self._conn.execute(
             "MATCH (src:Entity {name: $src}), (tgt:Entity {name: $tgt})"
             " CREATE (src)-[:RELATES_TO {"
@@ -4487,7 +4547,7 @@ class ExtractionAgent:
                         "model":           EXTRACT_MODEL,
                         "messages":        [
                             {"role": "system", "content": system_prompt},
-                            {"role": "user",   "content": user_msg},
+                            {"role": "user",   "content": wrap_user_input(user_msg)},
                         ],
                         "temperature":     0.1,
                         "max_tokens":      800,
@@ -4532,7 +4592,7 @@ class ExtractionAgent:
                     "model": OLLAMA_MODEL,
                     "messages": [
                         {"role": "system", "content": system_prompt + "\nIMPORTANT: output ONLY the JSON object, nothing else."},
-                        {"role": "user",   "content": user_msg},
+                        {"role": "user",   "content": wrap_user_input(user_msg)},
                     ],
                     "stream": False,
                     "options": {"temperature": 0.1},
@@ -4652,7 +4712,7 @@ class ContradictionAgent:
         ``check`` and ``check_staleness`` since they both delegate here."""
         return await _call_llm_chat(
             self._http,
-            [{"role": "user", "content": prompt}],
+            [{"role": "user", "content": wrap_user_input(prompt)}],
             agent_name="ContradictionAgent",
             max_tokens=80,
             temperature=0.0,
@@ -4697,7 +4757,7 @@ class ContradictionAgent:
                 f"{OLLAMA_URL}/api/chat",
                 json={
                     "model":   OLLAMA_MODEL,
-                    "messages":[{"role": "user", "content": prompt}],
+                    "messages":[{"role": "user", "content": wrap_user_input(prompt)}],
                     "stream":  False,
                     "options": {"temperature": 0.0},
                 },
@@ -4839,7 +4899,7 @@ class PromptPrefAgent:
             self._http,
             [
                 {"role": "system", "content": _PREF_SYSTEM},
-                {"role": "user",   "content": user_msg},
+                {"role": "user",   "content": wrap_user_input(user_msg)},
             ],
             agent_name="PromptPrefAgent",
             max_tokens=400,
@@ -4856,7 +4916,7 @@ class PromptPrefAgent:
                     "model":   OLLAMA_MODEL,
                     "messages": [
                         {"role": "system", "content": _PREF_SYSTEM + "\nOutput ONLY the JSON object."},
-                        {"role": "user",   "content": user_msg},
+                        {"role": "user",   "content": wrap_user_input(user_msg)},
                     ],
                     "stream":   False,
                     "options":  {"temperature": 0.1, "num_predict": 300},
@@ -4968,7 +5028,7 @@ class FrictionDetectionAgent:
                     "model":           EXTRACT_MODEL,
                     "messages":        [
                         {"role": "system", "content": _FRICTION_SYSTEM},
-                        {"role": "user",   "content": user_msg},
+                        {"role": "user",   "content": wrap_user_input(user_msg)},
                     ],
                     "temperature":     0.0,
                     "max_tokens":      150,
@@ -4991,7 +5051,7 @@ class FrictionDetectionAgent:
                     "model":    OLLAMA_MODEL,
                     "messages": [
                         {"role": "system", "content": _FRICTION_SYSTEM + "\nOutput ONLY the JSON object."},
-                        {"role": "user",   "content": user_msg},
+                        {"role": "user",   "content": wrap_user_input(user_msg)},
                     ],
                     "stream":   False,
                     "options":  {"temperature": 0.0},
@@ -5072,7 +5132,7 @@ class HouseholdExtractionAgent:
             self._http,
             [
                 {"role": "system", "content": self._SYSTEM},
-                {"role": "user",   "content": prompt},
+                {"role": "user",   "content": wrap_user_input(prompt)},
             ],
             agent_name=f"HouseholdAgent:{label}",
             max_tokens=max_tokens,
@@ -5664,7 +5724,7 @@ class SocialGraphAgent:
             self._http,
             [
                 {"role": "system", "content": self._SYSTEM},
-                {"role": "user",   "content": turn_text[:2000]},
+                {"role": "user",   "content": wrap_user_input(turn_text[:2000])},
             ],
             agent_name="SocialGraph",
             max_tokens=512,
@@ -6519,6 +6579,123 @@ class WatchdogAgent:
         )
         print(f"[WatchdogAgent] {alert_type} alert stored ({percent_used:.1f}% used)")
 
+    def report_heavy_worker_burst(
+        self,
+        task_name: str,
+        crash_count: int,
+        window_secs: float,
+    ) -> None:
+        """Store a heavy-worker pool burst-crash alert (P0.R8 D4).
+
+        Called from ``pipeline._heavy_worker_watchdog_loop`` when the rolling
+        crash count for a pool within ``HEAVY_WORKER_RESTART_BURST_WINDOW_SECS``
+        exceeds ``HEAVY_WORKER_RESTART_BURST_THRESHOLD``.
+
+        Severity is ``warning`` — heavy-worker degraded is recoverable;
+        operator-actionable but not session-blocking. ProcessPoolExecutor
+        auto-respawns subprocesses on next submit; recovery happens
+        implicitly when the crash rate drops below threshold within the
+        rolling window.
+
+        Idempotency: managed by the watchdog loop's per-pool ``_alert_armed``
+        flag (one alert per pool per burst event; re-arms on recovery).
+        """
+        self._db.store_alert(
+            f"heavy_worker_burst_{task_name}",
+            "warning",
+            f"Heavy-worker pool '{task_name}' crashed {crash_count} times in "
+            f"the last {window_secs:.0f}s. Pool will auto-respawn but is marked "
+            f"degraded. Check logs for crash root cause (CUDA OOM, model file "
+            f"corruption, etc.).",
+            {
+                "task_name": task_name,
+                "crash_count": crash_count,
+                "window_secs": window_secs,
+            },
+        )
+        print(
+            f"[WatchdogAgent] heavy_worker_burst_{task_name} alert stored "
+            f"({crash_count} crashes / {window_secs:.0f}s)"
+        )
+
+    def report_vram_budget_refusal(
+        self,
+        task_name: str,
+        cumulative_mb: int,
+        ceiling_mb: int,
+        estimate_mb: int,
+    ) -> None:
+        """Store a VRAM budget refusal alert (P0.R9 D5).
+
+        Called from ``core.heavy_worker.get_or_create_pool`` on first refusal
+        per task_name. Severity ``warning`` — graceful degradation (caller's
+        fallback fires; system continues running).
+
+        Q8 (a) RATIFIED: per-pool alert granularity (operator wants to know
+        WHICH pool degraded). Alert metadata captures pool name + cumulative
+        MB + ceiling MB + estimate MB for operator triage.
+        """
+        self._db.store_alert(
+            f"vram_budget_refusal_{task_name}",
+            "warning",
+            f"Pool '{task_name}' refused spawn (estimate {estimate_mb}MB + "
+            f"cumulative {cumulative_mb}MB > ceiling {ceiling_mb}MB). "
+            f"Fallback path active. Tune VRAM_POOL_PRIORITY / VRAM_CEILING_PCT / "
+            f"HEAVY_WORKER_VRAM_ESTIMATES_MB at core/config.py + restart to recover.",
+            {
+                "task_name": task_name,
+                "cumulative_mb": cumulative_mb,
+                "ceiling_mb": ceiling_mb,
+                "estimate_mb": estimate_mb,
+            },
+        )
+        print(
+            f"[WatchdogAgent] vram_budget_refusal_{task_name} alert stored "
+            f"(estimate={estimate_mb}MB, cumulative={cumulative_mb}MB, "
+            f"ceiling={ceiling_mb}MB)"
+        )
+
+    def report_audio_device_burst(
+        self,
+        channel: str,
+        failure_count: int,
+        window_secs: float,
+    ) -> None:
+        """Store an audio-device burst alert (P0.R10 D4).
+
+        Called from ``pipeline._audio_device_watchdog_loop`` when the rolling
+        failure count for a channel within ``AUDIO_DEVICE_BURST_WINDOW_SECS``
+        exceeds ``AUDIO_DEVICE_BURST_THRESHOLD``.
+
+        Q8 (a) RATIFIED severity ``warning``: graceful degradation (caller's
+        fallback fires; system continues running). Mirrors P0.R8
+        ``report_heavy_worker_burst`` shape.
+
+        Q1 (a) RATIFIED per-channel granularity: channel in {'mic', 'speaker'};
+        alert key includes channel name for operator triage clarity.
+
+        Idempotency: managed by the watchdog loop's per-channel
+        ``_alert_armed`` flag (one alert per channel per burst event; re-arms
+        on recovery).
+        """
+        self._db.store_alert(
+            f"audio_device_burst_{channel}",
+            "warning",
+            f"Audio device '{channel}' failure burst — {failure_count} failures in "
+            f"{window_secs:.0f}s window. Check device connection / driver / "
+            f"permissions. Clears when failure rate drops below "
+            f"AUDIO_DEVICE_BURST_THRESHOLD.",
+            {
+                "channel": channel,
+                "failure_count": failure_count,
+                "window_secs": window_secs,
+            },
+        )
+        print(
+            f"[WatchdogAgent] audio_device_burst_{channel} alert stored "
+            f"(count={failure_count}, window={window_secs:.0f}s)"
+        )
+
     # ── periodic checks ───────────────────────────────────────────────────────
 
     def _check_silent_obs_anomaly(self) -> None:
@@ -6647,25 +6824,53 @@ class BrainOrchestrator:
         2. Schema upgrade: GRAPH_SCHEMA_VERSION bumped — Kuzu REL tables can't
            be ALTER TABLE'd, so we wipe the graph and rebuild with new schema.
 
-        P0.X atomicity discipline:
-        - Sentinel written BEFORE any destructive Kuzu op (eager sentinel).
-        - SQL version bump committed BEFORE drop_schema/init_schema (SQL-first).
-        - Boot: sentinel OR entity-count mismatch → rebuild.
-        - Rebuild failure at boot → degraded mode (no raise from __init__).
+        P0.B3 D1 ORDERING INVARIANT (Finding 2 board-meeting 2026-05-21 fix):
+          1. Capture `_did_schema_upgrade = (stored_version < GRAPH_SCHEMA_VERSION)`
+             at function entry — BEFORE any state mutation. This is the in-flight
+             intent flag; tells the success path whether to commit the SQL version
+             bump at the end.
+          2. _mark_kuzu_dirty() FIRST — sentinel SET BEFORE any destructive op.
+          3. IF schema upgrade pending: drop_schema() + _init_schema() (Kuzu ops).
+             Crash here: kuzu_degraded=True, sentinel persists, stored_version=OLD
+             → next boot re-enters via predicate at step 1.
+          4. Compute need_rebuild via the migration-block-success OR boot-reconciliation
+             (sentinel-exists OR entity-count-mismatch).
+          5. IF need_rebuild AND NOT degraded: rebuild(knowledge_rows). Crash here:
+             kuzu_degraded=True, sentinel persists, stored_version=OLD → next boot
+             re-enters via predicate at step 1.
+          6. _clear_kuzu_dirty() ONLY after rebuild() success.
+          7. IF `_did_schema_upgrade` AND NOT degraded: update_graph_schema_version(NEW)
+             — SQL commit ONLY at the end, AFTER Kuzu schema + data both at NEW + sentinel
+             cleared. This is the LOAD-BEARING fix: pre-P0.B3 the SQL bump happened at step
+             3-pre-Kuzu-ops, which left SQL=NEW + Kuzu=PARTIAL on crash; the migration
+             predicate at step 1 became FALSE on next boot, silently trapping the system
+             in permanent _kuzu_degraded=True with no operator-visible recovery signal.
+             Post-P0.B3 the SQL bump lands ONLY at full success; any crash before this
+             leaves stored_version=OLD → next boot retries idempotently.
+          8. Sentinel-only rebuild paths (boot reconciliation, count mismatch) MUST NOT
+             bump the SQL version — `_did_schema_upgrade=False` gates this correctly.
+          9. degraded-mode caught-but-unfixable crashes leave sentinel + stored_version=OLD
+             on disk → next process restart re-enters the migration block fresh + retries.
+         10. Cross-spec invariant: P0.X SCHEMA_MIGRATION pattern's "SQL-first" framing
+             applies to paired DATA writes (brain.db row + Kuzu edge). For the version
+             BUMP itself, SQL-LAST is correct because SQL is the source-of-truth FOR
+             which schema-state-is-canonical — committing it prematurely commits a
+             lie. P0.X behavior for paired data writes is unchanged.
         """
         stored_version = self._brain_db.get_graph_schema_version()
+        _did_schema_upgrade = stored_version < GRAPH_SCHEMA_VERSION  # P0.B3 D1 intent flag
 
         need_rebuild = False
-        if stored_version < GRAPH_SCHEMA_VERSION:
+        if _did_schema_upgrade:
             print(
                 f"[BrainAgent] Graph schema v{stored_version}→v{GRAPH_SCHEMA_VERSION}: "
                 "wiping Kuzu graph for rebuild with new schema"
             )
-            # 1. Eager sentinel BEFORE any destructive op.
+            # P0.B3 D1: SQL version bump REMOVED from this block per Finding 2 fix.
+            # Sentinel + Kuzu ops only here; SQL commit deferred to the rebuild-success
+            # branch below, gated on `_did_schema_upgrade`. See function docstring
+            # ORDERING INVARIANT step 7 for rationale.
             self._mark_kuzu_dirty()
-            # 2. SQL-first: commit version bump before touching Kuzu.
-            self._brain_db.update_graph_schema_version(GRAPH_SCHEMA_VERSION)
-            # 3. Kuzu ops AFTER SQL commit — wrapped for degraded-mode boot on failure.
             try:
                 self._graph_db.drop_schema()
                 self._graph_db._init_schema()
@@ -6691,8 +6896,10 @@ class BrainOrchestrator:
                     # P0.S7.D-B observability — surface scale-of-pain in canary logs
                     # (auditor obs B). Measures wall-clock + emits entity_count +
                     # edge_count so production rebuilds (v2→v3 schema upgrade) can
-                    # be reasoned about empirically. Stored_version captured BEFORE
-                    # the SQL bump above; report the actual jump explicitly.
+                    # be reasoned about empirically. `stored_version` is the pre-bump
+                    # version captured at function entry (the SQL bump lands AFTER
+                    # `_clear_kuzu_dirty()` below per P0.B3 D1); report the jump
+                    # against the pre-bump baseline explicitly.
                     _rebuild_t0 = time.time()
                     self._graph_db.rebuild(knowledge_rows)
                     _rebuild_secs = time.time() - _rebuild_t0
@@ -6706,6 +6913,14 @@ class BrainOrchestrator:
                         f"({_ent_count} entities, {len(knowledge_rows)} edges)"
                     )
                 self._clear_kuzu_dirty()
+                # P0.B3 D1 (Finding 2 board-meeting 2026-05-21 fix): SQL version bump
+                # ONLY here — after rebuild success + sentinel clear. Gated on
+                # `_did_schema_upgrade` so sentinel-only rebuilds (boot reconciliation,
+                # count mismatch) do NOT bump the version. See function docstring
+                # ORDERING INVARIANT step 7 for the load-bearing rationale (pre-fix:
+                # SQL=NEW + Kuzu=PARTIAL on crash trapped boot in permanent degraded).
+                if _did_schema_upgrade:
+                    self._brain_db.update_graph_schema_version(GRAPH_SCHEMA_VERSION)
             except Exception as e:
                 self._kuzu_degraded = True
                 print(f"[BrainAgent] Graph rebuild failed at boot — degraded mode: {e!r}")
@@ -7050,9 +7265,13 @@ class BrainOrchestrator:
                 f"was discussed and any significant moments. No preamble.\n\n"
                 f"{transcript}"
             )
+            # P0.S5 D1 + Plan v2 §1 RoomSynth disposition: single-wrap on
+            # assembled transcript. Speaker labels stay inside the wrap as
+            # documentation; multi-speaker self-close residual risk accepted
+            # per Plan v2 §3.11 (file P0.S5.X if canary surfaces escape).
             llm_out = await _call_llm_chat(
                 self._http,
-                [{"role": "user", "content": user_prompt}],
+                [{"role": "user", "content": wrap_user_input(user_prompt)}],
                 agent_name="RoomSynth",
                 max_tokens=120,
                 temperature=0.3,
@@ -7294,6 +7513,47 @@ class BrainOrchestrator:
             percent_used=percent_used,
             free_bytes=free_bytes,
             severity=severity,
+        )
+
+    def report_heavy_worker_burst(
+        self,
+        task_name: str,
+        crash_count: int,
+        window_secs: float,
+    ) -> None:
+        """Surface a heavy-worker pool burst-crash alert via the watchdog (P0.R8)."""
+        self._watchdog.report_heavy_worker_burst(
+            task_name=task_name,
+            crash_count=crash_count,
+            window_secs=window_secs,
+        )
+
+    def report_vram_budget_refusal(
+        self,
+        task_name: str,
+        cumulative_mb: int,
+        ceiling_mb: int,
+        estimate_mb: int,
+    ) -> None:
+        """Surface a VRAM budget refusal alert via the watchdog (P0.R9 D5)."""
+        self._watchdog.report_vram_budget_refusal(
+            task_name=task_name,
+            cumulative_mb=cumulative_mb,
+            ceiling_mb=ceiling_mb,
+            estimate_mb=estimate_mb,
+        )
+
+    def report_audio_device_burst(
+        self,
+        channel: str,
+        failure_count: int,
+        window_secs: float,
+    ) -> None:
+        """Surface an audio device burst alert via the watchdog (P0.R10 D4)."""
+        self._watchdog.report_audio_device_burst(
+            channel=channel,
+            failure_count=failure_count,
+            window_secs=window_secs,
         )
 
     def get_alerts_summary(self) -> str | None:

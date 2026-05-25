@@ -15,8 +15,22 @@ import dataclasses
 from typing import Optional
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class VoiceEvidence:
+    """Immutable evidence-bundle attached to each Session.
+
+    P0.B1 D1 (closed 2026-05-21): `frozen=True` was added to eliminate
+    accidental snapshot mutation. Every field update REBINDS the parent
+    `Session.evidence` field via ``dataclasses.replace()`` — direct
+    attribute assignment (``session.evidence.face_match_conf = X``) now
+    raises ``dataclasses.FrozenInstanceError`` at runtime. The
+    AST tripwire at ``tests/test_p0_b1_voice_evidence_frozen.py::
+    test_no_direct_voice_evidence_mutation_outside_sessionstore`` enforces
+    the rebinding convention for production code at CI time.
+
+    Combined with ``slots=True`` (Python 3.10+ supports the combination),
+    this dataclass is both memory-compact and structurally immutable.
+    """
     face_match_conf:     float = 0.0
     face_last_seen_ts:   float = 0.0
     anti_spoof_live:     bool  = False
@@ -172,8 +186,12 @@ class SessionStore:
                 person_type=person_type, session_type=session_type,
                 started_at=now, last_face_seen=now, last_spoke_at=now,
             )
-            s.evidence.bootstrap_credits = bootstrap_credits
-            s.evidence.voice_sample_count = voice_sample_count
+            # P0.B1 D1: VoiceEvidence is frozen — rebind via dataclasses.replace().
+            s.evidence = dataclasses.replace(
+                s.evidence,
+                bootstrap_credits=bootstrap_credits,
+                voice_sample_count=voice_sample_count,
+            )
             s.room_session_id = room_session_id
             self._sessions[person_id] = s
 
@@ -199,52 +217,75 @@ class SessionStore:
             s = self._sessions.get(pid)
             if s is not None:
                 s.last_face_seen = ts
-                s.evidence.face_match_conf = conf
-                s.evidence.face_last_seen_ts = ts
+                # P0.B1 D1 + audit §3.3: conditional-kwargs pattern minimizes
+                # allocation count (single replace() vs 5 sequential rebinds).
+                _updates: dict = {
+                    "face_match_conf": conf,
+                    "face_last_seen_ts": ts,
+                }
                 if anti_spoof_live is not None:
-                    s.evidence.anti_spoof_live = anti_spoof_live
+                    _updates["anti_spoof_live"] = anti_spoof_live
                 if anti_spoof_score is not None:
-                    s.evidence.anti_spoof_score = anti_spoof_score
+                    _updates["anti_spoof_score"] = anti_spoof_score
                 if anti_spoof_live is not None or anti_spoof_score is not None:
-                    s.evidence.anti_spoof_last_ts = ts
+                    _updates["anti_spoof_last_ts"] = ts
+                s.evidence = dataclasses.replace(s.evidence, **_updates)
 
     async def update_voice_heard(self, pid: str, *, conf: float, ts: float) -> None:
         async with self._lock:
             s = self._sessions.get(pid)
             if s is not None:
                 s.last_spoke_at = ts
-                s.evidence.voice_match_conf = conf
-                s.evidence.voice_last_heard_ts = ts
+                # P0.B1 D1: VoiceEvidence frozen — single replace() for 2 fields.
+                s.evidence = dataclasses.replace(
+                    s.evidence,
+                    voice_match_conf=conf,
+                    voice_last_heard_ts=ts,
+                )
 
     async def increment_voice_sample_count(self, pid: str) -> None:
         async with self._lock:
             s = self._sessions.get(pid)
             if s is not None:
-                s.evidence.voice_sample_count += 1
+                # P0.B1 D1: VoiceEvidence frozen — rebind via replace().
+                s.evidence = dataclasses.replace(
+                    s.evidence,
+                    voice_sample_count=s.evidence.voice_sample_count + 1,
+                )
 
     async def decrement_bootstrap_credits(self, pid: str) -> None:
         async with self._lock:
             s = self._sessions.get(pid)
             if s is not None:
-                s.evidence.bootstrap_credits = max(0, s.evidence.bootstrap_credits - 1)
+                # P0.B1 D1: clamp max(0, ...) preserved via replace().
+                s.evidence = dataclasses.replace(
+                    s.evidence,
+                    bootstrap_credits=max(0, s.evidence.bootstrap_credits - 1),
+                )
 
     async def set_voice_sample_count(self, pid: str, count: int) -> None:
         async with self._lock:
             s = self._sessions.get(pid)
             if s is not None:
-                s.evidence.voice_sample_count = count
+                # P0.B1 D1: VoiceEvidence frozen — rebind via replace().
+                s.evidence = dataclasses.replace(s.evidence, voice_sample_count=count)
 
     async def set_bootstrap_credits(self, pid: str, n: int) -> None:
         async with self._lock:
             s = self._sessions.get(pid)
             if s is not None:
-                s.evidence.bootstrap_credits = n
+                # P0.B1 D1: VoiceEvidence frozen — rebind via replace().
+                s.evidence = dataclasses.replace(s.evidence, bootstrap_credits=n)
 
     async def increment_bootstrap_credits(self, pid: str, *, cap: int) -> None:
         async with self._lock:
             s = self._sessions.get(pid)
             if s is not None:
-                s.evidence.bootstrap_credits = min(s.evidence.bootstrap_credits + 1, cap)
+                # P0.B1 D1: clamp min(+1, cap) preserved via replace().
+                s.evidence = dataclasses.replace(
+                    s.evidence,
+                    bootstrap_credits=min(s.evidence.bootstrap_credits + 1, cap),
+                )
 
     async def append_voice_conf(self, pid: str, *, conf: float) -> None:
         async with self._lock:

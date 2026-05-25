@@ -34,30 +34,28 @@ def setup_pipeline_stubs() -> None:
     """
     if "core.voice" not in sys.modules:
         _voice_stub = types.ModuleType("core.voice")
+        # P0.R6.Y D3 cascade: 4 voice fns become async (identify, diarize,
+        # embed, _diarize_ecapa_valley). Stubs migrate to AsyncMock so
+        # tests can `await` them directly. load_speaker_embedder +
+        # _load_pyannote_pipeline stay MagicMock (boot-time loaders, sync).
+        # _embedder stays MagicMock (model object, not callable function).
+        # P0.R6.Y D3 cascade: 4 voice fns become async (identify, diarize,
+        # embed, _diarize_ecapa_valley). Stubs migrate to AsyncMock so
+        # tests can `await` them directly. load_speaker_embedder stays
+        # MagicMock (boot-time loader, sync).
+        # P0.R6.Z D3.a/D5 RETIREMENT (2026-05-24): _load_pyannote_pipeline
+        # + _voice_diarize_executor + get_diarize_executor +
+        # shutdown_diarize_executor stubs retired — those production
+        # symbols no longer exist; pyannote pipeline lives subprocess-side
+        # at core/heavy_worker.py::_get_subprocess_pyannote(). _embedder
+        # stays MagicMock (model object, not callable function).
         _voice_stub.load_speaker_embedder = MagicMock(return_value=None)
-        _voice_stub.identify = MagicMock(return_value=(None, 0.0))
-        _voice_stub.diarize = MagicMock(return_value=[])
+        _voice_stub.identify = AsyncMock(return_value=(None, 0.0))
+        _voice_stub.diarize = AsyncMock(return_value=[])
         _voice_stub.get_diarize_stats = MagicMock(return_value={})
         _voice_stub._embedder = MagicMock()
-        _voice_stub._load_pyannote_pipeline = MagicMock(return_value=None)
-        _voice_stub.embed = MagicMock(return_value=None)
-        _voice_stub._voice_diarize_executor = None
-        _voice_stub._diarize_ecapa_valley = MagicMock(return_value=[])
-        def _get_diarize_executor_cf():
-            from concurrent.futures import ThreadPoolExecutor
-            _vsm = sys.modules["core.voice"]
-            if _vsm._voice_diarize_executor is None:
-                _vsm._voice_diarize_executor = ThreadPoolExecutor(
-                    max_workers=1, thread_name_prefix="voice-diarize"
-                )
-            return _vsm._voice_diarize_executor
-        def _shutdown_diarize_executor_cf():
-            _vsm = sys.modules["core.voice"]
-            if _vsm._voice_diarize_executor is not None:
-                _vsm._voice_diarize_executor.shutdown(wait=False)
-                _vsm._voice_diarize_executor = None
-        _voice_stub.get_diarize_executor = _get_diarize_executor_cf
-        _voice_stub.shutdown_diarize_executor = _shutdown_diarize_executor_cf
+        _voice_stub.embed = AsyncMock(return_value=None)
+        _voice_stub._diarize_ecapa_valley = AsyncMock(return_value=[])
         sys.modules["core.voice"] = _voice_stub
 
     if "core.audio" not in sys.modules:
@@ -71,23 +69,52 @@ def setup_pipeline_stubs() -> None:
             setattr(_audio_stub, _fn, MagicMock())
         _audio_stub.speak_stream = AsyncMock()
         _audio_stub._load_whisper = MagicMock()
-        def _transcribe_stub(audio):
+        async def _transcribe_stub(audio):
+            """P0.R6.X migration: production transcribe() is async + dispatches
+            via hw.run_heavy("whisper_transcribe", ...). Stub mirrors that
+            contract so tests can monkeypatch hw.run_heavy to inject text.
+            Falls back to the legacy _load_whisper path when hw.run_heavy is
+            unavailable (e.g. core.heavy_worker not yet imported) for
+            backward-compat with tests that still monkeypatch _load_whisper.
+            """
             import re as _re_tr
+            import sys as _sys_tr
             import time as _time_tr
             if len(audio) == 0:
                 return "", "en"
             _t0 = _time_tr.perf_counter()
-            model = _audio_stub._load_whisper()
-            segments, _ = model.transcribe(audio)
-            segments_list = list(segments)
-            good = [s for s in segments_list if s.no_speech_prob < 0.6 and s.avg_logprob > -1.5]
-            if not good:
-                candidates = [s for s in segments_list if s.no_speech_prob < 0.4]
-                if candidates:
-                    good = [min(candidates, key=lambda s: s.no_speech_prob)]
-                else:
-                    return "", "en"
-            text = " ".join(s.text for s in good).strip()
+            # New production path: dispatch through hw.run_heavy if available.
+            _hw_mod = _sys_tr.modules.get("core.heavy_worker")
+            text = None
+            if _hw_mod is not None and hasattr(_hw_mod, "run_heavy"):
+                try:
+                    _result = await _hw_mod.run_heavy(
+                        "whisper_transcribe",
+                        getattr(_hw_mod, "whisper_transcribe_worker", lambda *a, **k: ("", "en")),
+                        audio.tobytes() if hasattr(audio, "tobytes") else b"",
+                        audio.shape if hasattr(audio, "shape") else (0,),
+                        audio.dtype.name if hasattr(audio, "dtype") else "float32",
+                        language="en",
+                    )
+                    text, _lang = _result
+                except Exception:
+                    text = None
+            # Legacy fallback: use _load_whisper monkeypatch path. This keeps
+            # any older tests that monkeypatch _load_whisper working.
+            if text is None:
+                model = _audio_stub._load_whisper()
+                segments, _ = model.transcribe(audio)
+                segments_list = list(segments)
+                good = [s for s in segments_list if s.no_speech_prob < 0.6 and s.avg_logprob > -1.5]
+                if not good:
+                    candidates = [s for s in segments_list if s.no_speech_prob < 0.4]
+                    if candidates:
+                        good = [min(candidates, key=lambda s: s.no_speech_prob)]
+                    else:
+                        return "", "en"
+                text = " ".join(s.text for s in good).strip()
+            if not text:
+                return "", "en"
             if _re_tr.search(r"(.)\1{15,}", text):
                 print(f"[Audio] STT: (char-run hallucination filtered): '{text[:80]}'")
                 return "", "en"

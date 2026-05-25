@@ -26,6 +26,10 @@ import textwrap
 
 import pytest
 
+# P0.S7 D2 — module-level privacy_critical marker; all tests verify the
+# Kuzu v3 privacy_level edge attribute + find_shared_entities filtering.
+pytestmark = pytest.mark.privacy_critical
+
 
 # ── Phase 1 tests — schema + writers ───────────────────────────────────────
 

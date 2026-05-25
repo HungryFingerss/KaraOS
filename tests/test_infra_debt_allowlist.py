@@ -128,11 +128,14 @@ def test_xfail_decorators_align_with_allowlist():
     src = pathlib.Path(__file__).resolve().parent.parent / "test_pipeline.py"
     tree = ast.parse(src.read_text(encoding="utf-8"))
 
-    # Build name -> function-node lookup
-    funcs_by_name: dict[str, ast.FunctionDef] = {
+    # Build name -> function-node lookup.
+    # P0.R6.Y D3 cascade: some legacy tests became `async def` during the
+    # voice_mod migration. Treat both FunctionDef + AsyncFunctionDef as
+    # function nodes — xfail decorators work on both shapes identically.
+    funcs_by_name: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {
         n.name: n
         for n in ast.walk(tree)
-        if isinstance(n, ast.FunctionDef)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
 
     for test_id, _rationale in INFRA_DEBT_FAILURES:

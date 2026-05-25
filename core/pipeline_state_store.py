@@ -77,6 +77,18 @@ class PipelineStateStore(Store):
         self._last_kairos_at: float = 0.0
         self._last_silent_update: float = 0.0
 
+        # P0.R3 D3 — vision-loop watchdog state (heartbeat + degraded flag).
+        # Default heartbeat 0.0 means "never published"; watchdog's stale check
+        # (now - 0.0 > VISION_WATCHDOG_STALE_THRESHOLD_SECS) is True at startup
+        # until the vision loop fires its first heartbeat, but the watchdog's
+        # own startup-grace period (first sleep interval) covers the boot window.
+        self._vision_heartbeat_at: float = 0.0
+        self._vision_degraded: bool = False
+        # P0.R6 D4 — heavy-worker pool health observability.
+        # Keyed by task_name (e.g. "adaface_embed"); value ∈ {"healthy",
+        # "degraded", "unknown"}. Empty dict at boot before any pool spawn.
+        self._heavy_worker_status: dict[str, str] = {}
+
     # ── Peek helpers (sync, no lock) ────────────────────────────────────────
 
     def peek_cloud_snapshot(self) -> CloudSnapshot:
@@ -116,6 +128,39 @@ class PipelineStateStore(Store):
 
     def peek_active_room_participants(self) -> set:
         return set(self._active_room_participants)
+
+    def peek_vision_heartbeat_at(self) -> float:
+        """P0.R3 D2 — sync peeker for watchdog stale-detection."""
+        return self._vision_heartbeat_at
+
+    def peek_vision_degraded(self) -> bool:
+        """P0.R3 D3 — sync peeker for health.py + watchdog persists-branch."""
+        return self._vision_degraded
+
+    async def set_vision_heartbeat(self, ts: float) -> None:
+        """P0.R3 D1 — scalar setter for vision-loop heartbeat. No lock (CPython
+        GIL on float assignment is atomic; matches existing scalar-setter pattern
+        like `set_pipeline_state`)."""
+        self._vision_heartbeat_at = ts
+
+    async def set_vision_degraded(self, degraded: bool) -> None:
+        """P0.R3 D3 — scalar setter for vision-subsystem degraded flag."""
+        self._vision_degraded = degraded
+
+    def peek_heavy_worker_status(self) -> dict[str, str]:
+        """P0.R6 D4 — sync peeker; returns COPY so callers can't mutate the
+        underlying dict without going through `set_heavy_worker_status`.
+        """
+        return dict(self._heavy_worker_status)
+
+    async def set_heavy_worker_status(self, task_name: str, status: str) -> None:
+        """P0.R6 D4 — scalar setter for a single heavy-worker pool's status.
+
+        Valid values: ``"healthy"`` | ``"degraded"`` | ``"unknown"``. No lock
+        needed for single dict key assignment (CPython GIL atomicity matches
+        the existing scalar-setter pattern; `set_vision_degraded` precedent).
+        """
+        self._heavy_worker_status[task_name] = status
 
     def peek_last_face_seen(self) -> float:
         return self._last_face_seen

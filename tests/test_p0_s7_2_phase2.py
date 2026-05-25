@@ -18,6 +18,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+# P0.S7 D2 — module-level privacy_critical marker; all tests verify
+# P0.S7.2 κ multi-person assistant-turn extraction (cross-session memory
+# retrieval — the gap that motivated the Phase 3A arc).
+pytestmark = pytest.mark.privacy_critical
+
 
 # ────────────────────────────────────────────────────────────────────────────
 # Test 3 — triage admits multi-person assistant turns

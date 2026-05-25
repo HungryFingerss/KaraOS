@@ -87,6 +87,79 @@ _LOG_FILE = open(
     "w", encoding="utf-8", buffering=1,
 )
 
+
+def _check_terminal_output_size_cap(log_path: _pathlib.Path = _LOG_PATH) -> bool:
+    """P0.R13 D2 — rotate terminal_output.md when size exceeds TERMINAL_OUTPUT_SIZE_CAP_MB.
+
+    Q2 (a) RATIFIED 100MB default; Q4 (a) RATIFIED disk-monitor-poll cadence.
+
+    Closes current log, renames to timestamped archive (matches startup
+    archive shape via `_archive_terminal_output`), opens fresh log file.
+    Returns True if rotation fired; False if under cap OR rotation failed.
+
+    Called from dream-loop / disk-monitor poll cadence so size check is
+    amortized over session (NOT per-print which would dominate hot path).
+    """
+    global _LOG_FILE
+    try:
+        if not log_path.exists():
+            return False
+        size_mb = log_path.stat().st_size / (1024 * 1024)
+        from core.config import TERMINAL_OUTPUT_SIZE_CAP_MB  # noqa: PLC0415
+        if size_mb < TERMINAL_OUTPUT_SIZE_CAP_MB:
+            return False
+        # Close current file before rename (Windows file-lock semantics).
+        try:
+            _LOG_FILE.flush()
+            _LOG_FILE.close()
+        except Exception:
+            pass  # CLEANUP: best-effort flush before rotation
+        # Rotate via same archive shape as startup.
+        _archive_terminal_output(log_path)
+        _LOG_FILE = open(log_path, "w", encoding="utf-8", buffering=1)
+        print(
+            f"[Pipeline] terminal_output.md rotated at {size_mb:.1f}MB "
+            f"(cap={TERMINAL_OUTPUT_SIZE_CAP_MB}MB)",
+            flush=True,
+        )
+        return True
+    except Exception as e:
+        print(f"[Pipeline] terminal_output rotation failed: {e!r}", flush=True)
+        return False
+
+
+def _prune_old_terminal_archives(
+    retention_days: "int | None" = None,
+    log_dir: "_pathlib.Path | None" = None,
+) -> int:
+    """P0.R13 D2 — delete terminal_output_*.md archive files older than retention_days.
+
+    Q3 (a) RATIFIED 30-day archive retention default.
+
+    Pattern: ``terminal_output_YYYY-MM-DD_HHMMSS*.md`` (matches
+    ``_archive_terminal_output`` naming scheme). Returns count deleted.
+    Per-file unlink failures swallowed (best-effort cleanup; single corrupt
+    file shouldn't break the cleanup pass for the rest).
+    """
+    if retention_days is None:
+        from core.config import TERMINAL_OUTPUT_ARCHIVE_RETENTION_DAYS  # noqa: PLC0415
+        retention_days = TERMINAL_OUTPUT_ARCHIVE_RETENTION_DAYS
+    if log_dir is None:
+        log_dir = _LOG_PATH.parent
+    cutoff_ts = time.time() - retention_days * 86400
+    deleted = 0
+    try:
+        for path in log_dir.glob("terminal_output_*.md"):
+            try:
+                if path.stat().st_mtime < cutoff_ts:
+                    path.unlink()
+                    deleted += 1
+            except Exception:
+                pass  # CLEANUP: skip individual archive prune failures
+    except Exception:
+        pass  # CLEANUP: glob failure
+    return deleted
+
 # Non-blocking log queue: print() puts messages here; a daemon thread drains them.
 # This prevents terminal I/O from ever stalling the asyncio event loop.
 _log_q: "_log_queue_mod.SimpleQueue[tuple[object, str]]" = _log_queue_mod.SimpleQueue()
@@ -196,6 +269,7 @@ except Exception:
 
 import cv2
 import numpy as np
+import core.heavy_worker as hw  # P0.R6 D3: AdaFace embed routed via ProcessPoolExecutor worker pool
 from core.config import (
     CAMERA_INDEX, RECOGNITION_THRESHOLD,
     GREET_COOLDOWN, SELF_UPDATE_THRESHOLD, SELF_UPDATE_COOLDOWN,
@@ -373,12 +447,24 @@ _SHUTDOWN_QUESTION_RE = re.compile(
 
 # Spoken fallback when LLM calls a tool but returns no text.
 # Every tool MUST have a non-empty fallback to prevent silent turns.
+# Coverage enforced at pipeline.run() entry by the P0.S6 D3 startup assertion
+# (registry equality with brain.TOOLS + non-empty stripped value gate).
 _TOOL_FALLBACKS: dict[str, str] = {
-    "update_person_name":    "Got it.",
-    "update_system_name":    "What name would you like to give me?",
-    "shutdown":              "Goodbye!",
-    "search_web":            "One moment.",
-    "search_memory":         "Let me think about that.",
+    "update_person_name":       "Got it.",
+    "update_system_name":       "What name would you like to give me?",
+    "shutdown":                 "Goodbye!",
+    "search_web":               "One moment.",
+    "search_memory":            "Let me think about that.",
+    # P0.S6 D3 — dispute-handler tools acknowledge-then-stay-quiet (Session 28
+    # Issue A precedent). The dispute state machine + UI surface the dispute
+    # itself; the spoken fallback should not commit to a position the dispute
+    # hasn't resolved yet.
+    "report_identity_mismatch": "Got it.",
+    # P0.S6 D3 — read-only query tool; mirrors search_memory's fallback for
+    # UX symmetry (the user shouldn't be able to tell from the fallback
+    # whether the brain called per-person search_memory or per-room
+    # search_room_memory).
+    "search_room_memory":       "Let me think about that.",
 }
 
 
@@ -600,9 +686,16 @@ def _nfkc_lower(s: "str | None") -> str:
     Without normalization the grounding check would compare two different
     code points as if they were the same — a classic spoofing surface.
     NFKC collapses compatibility variants; casefold handles case-insensitive
-    comparison more robustly than lower() for Unicode."""
-    import unicodedata as _ud
-    return _ud.normalize("NFKC", (s or "")).casefold()
+    comparison more robustly than lower() for Unicode.
+
+    P0.S5 refactor (2026-05-20): NFKC step delegates to
+    :func:`core.sanitize._nfkc_only` so there is a single source of truth
+    for NFKC normalization across the grounding-gate (this site) and the
+    LLM-input wrap (:func:`core.sanitize.wrap_user_input`). Casefold stays
+    here — only the grounding-gate use case wants case-insensitive
+    comparison; LLM input preserves case via the sibling helper."""
+    from core.sanitize import _nfkc_only
+    return _nfkc_only(s or "").casefold()
 
 
 def _strip_im_contraction(s: "str | None") -> str:
@@ -2250,8 +2343,8 @@ async def _accumulate_voice(
             )
         return
 
-    v_pid, v_score = await loop.run_in_executor(
-        None, voice_mod.identify, audio, _voice_gallery_store.peek_all_gallery(), VOICE_RECOGNITION_THRESHOLD
+    v_pid, v_score = await voice_mod.identify(
+        audio, _voice_gallery_store.peek_all_gallery(), VOICE_RECOGNITION_THRESHOLD
     )
     # Track the latest voice self-match in evidence regardless of accumulation outcome.
     if v_pid == person_id and v_score > 0.0:
@@ -2281,7 +2374,7 @@ async def _accumulate_voice(
         )
         return
 
-    emb = await loop.run_in_executor(None, voice_mod.embed, audio)
+    emb = await voice_mod.embed(audio)
     if emb is None:
         return
     added = await loop.run_in_executor(
@@ -2362,6 +2455,274 @@ def _classify_anti_spoof_verdict(
     return (False, score, ANTI_SPOOF_REASON_REJECTED)
 
 
+# P0.R3 D2/D4 — module-level vision task references for watchdog supervision.
+# `_vision_task` is the currently-supervised task; mutated by `_restart_vision_task()`
+# on respawn. `_vision_watchdog_task` is the supervisor itself (started AFTER
+# vision task at run() startup; cancelled BEFORE vision task at shutdown to
+# prevent the watchdog respawning vision during cleanup — D5 ordering invariant).
+# The 5 _vision_*_ref globals are captured at run() startup so D4 restart helper
+# can respawn `_background_vision_loop` with the same arguments without
+# threading them through the watchdog signature.
+_vision_task: "asyncio.Task | None" = None
+_vision_watchdog_task: "asyncio.Task | None" = None
+_vision_camera_ref: "Camera | None" = None
+_vision_detector_ref: "FaceDetector | None" = None
+_vision_embedder_ref: "FaceEmbedder | None" = None
+_vision_temporal_buffer_ref: "TemporalEmbeddingBuffer | None" = None
+_vision_db_ref: "FaceDB | None" = None
+
+# P0.R8 D6 — heavy-worker watchdog supervises the 4 pools (AdaFace + Whisper
+# + ECAPA + Pyannote) created by the P0.R6.* arc. Spawned in run() AFTER
+# vision_watchdog; cancelled FIRST at shutdown per ORDERING INVARIANT so
+# it doesn't observe pool shutdown as crash events. Loop body uses bare
+# `while True:` per P0.R3 actual at pipeline.py:2421; cancellation
+# propagates via CancelledError through `await asyncio.sleep(...)` and
+# breaks the loop cleanly at the shutdown explicit `.cancel()` +
+# `wait_for(timeout=1.0)` pattern.
+_heavy_worker_watchdog_task: "asyncio.Task | None" = None
+
+
+async def _vision_watchdog_loop() -> None:
+    """P0.R3 D2 — supervises _background_vision_loop liveness via heartbeat.
+
+    Polls every VISION_WATCHDOG_INTERVAL_SECS; if heartbeat staleness exceeds
+    VISION_WATCHDOG_STALE_THRESHOLD_SECS, invokes the restart helper.
+    On restart failure → set vision_degraded; subsequent stale detections log
+    [Vision] stale persists + no respawn (next successful heartbeat clears).
+    """
+    from core.config import VISION_WATCHDOG_INTERVAL_SECS, VISION_WATCHDOG_STALE_THRESHOLD_SECS
+    while True:
+        await asyncio.sleep(VISION_WATCHDOG_INTERVAL_SECS)
+        _now = time.time()
+        _heartbeat_at = _pipeline_state_store.peek_vision_heartbeat_at()
+        _staleness = _now - _heartbeat_at
+        if _staleness < VISION_WATCHDOG_STALE_THRESHOLD_SECS:
+            continue
+        # Staleness detected. Two branches per Q7 absorption.
+        if _pipeline_state_store.peek_vision_degraded():
+            # Subsequent stale-detection while degraded already set.
+            # Log + no-op for restart. Next successful heartbeat naturally clears degraded.
+            print(f"[Vision] stale persists (vision_degraded set; awaiting heartbeat recovery; staleness={_staleness:.1f}s)")
+            continue
+        # First stale detection (degraded not yet set). Invoke restart helper.
+        print(f"[Vision] stale detected (staleness={_staleness:.1f}s; restarting vision task)")
+        await _restart_vision_task()
+
+
+async def _heavy_worker_watchdog_loop() -> None:
+    """P0.R8 D3 — supervises the 4 heavy-worker pools (AdaFace + Whisper +
+    ECAPA + Pyannote) for subprocess crash bursts.
+
+    Polls every ``HEAVY_WORKER_WATCHDOG_INTERVAL_SECS``; for each pool,
+    checks crash count within ``HEAVY_WORKER_RESTART_BURST_WINDOW_SECS``
+    rolling window via ``hw.count_recent_crashes(task_name, window)``.
+    When count >= ``HEAVY_WORKER_RESTART_BURST_THRESHOLD`` AND the per-pool
+    ``_alert_armed`` flag is True: marks pool "degraded" via
+    ``_pipeline_state_store.set_heavy_worker_status`` + dispatches
+    ``WatchdogAgent.report_heavy_worker_burst`` alert + disarms the flag
+    (one alert per burst event). Re-arms + clears "degraded" when crash
+    count drops below threshold within the window (automatic recovery).
+
+    Mirror of P0.R3 ``_vision_watchdog_loop`` pattern (pipeline.py:2412):
+    bare ``while True:`` body + cancellation propagates via
+    ``CancelledError`` through ``await asyncio.sleep(...)`` at the
+    shutdown explicit ``.cancel()`` + ``asyncio.wait_for(..., timeout=1.0)``
+    in the pipeline.run() finally block.
+
+    ProcessPoolExecutor auto-respawns subprocesses on next submit() after
+    BrokenProcessPool; no explicit restart helper needed (materially
+    simpler than P0.R3 which needed ``_restart_vision_task`` for vision-
+    task lifecycle management — pool restart is the executor's
+    responsibility, not the watchdog's).
+    """
+    import core.heavy_worker as hw  # noqa: PLC0415
+    from core.config import (  # noqa: PLC0415
+        HEAVY_WORKER_WATCHDOG_INTERVAL_SECS,
+        HEAVY_WORKER_RESTART_BURST_THRESHOLD,
+        HEAVY_WORKER_RESTART_BURST_WINDOW_SECS,
+    )
+    # Per-pool alert-armed flag; re-arms when crash count drops below
+    # threshold. Initialized lazily as we encounter each pool name (default
+    # True so the first breach fires an alert).
+    _alert_armed: "dict[str, bool]" = {}
+    while True:
+        await asyncio.sleep(HEAVY_WORKER_WATCHDOG_INTERVAL_SECS)
+        # Snapshot pool names; the registry can grow at runtime as new
+        # task_name values get minted via get_or_create_pool().
+        for task_name in list(hw._HEAVY_WORKER_POOLS):
+            crash_count = hw.count_recent_crashes(
+                task_name, HEAVY_WORKER_RESTART_BURST_WINDOW_SECS
+            )
+            armed = _alert_armed.get(task_name, True)
+            if crash_count >= HEAVY_WORKER_RESTART_BURST_THRESHOLD:
+                if armed:
+                    await _pipeline_state_store.set_heavy_worker_status(
+                        task_name, "degraded"
+                    )
+                    if _brain_orchestrator is not None:
+                        _brain_orchestrator.report_heavy_worker_burst(
+                            task_name=task_name,
+                            crash_count=crash_count,
+                            window_secs=HEAVY_WORKER_RESTART_BURST_WINDOW_SECS,
+                        )
+                    print(
+                        f"[HeavyWorker] WATCHDOG: pool '{task_name}' degraded — "
+                        f"{crash_count} crashes in last "
+                        f"{HEAVY_WORKER_RESTART_BURST_WINDOW_SECS:.0f}s"
+                    )
+                    _alert_armed[task_name] = False  # disarm until recovery
+            else:
+                # Crash count dropped below threshold → re-arm + clear degraded.
+                if not armed:
+                    await _pipeline_state_store.set_heavy_worker_status(
+                        task_name, "healthy"
+                    )
+                    print(
+                        f"[HeavyWorker] WATCHDOG: pool '{task_name}' recovered — "
+                        f"crash count {crash_count} < threshold "
+                        f"{HEAVY_WORKER_RESTART_BURST_THRESHOLD}"
+                    )
+                    _alert_armed[task_name] = True
+
+
+# P0.R10 D3 — audio device watchdog supervises mic + speaker channels for
+# device failure bursts. Spawned in run() AFTER heavy_worker_watchdog per
+# consistent ordering with P0.R8 + P0.R3 precedents. Cancelled BEFORE
+# heavy_worker_watchdog at shutdown per reverse-order invariant. Loop body
+# uses bare `while True:` per P0.R3 actual at pipeline.py:2421 + P0.R8
+# mirror at :2475 (CODE-TEMPLATE-MISIDENTIFICATION sub-shape preventive
+# application — verified canonical reference shape).
+_audio_device_watchdog_task: "asyncio.Task | None" = None
+
+
+async def _audio_device_watchdog_loop() -> None:
+    """P0.R10 D3 — audio device watchdog. Polls per-channel failure burst
+    counter; on threshold breach: dispatches WatchdogAgent.report_audio_device_burst
+    alert + disarms re-arm flag (one alert per burst event); re-arms when
+    failure rate drops below threshold.
+
+    Q4 (b) RATIFIED: forensic capture via persist_crash_diagnostic ONLY on
+    burst-threshold breach (NOT on every individual failure event — would
+    spam crash_logs/ directory on flaky USB scenarios).
+    """
+    import core.audio as _audio_mod  # noqa: PLC0415
+    from core.config import (  # noqa: PLC0415
+        AUDIO_DEVICE_WATCHDOG_INTERVAL_SECS,
+        AUDIO_DEVICE_BURST_THRESHOLD,
+        AUDIO_DEVICE_BURST_WINDOW_SECS,
+    )
+    # Per-channel alert-armed flag; re-arms when failure rate drops below
+    # threshold (default True so first breach fires an alert).
+    _alert_armed: "dict[str, bool]" = {"mic": True, "speaker": True}
+    while True:
+        await asyncio.sleep(AUDIO_DEVICE_WATCHDOG_INTERVAL_SECS)
+        for channel in ("mic", "speaker"):
+            failure_count = _audio_mod.count_recent_audio_failures(
+                channel, AUDIO_DEVICE_BURST_WINDOW_SECS
+            )
+            armed = _alert_armed.get(channel, True)
+            if failure_count >= AUDIO_DEVICE_BURST_THRESHOLD:
+                if armed:
+                    if _brain_orchestrator is not None:
+                        _brain_orchestrator.report_audio_device_burst(
+                            channel=channel,
+                            failure_count=failure_count,
+                            window_secs=AUDIO_DEVICE_BURST_WINDOW_SECS,
+                        )
+                    # Q4 (b) — forensic capture on burst-threshold breach only.
+                    try:
+                        from core.crash_logs import persist_crash_diagnostic  # noqa: PLC0415
+                        _exc = RuntimeError(
+                            f"Audio device '{channel}' burst threshold breached: "
+                            f"{failure_count} failures in "
+                            f"{AUDIO_DEVICE_BURST_WINDOW_SECS:.0f}s"
+                        )
+                        persist_crash_diagnostic(
+                            f"audio_{channel}_device",
+                            _exc,
+                            f"audio device burst (channel={channel}, count={failure_count})",
+                            failure_count,
+                        )
+                    except Exception:  # OPTIONAL: forensic capture failure
+                        pass
+                    print(
+                        f"[Audio-Watchdog] channel '{channel}' degraded — "
+                        f"{failure_count} failures in last "
+                        f"{AUDIO_DEVICE_BURST_WINDOW_SECS:.0f}s"
+                    )
+                    _alert_armed[channel] = False
+            else:
+                # Failure count dropped below threshold → re-arm.
+                if not armed:
+                    print(
+                        f"[Audio-Watchdog] channel '{channel}' recovered — "
+                        f"failure count {failure_count} < threshold "
+                        f"{AUDIO_DEVICE_BURST_THRESHOLD}"
+                    )
+                    _alert_armed[channel] = True
+
+
+async def _restart_vision_task() -> None:
+    """P0.R3 D4 — supervised restart of _background_vision_loop.
+
+    Cancels current task, spawns new task, waits for first heartbeat advance.
+    On restart success (heartbeat advances past pre-restart value within
+    VISION_WATCHDOG_RESTART_TIMEOUT_SECS) → clear vision_degraded.
+    On restart fail (exception during spawn OR heartbeat unchanged after timeout)
+    → set vision_degraded + log fail-loud line. Q4 (c) combined criterion.
+
+    Critical invariant — "keep audio alive": this helper cancels ONLY the
+    `_vision_task` global. Audio loop is a separate task; never touched.
+    """
+    from core.config import VISION_WATCHDOG_RESTART_TIMEOUT_SECS
+    global _vision_task
+    _prev_heartbeat = _pipeline_state_store.peek_vision_heartbeat_at()
+
+    # Cancel current task gracefully.
+    try:
+        if _vision_task is not None and not _vision_task.done():
+            _vision_task.cancel()
+            await asyncio.gather(_vision_task, return_exceptions=True)
+    except Exception as e:
+        print(f"[Vision] watchdog: existing task cancellation error: {e!r}")
+
+    # Respawn new task. Q4 (c): catch exception path explicitly.
+    try:
+        _vision_task = asyncio.get_running_loop().create_task(
+            _background_vision_loop(
+                _vision_camera_ref,
+                _vision_detector_ref,
+                _vision_embedder_ref,
+                _vision_temporal_buffer_ref,
+                _vision_db_ref,
+            )
+        )
+    except Exception as e:
+        print(f"[Vision] watchdog: respawn raised: {e!r}; marking vision_degraded")
+        loop = asyncio.get_running_loop()
+        loop.create_task(_pipeline_state_store.set_vision_degraded(True))
+        return
+
+    # Wait for heartbeat advance (Q4 (c) heartbeat-timeout criterion).
+    _deadline = time.time() + VISION_WATCHDOG_RESTART_TIMEOUT_SECS
+    while time.time() < _deadline:
+        await asyncio.sleep(1.0)
+        if _pipeline_state_store.peek_vision_heartbeat_at() > _prev_heartbeat:
+            # Restart succeeded. Clear degraded if previously set.
+            if _pipeline_state_store.peek_vision_degraded():
+                loop = asyncio.get_running_loop()
+                loop.create_task(_pipeline_state_store.set_vision_degraded(False))
+                print(f"[Vision] watchdog: restart success; vision_degraded cleared")
+            else:
+                print(f"[Vision] watchdog: restart success")
+            return
+
+    # Heartbeat did not advance within timeout. Set degraded.
+    print(f"[Vision] watchdog: restart timeout (heartbeat unchanged after {VISION_WATCHDOG_RESTART_TIMEOUT_SECS:.0f}s); marking vision_degraded")
+    loop = asyncio.get_running_loop()
+    loop.create_task(_pipeline_state_store.set_vision_degraded(True))
+
+
 async def _background_vision_loop(
     camera: Camera,
     detector: "FaceDetector",
@@ -2380,6 +2741,11 @@ async def _background_vision_loop(
     """
     loop = asyncio.get_running_loop()
     while True:
+        # P0.R3 D1 — heartbeat update at iteration start (BEFORE camera.read).
+        # Fire-and-forget via loop.create_task per existing sync-mutator pattern.
+        # Race-safe: write fires from main loop, never from executor thread.
+        loop.create_task(_pipeline_state_store.set_vision_heartbeat(time.time()))
+
         frame = await loop.run_in_executor(None, camera.read)
         if frame is None:
             await asyncio.sleep(0.05)
@@ -2437,7 +2803,23 @@ async def _background_vision_loop(
                     _yaw = estimate_yaw_from_landmarks(_det.landmarks, _det.bbox)
                     if abs(_yaw) > 60.0:
                         continue
-                _raw_emb = await loop.run_in_executor(None, embedder.embed, _crop)
+                # P0.R6 D3 (Site 1, line 2569): AdaFace embed routed via
+                # ProcessPoolExecutor worker pool (`hw.run_heavy(...)`) instead
+                # of the default ThreadPoolExecutor (`loop.run_in_executor(None, ...)`)
+                # so heavy C-extension inference runs in a separate subprocess
+                # — non-blocking with respect to the asyncio loop's other
+                # coroutines. P0.R1 D1 None-return fallback preserved.
+                _raw_emb_bytes = await hw.run_heavy(
+                    "adaface_embed",
+                    hw.adaface_embed_worker,
+                    _crop.tobytes(),
+                    _crop.shape,
+                )
+                _raw_emb = (
+                    np.frombuffer(_raw_emb_bytes, dtype=np.float32)
+                    if _raw_emb_bytes is not None
+                    else None
+                )
                 _emb = temporal_buffer.add_and_pool(_det.bbox, _raw_emb, track_id=_det.track_id)
 
                 # P0.S1 Phase 2 — classify anti-spoof verdict against the SAME
@@ -2531,7 +2913,18 @@ async def _background_vision_loop(
                 _q2 = face_quality_score(_crop)
                 if _q2 < FACE_QUALITY_RECOGNITION:
                     continue
-                _raw_emb2 = await loop.run_in_executor(None, embedder.embed, _crop)
+                # P0.R6 D3 (Site 2, was line 2663): AdaFace embed via worker pool.
+                _raw_emb2_bytes = await hw.run_heavy(
+                    "adaface_embed",
+                    hw.adaface_embed_worker,
+                    _crop.tobytes(),
+                    _crop.shape,
+                )
+                _raw_emb2 = (
+                    np.frombuffer(_raw_emb2_bytes, dtype=np.float32)
+                    if _raw_emb2_bytes is not None
+                    else None
+                )
                 # V3: pool across frames for stability (same buffer as primary loop)
                 _emb2 = temporal_buffer.add_and_pool(_det.bbox, _raw_emb2, track_id=_det.track_id)
 
@@ -3184,6 +3577,22 @@ async def _dream_loop(db: "FaceDB") -> None:
                         print(f"[Dream] Conversation archive: {n_archived} turn(s) moved to archive DB")
                 except Exception as _e:
                     print(f"[Dream] conversation archive failed: {_e!r}")
+                # P0.R12 D1 — prune old rows from archive DB after archival;
+                # bounds archive growth at CONVERSATION_ARCHIVE_RETENTION_DAYS
+                # (~1 year default per Q1 (a) RATIFIED).
+                try:
+                    n_pruned = await loop.run_in_executor(
+                        None,
+                        db.prune_old_archive_conversation_log,
+                    )
+                    if n_pruned:
+                        print(
+                            f"[Dream] Archive-prune: {n_pruned} conversation_log row(s) "
+                            f"deleted from archive (older than "
+                            f"{config.CONVERSATION_ARCHIVE_RETENTION_DAYS}d)"
+                        )
+                except Exception as _e:
+                    print(f"[Dream] archive prune failed: {_e!r}")  # CLEANUP: best-effort
             if config.WAL_CHECKPOINT_ENABLED:
                 try:
                     db.checkpoint_wal()
@@ -3193,6 +3602,41 @@ async def _dream_loop(db: "FaceDB") -> None:
                     print("[Dream] WAL checkpoint complete (faces.db, brain.db, classifier.db)")
                 except Exception as _wal_e:
                     print(f"[Dream] WAL checkpoint error: {_wal_e!r}")
+            # P0.R11 D4 — prune persisted crash diagnostic JSON files older than
+            # CRASH_LOG_RETENTION_DAYS. Matches archive_old_conversation_log
+            # cadence (dream-loop trigger); per-file unlink failures swallowed
+            # internally so a single corrupt file doesn't break the cleanup pass.
+            try:
+                from core.crash_logs import prune_old_crash_logs
+                from core.config import CRASH_LOG_RETENTION_DAYS
+                _crash_removed = await loop.run_in_executor(
+                    None, prune_old_crash_logs, CRASH_LOG_RETENTION_DAYS
+                )
+                if _crash_removed > 0:
+                    print(
+                        f"[Dream] CrashLogs prune: {_crash_removed} file(s) "
+                        f"older than {CRASH_LOG_RETENTION_DAYS}d removed"
+                    )
+            except Exception as _e:
+                print(f"[Dream] crash-log prune failed: {_e!r}")
+            # P0.R13 D2 — terminal_output.md size cap rotation + archive
+            # retention pruning. Matches P0.R11 D4 crash-log prune cadence
+            # (dream-loop trigger; amortized cleanup, not per-print hot path).
+            try:
+                _rotated = await loop.run_in_executor(
+                    None, _check_terminal_output_size_cap
+                )
+                _archives_pruned = await loop.run_in_executor(
+                    None, _prune_old_terminal_archives
+                )
+                if _archives_pruned > 0:
+                    print(
+                        f"[Dream] terminal_output archive prune: "
+                        f"{_archives_pruned} file(s) older than "
+                        f"{config.TERMINAL_OUTPUT_ARCHIVE_RETENTION_DAYS}d removed"
+                    )
+            except Exception as _e:
+                print(f"[Dream] terminal output hygiene failed: {_e!r}")  # CLEANUP: best-effort
             _last_dream_at = time.time()
             _last_dream_run_at = time.time()
         # Smart sleep: wait out remaining cooldown to avoid 60× useless wakeups per hour.
@@ -3242,9 +3686,16 @@ async def _emit_health(loop: asyncio.AbstractEventLoop) -> None:
 
 
 async def _health_log_loop(loop: asyncio.AbstractEventLoop) -> None:
-    """Periodic health + disk log. First emission fires immediately at boot."""
+    """Periodic health + disk log. First emission fires immediately at boot.
+
+    P0.R2 D4: piggybacks `_vision_provider_state.maybe_retry_cuda(time.time())`
+    call after each health snapshot to attempt CUDA restoration if the
+    CPU-fallback timer (VISION_CUDA_RETRY_M_MINUTES) has elapsed.
+    """
     from core.config import HEALTH_LOG_INTERVAL_SECS
+    from core import vision_provider_state as _vps
     await _emit_health(loop)
+    _vps.maybe_retry_cuda(time.time())
     while True:
         try:
             await asyncio.wait_for(_shutdown_event.wait(), timeout=HEALTH_LOG_INTERVAL_SECS)
@@ -3252,6 +3703,7 @@ async def _health_log_loop(loop: asyncio.AbstractEventLoop) -> None:
         except asyncio.TimeoutError:
             pass
         await _emit_health(loop)
+        _vps.maybe_retry_cuda(time.time())
 
 
 def _detect_yes_no(text: str) -> str:
@@ -3335,6 +3787,10 @@ async def first_boot_flow(camera: Camera, detector: FaceDetector,
             spoof_blocked = True
             continue
         embedding = embedder.embed(face_crop)
+        # P0.R1 D1: embed() now returns None on cascading CUDA+CPU failure.
+        if embedding is None:
+            print("[Pipeline] first_boot_flow: face embedding failed, skipping this enrollment frame")
+            continue
         pending_embeddings.append((embedding, _fb_verdict))
         if photo_frame is None:
             photo_frame = frame
@@ -3408,6 +3864,10 @@ async def enrollment_flow(name: str, camera: Camera, detector: FaceDetector,
             continue
 
         embedding = embedder.embed(face_crop)
+        # P0.R1 D1: embed() now returns None on cascading CUDA+CPU failure.
+        if embedding is None:
+            print("[Pipeline] enrollment_flow: face embedding failed, skipping this enrollment frame")
+            continue
         pending_embeddings.append((embedding, _en_verdict))
         if photo_frame is None:
             photo_frame = frame  # save first good frame for photo
@@ -6007,20 +6467,11 @@ async def conversation_turn(
     return ("continue", None)
 
 
-async def _warm_pyannote_via_dedicated_executor(
-    loop: asyncio.AbstractEventLoop, loader
-) -> None:
-    """Warm pyannote on Item 13's dedicated executor thread.
-
-    Loading on the same thread that serves diarize() calls means any
-    thread-local CUDA context is set up before the first real call.
-    """
-    try:
-        t = time.time()
-        await loop.run_in_executor(voice_mod.get_diarize_executor(), loader)
-        print(f"[Warmup] pyannote ready — {time.time() - t:.2f}s")
-    except Exception as e:
-        print(f"[Warmup] pyannote failed (non-fatal): {e!r}")
+# P0.R6.Z D3.c RETIREMENT (2026-05-24): `_warm_pyannote_via_dedicated_executor`
+# retired. Pyannote pipeline now lives subprocess-side at
+# `core/heavy_worker.py::_get_subprocess_pyannote()`; main-process warm-up
+# happens via `hw.get_or_create_pool("pyannote_diarize")` in the run() startup
+# 4-pool block (alongside AdaFace + Whisper + ECAPA).
 
 
 async def _warmup_models(loop: asyncio.AbstractEventLoop) -> None:
@@ -6028,7 +6479,8 @@ async def _warmup_models(loop: asyncio.AbstractEventLoop) -> None:
 
     Already-eager models (RetinaFace, AdaFace, MiniFASNet, Whisper, Kokoro,
     Emotion) are not touched — they're loaded earlier in run().
-    E5 has its own warmup block (S120); this covers pyannote + ECAPA.
+    E5 has its own warmup block (S120); this covers ECAPA only post-P0.R6.Z
+    (pyannote moved to subprocess pool warm-up in run()).
     """
     print("[Warmup] starting model warmup pass...")
     overall_t0 = time.time()
@@ -6042,9 +6494,11 @@ async def _warmup_models(loop: asyncio.AbstractEventLoop) -> None:
             print(f"[Warmup] {label} failed (non-fatal): {e!r}")
 
     tasks = [
-        # Pyannote diarization — lazy per S88; uses Item 13's dedicated executor
-        _warm_pyannote_via_dedicated_executor(loop, voice_mod._load_pyannote_pipeline),
-        # ECAPA speaker embedder — load_speaker_embedder is idempotent if already loaded
+        # ECAPA speaker embedder — load_speaker_embedder is idempotent if
+        # already loaded. P0.R6.Y migrated ECAPA inference to subprocess;
+        # this main-process loader is now a no-op for the inference path
+        # but kept for backward compat with the few remaining main-process
+        # _embedder references in core/voice.py.
         _warm("ECAPA", voice_mod.load_speaker_embedder),
     ]
 
@@ -6096,6 +6550,93 @@ async def run():
         f"TOOL_PRIVILEGES missing entries for: {sorted(_missing)}. "
         f"Every tool in brain.TOOLS must have a privilege row in core/config.py — "
         f"add them before launch."
+    )
+
+    # ── Intent-gate registry integrity check (P0.S6 D2) ───────────────────────
+    # ORDERING INVARIANT: this assertion MUST run AFTER the TOOL_PRIVILEGES
+    # check above. Privilege misconfiguration is the more common shape (missing
+    # row in TOOL_PRIVILEGES blocks ALL callers); surfacing it first gives the
+    # operator the right error. Intent-gate misconfiguration is the secondary
+    # check (a tool in TOOLS without a TOOL_INTENT_MAP entry would slip past
+    # classifier gating but still dispatch privilege-correctly).
+    #
+    # ORDERING vs P0.S3: this assertion runs AFTER validate_required_env() so
+    # env-var errors surface first (P0.S3 ordering anchor).
+    #
+    # Spec: tests/p0_s6_intent_gates_plan_v1.md §1.D2 (ordering convention
+    # locked at the call site so future maintainers grepping "ORDERING
+    # INVARIANT" find all three invariants — P0.S2 dashboard, P0.S3 env, P0.S6
+    # intent-gate — at the surface they affect).
+    _intent_known = set(config.TOOL_INTENT_MAP) | set(config.INTENT_OPTIONAL_TOOLS)
+    _intent_missing = _tool_names - _intent_known
+    _intent_orphans = _intent_known - _tool_names
+    assert not _intent_missing, (
+        f"Tools missing from TOOL_INTENT_MAP ∪ INTENT_OPTIONAL_TOOLS: "
+        f"{sorted(_intent_missing)}. Add to TOOL_INTENT_MAP if it needs "
+        f"classifier-gate verification, OR to INTENT_OPTIONAL_TOOLS if "
+        f"intentionally exempt (see core/config.py rationale block)."
+    )
+    assert not _intent_orphans, (
+        f"Tools in intent registry but not in brain.TOOLS: "
+        f"{sorted(_intent_orphans)}. Remove the registry entry OR re-add to "
+        f"brain.TOOLS."
+    )
+
+    # ── Fallback registry integrity check (P0.S6 D3) ──────────────────────────
+    # ORDERING INVARIANT: this assertion MUST run AFTER the intent-gate check
+    # above. Intent-gate misconfiguration is the security-relevant shape;
+    # fallback-registry misconfiguration is a UX shape (silent turn when the
+    # LLM emits zero content alongside a tool call) — surface security errors
+    # first.
+    #
+    # Spec: tests/p0_s6_intent_gates_plan_v1.md §1.D3 (registry covers every
+    # tool with a non-empty stripped fallback string; the comment block at
+    # pipeline.py:375 warns that "Every tool MUST have a non-empty fallback
+    # to prevent silent turns" — this assertion enforces it structurally).
+    _fb_missing = _tool_names - set(_TOOL_FALLBACKS)
+    _fb_orphans = set(_TOOL_FALLBACKS) - _tool_names
+    _fb_degenerate = {k for k, v in _TOOL_FALLBACKS.items() if not v.strip()}
+    assert not _fb_missing, (
+        f"_TOOL_FALLBACKS missing entries for: {sorted(_fb_missing)}. "
+        f"Every tool in brain.TOOLS must have a fallback string in "
+        f"pipeline.py:376 to prevent silent turns when the LLM emits zero "
+        f"content alongside the tool call."
+    )
+    assert not _fb_orphans, (
+        f"_TOOL_FALLBACKS has entries for tools not in brain.TOOLS: "
+        f"{sorted(_fb_orphans)}. Remove the registry entry OR re-add to "
+        f"brain.TOOLS."
+    )
+    assert not _fb_degenerate, (
+        f"_TOOL_FALLBACKS has empty/whitespace-only fallback strings for: "
+        f"{sorted(_fb_degenerate)}. Fallbacks MUST be non-empty after "
+        f"str.strip() to actually surface a spoken response."
+    )
+
+    # ── Handler registry integrity check (P0.S6 D4) ───────────────────────────
+    # ORDERING INVARIANT: this assertion MUST run AFTER the fallback check
+    # above. Handler-registry misconfiguration is the most operationally
+    # visible shape (a tool the LLM calls would hit `handler = None` and
+    # short-circuit the dispatch); fallback-registry checks fail-loud earlier.
+    #
+    # Spec: tests/p0_s6_intent_gates_plan_v1.md §1.D4 (introduced at Plan v1
+    # Pass-2 grep when architect surfaced _TOOL_HANDLERS as the 4th tool
+    # registry; INLINE_DISPATCHED_TOOLS is the companion set covering tools
+    # consumed via inline ask_stream callbacks instead of _execute_tool
+    # dispatch).
+    _handler_known = set(_TOOL_HANDLERS) | set(config.INLINE_DISPATCHED_TOOLS)
+    _handler_missing = _tool_names - _handler_known
+    _handler_orphans = set(_TOOL_HANDLERS) - _tool_names
+    assert not _handler_missing, (
+        f"Tools missing from _TOOL_HANDLERS ∪ INLINE_DISPATCHED_TOOLS: "
+        f"{sorted(_handler_missing)}. Add to _TOOL_HANDLERS if dispatched "
+        f"through _execute_tool, OR to INLINE_DISPATCHED_TOOLS if consumed "
+        f"via inline ask_stream callbacks (see core/config.py rationale block)."
+    )
+    assert not _handler_orphans, (
+        f"_TOOL_HANDLERS has entries for tools not in brain.TOOLS: "
+        f"{sorted(_handler_orphans)}. Remove the handler entry OR re-add "
+        f"to brain.TOOLS."
     )
 
     # ── Shutdown event (must be created inside the running loop) ──────────────
@@ -6240,9 +6781,92 @@ async def run():
     # Single-reader design: from this point on, background loop is the ONLY camera reader.
     # Main loop reads from _vision_frame_store.peek_frame (written by this task).
     # Eliminates thread-unsafe concurrent cv2.VideoCapture reads on Windows.
-    _vis_bg_task = asyncio.create_task(
+    #
+    # P0.R3 D5 — capture refs at module scope BEFORE spawning the task, so D4
+    # `_restart_vision_task()` can respawn `_background_vision_loop` with the
+    # same arguments. `_vision_task` replaces the prior `_vis_bg_task` local
+    # so the watchdog can mutate it on respawn.
+    global _vision_task, _vision_watchdog_task
+    global _vision_camera_ref, _vision_detector_ref, _vision_embedder_ref
+    global _vision_temporal_buffer_ref, _vision_db_ref
+    _vision_camera_ref = camera
+    _vision_detector_ref = detector
+    _vision_embedder_ref = embedder
+    _vision_temporal_buffer_ref = temporal_buffer
+    _vision_db_ref = db
+    # P0.R6 D5 — warm up the AdaFace heavy-worker pool BEFORE vision task
+    # spawn. The vision loop's first iteration will call `hw.run_heavy(
+    # "adaface_embed", ...)` (D3 migration sites 1+2); the worker subprocess
+    # must be ready when that first call fires. Without this warm-up the
+    # first inference call pays the subprocess + model-load latency
+    # synchronously on the awaiting coroutine.
+    hw.get_or_create_pool("adaface_embed")
+    # Mark the pool as healthy in the observability surface (D4 health
+    # snapshot). Subsequent crashes flip this to "degraded" via worker
+    # lifecycle detection (future P0.R6.X follow-up may add per-call
+    # health updates; foundation cycle just sets the initial state).
+    asyncio.create_task(_pipeline_state_store.set_heavy_worker_status("adaface_embed", "healthy"))
+    # P0.R6.X D4 — warm up the Whisper heavy-worker pool BEFORE vision task
+    # spawn (same ordering invariant as adaface_embed above). Whisper does
+    # NOT use a ProcessPoolExecutor initializer (worker lazy-loads the model
+    # on first call via `_get_subprocess_whisper()`); minting the pool here
+    # just creates the subprocess. The first `await transcribe(...)` call
+    # from `listen_and_transcribe` pays the ~1-2s WhisperModel load on the
+    # subprocess, NOT on the awaiting coroutine — the asyncio loop stays
+    # responsive while the subprocess warms.
+    hw.get_or_create_pool("whisper_transcribe")
+    asyncio.create_task(_pipeline_state_store.set_heavy_worker_status("whisper_transcribe", "healthy"))
+    # P0.R6.Y D4 — warm up the ECAPA heavy-worker pool BEFORE vision task
+    # spawn (same ORDERING INVARIANT as AdaFace + Whisper above). The
+    # subprocess lazy-loads the SpeechBrain EncoderClassifier on first
+    # call via `_get_subprocess_ecapa()` — minting the pool here just
+    # creates the subprocess. Voice ID is called from `_background_vision_
+    # loop`'s downstream paths (per-turn voice ID at site 7414) AND from
+    # the ambient-listen voice-first path (site 7148 LOAD-BEARING fix);
+    # both must see the subprocess ready when their first `await
+    # voice_mod.identify(...)` call fires.
+    hw.get_or_create_pool("ecapa_embed")
+    asyncio.create_task(_pipeline_state_store.set_heavy_worker_status("ecapa_embed", "healthy"))
+    # P0.R6.Z D4 — warm up the Pyannote heavy-worker pool BEFORE vision task
+    # spawn (4-pool ORDERING INVARIANT — AdaFace → Whisper → ECAPA →
+    # Pyannote → vision_task). The subprocess lazy-loads the
+    # `pyannote/speaker-diarization-3.1` Pipeline on first call via
+    # `_get_subprocess_pyannote()`; minting the pool here creates the
+    # subprocess. Pyannote inference is invoked from
+    # `core/voice.py::_diarize_pyannote()` → `hw.run_heavy(
+    # "pyannote_diarize", ...)` during multi-speaker scene segmentation
+    # (per-turn diarize call in conversation_turn). Worker subprocess
+    # serializes pyannote `Annotation` → `list[tuple[float, float, str]]`
+    # subprocess-side per Q2 (a) lock so the main process stays free of
+    # pyannote imports. 4-task heavy-worker migration arc COMPLETES with
+    # this pool (P0.R6 AdaFace + P0.R6.X Whisper + P0.R6.Y ECAPA +
+    # P0.R6.Z Pyannote = full cognitive runtime asyncio-loop-release).
+    hw.get_or_create_pool("pyannote_diarize")
+    asyncio.create_task(_pipeline_state_store.set_heavy_worker_status("pyannote_diarize", "healthy"))
+    _vision_task = asyncio.create_task(
         _background_vision_loop(camera, detector, embedder, temporal_buffer, db)
     )
+    # P0.R3 D5 — spawn watchdog AFTER vision task (D2 needs vision task to exist
+    # before supervising). D5 ordering invariant: watchdog cancelled BEFORE
+    # vision at shutdown (see finally block).
+    _vision_watchdog_task = asyncio.create_task(_vision_watchdog_loop())
+    # P0.R8 D6 — spawn heavy-worker watchdog AFTER vision_watchdog. Watches
+    # the 4 pools (AdaFace/Whisper/ECAPA/Pyannote) for BrokenProcessPool
+    # crash bursts via `hw.count_recent_crashes`; degrades pool + dispatches
+    # WatchdogAgent alert when crash count exceeds threshold within the
+    # rolling burst window. ORDERING INVARIANT at shutdown: this task
+    # cancels FIRST (before vision_watchdog) so it doesn't observe pool
+    # shutdown as crash events.
+    global _heavy_worker_watchdog_task
+    _heavy_worker_watchdog_task = asyncio.create_task(_heavy_worker_watchdog_loop())
+    # P0.R10 D3 — spawn audio device watchdog AFTER heavy_worker_watchdog per
+    # consistent ordering with P0.R8 + P0.R3 precedents. Watches mic + speaker
+    # channels for device failure bursts via `count_recent_audio_failures`;
+    # dispatches WatchdogAgent alert when failure count exceeds threshold
+    # within the rolling burst window. ORDERING INVARIANT at shutdown: this
+    # task cancels BEFORE heavy_worker_watchdog (reverse-order shutdown).
+    global _audio_device_watchdog_task
+    _audio_device_watchdog_task = asyncio.create_task(_audio_device_watchdog_loop())
     await asyncio.sleep(0.1)  # let background loop capture its first frame
 
     _null_frame_streak  = 0
@@ -6464,7 +7088,26 @@ async def run():
                         continue
 
                 # V3: pool embedding across frames for stability
-                raw_embedding = embedder.embed(face_crop)
+                # P0.R6 D3 (Site 3, was line 6716): converted from SYNC direct
+                # call (`embedder.embed(face_crop)` blocked the asyncio loop for
+                # the duration of inference, ~50-100ms per call) to async via
+                # ProcessPoolExecutor worker pool. Non-blocking improvement per
+                # PI #1 absorption (Plan v1 §1.1 Option α expanded scope).
+                raw_embedding_bytes = await hw.run_heavy(
+                    "adaface_embed",
+                    hw.adaface_embed_worker,
+                    face_crop.tobytes(),
+                    face_crop.shape,
+                )
+                raw_embedding = (
+                    np.frombuffer(raw_embedding_bytes, dtype=np.float32)
+                    if raw_embedding_bytes is not None
+                    else None
+                )
+                # P0.R1 D1: embed() now returns None on cascading CUDA+CPU failure.
+                if raw_embedding is None:
+                    print("[Pipeline] background scan: face embedding failed, skipping frame")
+                    continue
                 embedding     = temporal_buffer.add_and_pool(det.bbox, raw_embedding, track_id=det.track_id)
 
                 # V4: adaptive threshold — stricter for low-quality crops
@@ -6827,7 +7470,7 @@ async def run():
                 if _ambient_text:
                     print(f"[Pipeline] Voice-first: heard speech — identifying speaker...")
                     # Voice ID
-                    v_pid, v_score = voice_mod.identify(
+                    v_pid, v_score = await voice_mod.identify(
                         _ambient_audio, _voice_gallery_store.peek_all_gallery(), VOICE_RECOGNITION_THRESHOLD
                     )
                     if v_pid:
@@ -6856,7 +7499,25 @@ async def run():
                                     crop = cam_f[y1:y2, x1:x2]
                                     if crop.size == 0:
                                         continue
-                                    _emb = embedder.embed(crop)
+                                    # P0.R6 D3 (Site 4, was line 7112): converted
+                                    # from SYNC direct call to async via worker
+                                    # pool. Non-blocking improvement per PI #1
+                                    # absorption (Plan v1 §1.1 Option α scope).
+                                    _emb_bytes = await hw.run_heavy(
+                                        "adaface_embed",
+                                        hw.adaface_embed_worker,
+                                        crop.tobytes(),
+                                        crop.shape,
+                                    )
+                                    _emb = (
+                                        np.frombuffer(_emb_bytes, dtype=np.float32)
+                                        if _emb_bytes is not None
+                                        else None
+                                    )
+                                    # P0.R1 D1: embed() now returns None on cascading CUDA+CPU failure.
+                                    if _emb is None:
+                                        print("[Pipeline] camera fallback: face embedding failed, skipping")
+                                        continue
                                     _pid, _pname, _conf = db.recognize(_emb, RECOGNITION_THRESHOLD)
                                     if _pid and _conf > _best_conf:
                                         if not verify_live(cam_f, _d.bbox, _anti_spoof_checker):
@@ -7074,8 +7735,8 @@ async def run():
                     # Result tells brain exactly who spoke and whether it matches the
                     # active session person. Runs in executor (ECAPA-TDNN, 80-150ms).
                     _ev_loop = asyncio.get_running_loop()
-                    _v_pid, _v_score = await _ev_loop.run_in_executor(
-                        None, voice_mod.identify, audio_buf, _voice_gallery_store.peek_all_gallery(), VOICE_RECOGNITION_THRESHOLD
+                    _v_pid, _v_score = await voice_mod.identify(
+                        audio_buf, _voice_gallery_store.peek_all_gallery(), VOICE_RECOGNITION_THRESHOLD
                     )
 
                     # Voice-identified speakers are added to _presence_store so
@@ -7110,8 +7771,7 @@ async def run():
                     _multi_speaker_detected = False
                     _multi_speaker_labels: list[str] = []
                     if len(audio_buf) >= DIARIZE_MIN_SECS * MIC_SAMPLE_RATE:
-                        _diar = await _ev_loop.run_in_executor(
-                            voice_mod.get_diarize_executor(), voice_mod.diarize,
+                        _diar = await voice_mod.diarize(
                             audio_buf, _voice_gallery_store.peek_all_gallery(), VOICE_RECOGNITION_THRESHOLD
                         )
                         if len(_diar) >= 2:
@@ -7153,7 +7813,7 @@ async def run():
                             _spans_with_pids: list[tuple[str | None, str, str]] = []
                             for _span in _spans:
                                 _a = audio_buf[_span["start_sample"]:_span["end_sample"]]
-                                _t, _ = await _ev_loop.run_in_executor(None, transcribe, _a)
+                                _t, _ = await transcribe(_a)
                                 _t = _t.strip()
                                 if not _t:
                                     continue
@@ -7980,10 +8640,36 @@ async def run():
         stop_audio()
 
         # 1.5. Stop persistent background vision loop (sole camera reader).
-        if _vis_bg_task and not _vis_bg_task.done():
-            _vis_bg_task.cancel()
+        # P0.R3 D5 + P0.R8 D6 + P0.R10 D3 ORDERING INVARIANT — reverse-order
+        # shutdown: audio_device_watchdog cancels FIRST (so it doesn't fire
+        # post-shutdown false-positives), then heavy_worker_watchdog (so it
+        # doesn't observe pool shutdown as crash events), then vision_watchdog
+        # (so it doesn't respawn vision task during shutdown), then vision
+        # task itself, then hw.shutdown_all_pools below. Order:
+        # audio_device_watchdog → heavy_worker_watchdog → vision_watchdog
+        # → vision_task → hw.shutdown_all_pools.
+        if _audio_device_watchdog_task and not _audio_device_watchdog_task.done():
+            _audio_device_watchdog_task.cancel()
             try:
-                await asyncio.wait_for(_vis_bg_task, timeout=1.0)
+                await asyncio.wait_for(_audio_device_watchdog_task, timeout=1.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                pass
+        if _heavy_worker_watchdog_task and not _heavy_worker_watchdog_task.done():
+            _heavy_worker_watchdog_task.cancel()
+            try:
+                await asyncio.wait_for(_heavy_worker_watchdog_task, timeout=1.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                pass
+        if _vision_watchdog_task and not _vision_watchdog_task.done():
+            _vision_watchdog_task.cancel()
+            try:
+                await asyncio.wait_for(_vision_watchdog_task, timeout=1.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                pass
+        if _vision_task and not _vision_task.done():
+            _vision_task.cancel()
+            try:
+                await asyncio.wait_for(_vision_task, timeout=1.0)
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
 
@@ -8024,11 +8710,21 @@ async def run():
             except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
                 pass
 
-        # 5.6. Shut down dedicated diarization executor (Item 13, Wave 3).
+        # 5.6. P0.R6.Z D3.c RETIREMENT (2026-05-24): the dedicated
+        # diarization executor shutdown call retired. Subprocess pool
+        # cleanup is covered by `hw.shutdown_all_pools(wait=True)` below
+        # (which terminates the pyannote_diarize subprocess alongside
+        # AdaFace + Whisper + ECAPA).
+
+        # 5.7. P0.R6 D5 — shut down heavy-worker pools cleanly (terminates
+        # AdaFace + future P0.R6.X/Y/Z worker subprocesses). `wait=True`
+        # blocks until pending futures resolve so in-flight inferences
+        # finish before the process exits; this avoids zombie subprocesses
+        # on Linux + matches the existing cleanup-discipline pattern.
         try:
-            voice_mod.shutdown_diarize_executor()
+            hw.shutdown_all_pools(wait=True)
         except Exception as e:
-            print(f"[Pipeline] diarize executor shutdown failed: {e!r}")
+            print(f"[Pipeline] heavy worker pool shutdown failed: {e!r}")
 
         # 6. Mark dashboard offline.
         state.write(mode="offline")

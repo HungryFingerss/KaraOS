@@ -237,26 +237,49 @@ def test_ensure_graph_sync_clears_sentinel_on_success():
     )
 
 
-def test_ensure_graph_sync_sql_first_before_kuzu_ops():
-    """_ensure_graph_sync must commit SQL version bump BEFORE Kuzu drop/rebuild."""
+def test_ensure_graph_sync_sql_commit_after_kuzu_rebuild():
+    """P0.B3 D1 (Finding 2 board-meeting 2026-05-21 fix; in-place rewrite of the
+    P0.X-era `test_ensure_graph_sync_sql_first_before_kuzu_ops` test which encoded
+    the bug):
+
+    update_graph_schema_version() MUST commit AFTER Kuzu rebuild + sentinel clear,
+    NOT before drop_schema.
+
+    Pre-P0.B3 (BUG):
+        SQL version bump happened BEFORE drop_schema + rebuild. On crash mid-Kuzu,
+        SQL=NEW + Kuzu=PARTIAL → next boot's migration predicate FALSE → permanent
+        _kuzu_degraded=True with no operator-visible recovery signal. The original
+        test encoded the BUG ordering as the invariant; D1 inverts both the test
+        name and the assertion direction.
+
+    Post-P0.B3 D1:
+        SQL commit moves to AFTER _clear_kuzu_dirty(), gated on _did_schema_upgrade
+        captured at function entry. Any crash before the SQL commit leaves
+        stored_version=OLD → next boot re-enters migration via the predicate at
+        function entry → retries idempotently. Behavioral coverage for crash points
+        lives in tests/test_p0_b3_kuzu_schema_health.py (D1 anchors 2+3).
+    """
     source = _read_source(BRAIN_AGENT_PATH)
     tree = ast.parse(source)
     method = _find_method_in_class(tree, "BrainOrchestrator", "_ensure_graph_sync")
     assert method is not None, "BrainOrchestrator._ensure_graph_sync not found"
-    src = ast.unparse(method)
 
-    # SQL version bump (via update_graph_schema_version) must appear before drop_schema.
-    # update_graph_schema_version() encapsulates the _conn.execute + commit — checking
-    # for the public method call is the correct post-Gap-3 shape.
     commit_line = _first_call_lineno(method, "update_graph_schema_version(")
-    drop_line = _first_call_lineno(method, "drop_schema(")
-    assert commit_line is not None, (
-        "_ensure_graph_sync must call update_graph_schema_version() before touching Kuzu"
+    clear_dirty_line = _first_call_lineno(method, "_clear_kuzu_dirty(")
+    rebuild_line = _first_call_lineno(method, "self._graph_db.rebuild(")
+
+    assert commit_line is not None, "must call update_graph_schema_version()"
+    assert clear_dirty_line is not None, "must call _clear_kuzu_dirty()"
+    assert rebuild_line is not None, "must call rebuild()"
+
+    assert commit_line > clear_dirty_line, (
+        f"P0.B3 D1 ordering violation: update_graph_schema_version (line {commit_line}) "
+        f"must appear AFTER _clear_kuzu_dirty (line {clear_dirty_line}). "
+        "Pre-P0.B3 the order was reversed — Finding 2 bug."
     )
-    assert drop_line is not None, "_ensure_graph_sync must call drop_schema() on schema upgrade"
-    assert commit_line < drop_line, (
-        "P0.X SQL-first ordering violation in _ensure_graph_sync: "
-        "update_graph_schema_version() must appear BEFORE drop_schema()"
+    assert commit_line > rebuild_line, (
+        f"P0.B3 D1 ordering violation: update_graph_schema_version (line {commit_line}) "
+        f"must appear AFTER rebuild (line {rebuild_line})."
     )
 
 

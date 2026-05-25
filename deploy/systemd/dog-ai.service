@@ -1,0 +1,21 @@
+[Unit]
+Description=dog-ai cognitive runtime
+Documentation=https://github.com/HungryFingerss/Cognitive-System
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dog-ai
+WorkingDirectory=/opt/dog-ai
+ExecStart=/opt/dog-ai/venv/bin/python /opt/dog-ai/pipeline.py
+EnvironmentFile=/etc/dog-ai/dog-ai.env
+Restart=on-failure
+RestartSec=5s
+StartLimitBurst=5
+StartLimitIntervalSec=60s
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

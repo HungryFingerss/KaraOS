@@ -61,3 +61,63 @@ def delete_person_everywhere(
         summary["graph"] = "ok" if ok else "error (see logs)"
 
     return summary
+
+
+def compute_delete_preview(
+    person_id: str,
+    person_name: str,
+    faces_db: FaceDB,
+    brain_orch: BrainOrchestrator,
+) -> dict:
+    """P0.S9 D4 dry-run preview — count rows that would be deleted across all stores.
+
+    Read-only; no commits. Mirrors `delete_person_everywhere` SQL shape but does
+    SELECT COUNT instead of DELETE. Per-table counts surfaced to operator before
+    destructive op runs, so they can verify scope before passing --confirm.
+
+    Returns a dict keyed by `<store>.<table>` with row counts (graph entry is
+    a string indicating delete vs name-collision skip).
+    """
+    preview: dict = {}
+
+    # faces.db tables
+    fc = faces_db._conn
+    preview["faces.embeddings"] = fc.execute(
+        "SELECT COUNT(*) FROM embeddings WHERE person_id = ?", (person_id,)
+    ).fetchone()[0]
+    preview["faces.voice_embeddings"] = fc.execute(
+        "SELECT COUNT(*) FROM voice_embeddings WHERE person_id = ?", (person_id,)
+    ).fetchone()[0]
+    preview["faces.conversation_log"] = fc.execute(
+        "SELECT COUNT(*) FROM conversation_log WHERE person_id = ?", (person_id,)
+    ).fetchone()[0]
+    preview["faces.persons"] = 1 if faces_db.get_person(person_id) else 0
+
+    # brain.db tables
+    bc = brain_orch.brain_db._conn
+    for table in ("knowledge", "presence_log", "episodes", "prompt_prefs"):
+        preview[f"brain.{table}"] = bc.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE person_id = ?", (person_id,)
+        ).fetchone()[0]
+    preview["brain.proactive_nudges"] = bc.execute(
+        "SELECT COUNT(*) FROM proactive_nudges WHERE target_person_id = ?", (person_id,)
+    ).fetchone()[0]
+    preview["brain.social_mentions"] = bc.execute(
+        "SELECT COUNT(*) FROM social_mentions WHERE source_person_id = ?", (person_id,)
+    ).fetchone()[0]
+    preview["brain.inter_person_relationships"] = bc.execute(
+        "SELECT COUNT(*) FROM inter_person_relationships WHERE person_a = ? OR source_speaker = ?",
+        (person_id, person_id),
+    ).fetchone()[0]
+
+    # Kuzu graph (name-collision aware; mirrors delete_person_everywhere logic).
+    name_shared = fc.execute(
+        "SELECT COUNT(*) FROM persons WHERE name = ? AND id != ?",
+        (person_name, person_id),
+    ).fetchone()[0]
+    preview["graph.Entity"] = (
+        f"would delete (name='{person_name}', unique)" if not name_shared
+        else f"SKIP (name shared by {name_shared} other(s))"
+    )
+
+    return preview

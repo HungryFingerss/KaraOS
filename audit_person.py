@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from core.db import FaceDB
-from core.audit import audit_gallery, repair_gallery
+from core.audit import audit_gallery
 
 
 def _print_result(r: dict, *, repair_count: int | None = None) -> None:
@@ -76,7 +76,7 @@ if __name__ == "__main__":
 
             if args.repair:
                 r = audit_gallery(person_id, db)
-                removed = repair_gallery(person_id, db, mode="remove")
+                removed = db.prune_outlier_embeddings(person_id)
                 if not args.json:
                     _print_result(r, repair_count=removed)
                 else:

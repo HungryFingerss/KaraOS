@@ -518,6 +518,62 @@ TOOL_INTENT_MAP: dict = {
     # See VISION_ROADMAP.md section 1.5 appendix for the deferral rationale.
 }
 
+# ── P0.S6 D1 — Intent-gate-optional companion set ──────────────────────────────
+#
+# Companion to TOOL_INTENT_MAP. Tools listed here are INTENTIONALLY exempt
+# from the classifier-gate (`_intent_allows`) verification — not because they
+# escaped the audit, but because their architectural shape doesn't fit the
+# mutation-tool gate model. The startup assertion at pipeline.run() entry
+# enforces that every tool in brain.TOOLS appears in EITHER TOOL_INTENT_MAP
+# OR this set; future maintainers adding a new tool MUST classify it here
+# explicitly (no silent default).
+#
+# Naming choice (P0.S6 Plan v1 §1.D1 + §3.1 mitigation): plural-subject-noun
+# `INTENT_OPTIONAL_TOOLS` signals "set of tool names," NOT a map shape.
+# Prevents future readers from adding (intent, arg_key) tuples by analogy
+# to TOOL_INTENT_MAP.
+#
+# Per-entry rationale:
+#   - `search_web` — consumed inline inside `core.brain._ask_stream`; the
+#     tool_call NEVER bubbles to `conversation_turn`'s classifier gate
+#     (Session 79 audit). Deferred to Phase 1.5 per the VISION_ROADMAP
+#     appendix; until then, server-side `_should_search_web` is the
+#     authoritative gate (NOT the classifier).
+#   - `search_memory` — read-only query path with no privilege escalation.
+#     The classifier gate would add latency without security benefit; the
+#     result rendering (per-person knowledge lookup) is the actual value
+#     surface, not the dispatch decision.
+#   - `search_room_memory` — same architectural shape as `search_memory`
+#     (Phase 3B.5 sibling). Gate would be cosmetic; deferred-to-callback
+#     consumption (`_make_room_search_fn`) parallels search_memory's path.
+INTENT_OPTIONAL_TOOLS: frozenset = frozenset({
+    "search_web",
+    "search_memory",
+    "search_room_memory",
+})
+
+
+# ── P0.S6 D4 — Inline-dispatched tools companion set ───────────────────────────
+#
+# Companion to `_TOOL_HANDLERS` (pipeline.py:4191). Tools listed here are
+# consumed via INLINE ask_stream callbacks (`_make_memory_search_fn` /
+# `_make_room_search_fn`), NOT through the `_execute_tool` dispatch table.
+# The startup assertion at pipeline.run() entry enforces that every tool in
+# brain.TOOLS appears in EITHER `_TOOL_HANDLERS` OR this set; future
+# maintainers adding a new tool MUST classify it here explicitly.
+#
+# Note: `search_memory` is INTENTIONALLY NOT in this set despite having a
+# callback path. It ALSO has a `_handle_search_memory` entry in
+# `_TOOL_HANDLERS` (legacy dual-path from Session 56-58 timing). Both paths
+# are live; the registry assertion holds via the _TOOL_HANDLERS membership.
+# Future cleanup may collapse to one path, at which point search_memory
+# moves here.
+INLINE_DISPATCHED_TOOLS: frozenset = frozenset({
+    "search_web",
+    "search_room_memory",
+})
+
+
 INTENT_CONFIDENCE_MIN       = 0.75   # general confidence floor — below this, gate rejects
 INTENT_SHUTDOWN_CONF_MIN    = 0.80   # higher floor for shutdown (bigger blast radius)
 INTENT_MAX_USER_TEXT_CHARS  = 500    # truncate very long user_text before grounding
@@ -1239,6 +1295,11 @@ CONVERSATION_HISTORY_LIMIT = 100   # turns loaded into LLM context; older turns 
 # Wave 6 Item 21: conversation log archival
 CONVERSATION_ARCHIVE_ENABLED    = True   # move old conversation_log turns to a separate archive DB
 CONVERSATION_ARCHIVE_AFTER_DAYS = 30     # archive turns older than this many days
+# P0.R12 — conversation_log_archive retention. Archive DB at
+# `{db_stem}_conversation_archive.db` accumulates rows after Wave 6 Item 21
+# moves them from main conversation_log. Without retention, archive grows
+# indefinitely. 1-year default per Q1 (a) RATIFIED — operator-tunable.
+CONVERSATION_ARCHIVE_RETENTION_DAYS = 365
 KNOWLEDGE_MAX_ROWS                = 2000   # active (non-invalidated) knowledge rows
 KNOWLEDGE_HARD_DELETE_ENABLED    = True   # Wave 6 Item 22: hard-delete soft-deleted knowledge rows
 KNOWLEDGE_HARD_DELETE_AFTER_DAYS = 60     # conservative 60d buffer (archive cutoff is 30d)
@@ -1328,6 +1389,71 @@ EMOTION_WINDOW_TTL_SECS     = 90    # entries older than this are excluded from 
 SORT_DETECT_EVERY      = 5     # run RetinaFace every Nth frame
 SORT_MAX_AGE           = 30    # frames to keep a track alive without a detection match (1s @ 30fps)
 SORT_MIN_HITS          = 2     # detections required before a track is confirmed
+
+# ── P0.R2 D4: Vision provider state machine (CUDA ↔ CPU fallback) ─────────────
+# After a CUDA failure triggers `record_cuda_failure()`, the active provider
+# switches to CPU. Two restoration triggers (counter-OR-timer, whichever first):
+VISION_CPU_SWITCH_N_REQUESTS = 100   # restore CUDA after N successful CPU inferences
+VISION_CUDA_RETRY_M_MINUTES  = 5.0   # restore CUDA after M minutes elapsed since failure
+
+# ── P0.R3 D2: Vision-loop watchdog (heartbeat + supervised restart) ───────────
+# Watchdog polls vision-loop heartbeat at INTERVAL_SECS; if heartbeat staleness
+# exceeds STALE_THRESHOLD_SECS, the watchdog cancels the vision task + respawns
+# a fresh one. Restart success is detected by heartbeat advancing past pre-restart
+# value within RESTART_TIMEOUT_SECS; timeout OR exception → vision_degraded flag.
+VISION_WATCHDOG_INTERVAL_SECS         = 5.0    # watchdog polls every N seconds
+VISION_WATCHDOG_STALE_THRESHOLD_SECS  = 30.0   # heartbeat older than M secs → stale
+VISION_WATCHDOG_RESTART_TIMEOUT_SECS  = 30.0   # restart-success deadline
+
+# P0.R8 — heavy-worker pool watchdog + burst-limit constants. The watchdog
+# at pipeline._heavy_worker_watchdog_loop polls every WATCHDOG_INTERVAL_SECS;
+# for each of the 4 pools (AdaFace/Whisper/ECAPA/Pyannote), if BURST_THRESHOLD
+# crashes occur within BURST_WINDOW_SECS rolling window, the pool is marked
+# "degraded" + a WatchdogAgent alert fires. Recovery is implicit:
+# ProcessPoolExecutor auto-respawns subprocesses on next submit; when the
+# rolling crash count drops below threshold, the pool re-arms + clears
+# degraded automatically.
+HEAVY_WORKER_WATCHDOG_INTERVAL_SECS    = 5.0    # poll cadence (matches P0.R3)
+HEAVY_WORKER_RESTART_BURST_THRESHOLD   = 3      # N crashes in window → degraded
+HEAVY_WORKER_RESTART_BURST_WINDOW_SECS = 300.0  # 5 minute rolling window
+
+# ── Heavy-worker VRAM budget guard (P0.R9) ───────────────────────────────────
+# Static per-pool VRAM estimates + cumulative cap at VRAM_CEILING_PCT of
+# available CUDA memory + priority order determining which pools refuse spawn
+# on budget exhaustion. Q5 (a) lock: skip enforcement on non-CUDA dev/CI
+# environments (see core/heavy_worker.py::check_vram_budget). Tune estimates +
+# ceiling + priority based on production canary signal; restart to re-evaluate.
+HEAVY_WORKER_VRAM_ESTIMATES_MB = {
+    "adaface_embed":      100,
+    "ecapa_embed":        200,
+    "whisper_transcribe": 3000,
+    "pyannote_diarize":   3000,
+}
+VRAM_CEILING_PCT = 80.0  # cap at 80% of available CUDA memory
+VRAM_POOL_PRIORITY = [
+    "adaface_embed",      # highest priority — face recognition is core
+    "ecapa_embed",        # voice ID for greeting
+    "whisper_transcribe", # STT (could degrade to other STT)
+    "pyannote_diarize",   # lowest — has ECAPA-valley fallback
+]
+
+# ── Audio device failure resilience (P0.R10) ─────────────────────────────────
+# Per-channel burst detection for mic + speaker device failures. Q1 (a) lock:
+# per-channel counter granularity (mic + speaker tracked independently \u2014 USB
+# mic disconnect != speaker driver crash). Q7 (a) lock: moderate defaults
+# (3 failures in 60s); operator-tunable per environment.
+AUDIO_DEVICE_WATCHDOG_INTERVAL_SECS = 10.0  # poll cadence
+AUDIO_DEVICE_BURST_THRESHOLD        = 3     # N failures in window → degraded
+AUDIO_DEVICE_BURST_WINDOW_SECS      = 60.0  # 1 minute rolling window
+
+# ── Crash diagnostic capture (P0.R11) ────────────────────────────────────────
+# persist_crash_diagnostic writes JSON-per-crash to faces/crash_logs/;
+# prune_old_crash_logs removes files older than RETENTION_DAYS via dream-loop
+# cleanup. HealthSnapshot.recent_crash_logs surfaces up to RECENT_LIMIT entries
+# for dashboard visibility.
+CRASH_LOG_RETENTION_DAYS         = 7      # files older than N days pruned at dream loop
+HEALTH_CRASH_LOG_RECENT_LIMIT    = 10     # HealthSnapshot.recent_crash_logs cap
+CRASH_LOG_SCHEMA_VERSION         = 1      # JSON payload schema version (mirror of core.crash_logs._CRASH_LOG_SCHEMA_VERSION)
 
 # ── Semantic embeddings (Phase 3) ─────────────────────────────────────────────
 # Model: intfloat/multilingual-e5-large-instruct (1024-dim, multilingual)
@@ -1470,6 +1596,16 @@ TOOL_TIMEOUT_OVERRIDES: "dict[str, float]" = {
 HEALTH_LOG_ENABLED          = True
 HEALTH_LOG_INTERVAL_SECS    = 300   # 5 min — first log fires immediately at boot
 HEALTH_THIN_VOICE_MAX       = 3     # cap thin-gallery [Health-Alert] lines to avoid log spam
+
+# ── terminal_output.md size cap + archive retention (P0.R13) ────────────────
+# `_check_terminal_output_size_cap` rotates the file when size exceeds cap;
+# `_prune_old_terminal_archives` removes archive files older than retention.
+# Q2 (a) RATIFIED: 100 MB cap is generous; rotation is non-destructive
+# (renames to timestamped archive matching startup archive shape).
+# Q3 (a) RATIFIED: 30 day archive retention matches canary-feedback window.
+# Q4 (a) RATIFIED: integrated into disk-monitor poll cadence (~5 min).
+TERMINAL_OUTPUT_SIZE_CAP_MB            = 100
+TERMINAL_OUTPUT_ARCHIVE_RETENTION_DAYS = 30
 
 # ── Disk space monitor (Wave 5 / Item 20) ──────────────────────────────────
 # Single-volume assumption: all monitored dirs must live on the same filesystem

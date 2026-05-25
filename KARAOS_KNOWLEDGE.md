@@ -1693,12 +1693,7 @@ centroid_normalized = centroid / np.linalg.norm(centroid)  # L2-normalize
 }
 ```
 
-### `repair_gallery(person_id, db, mode)` → int
-
-- `mode='flag'`: Returns count of outliers without modifying the database. Safe for inspection.
-- `mode='remove'`: Deletes the outlier rows from the `embeddings` table, then calls `db._rebuild_faiss()`. The FAISS index is always rebuilt after deletion to ensure consistent state.
-
-The `audit_person.py` CLI wraps this function for command-line use. The dashboard's `/api/gallery-audit` route also calls it.
+The `audit_person.py` CLI wraps this function for command-line use. For the destructive remove-outliers operation, the CLI's `--repair` flag now calls `FaceDB.prune_outlier_embeddings(person_id)` directly — the P0.5-correct paired-write site (SQL-first transaction + FAISS rebuild + sentinel discipline). The previous `core.audit.repair_gallery` duplicate was a P0.5 inverse-check violation (missing `_index_lock`, no `transaction()`, no `_mark_faiss_dirty()` sentinel) and was deleted entirely at P0.S9 D1 consolidation.
 
 ---
 

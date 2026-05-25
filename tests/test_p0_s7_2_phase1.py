@@ -23,6 +23,10 @@ import pathlib
 
 import pytest
 
+# P0.S7 D2 — module-level privacy_critical marker; tests verify
+# P0.S7.2 cross-session retrieval γ honesty bullet (HONESTY POLICY block).
+pytestmark = pytest.mark.privacy_critical
+
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 _BRAIN_PY = _REPO_ROOT / "core" / "brain.py"

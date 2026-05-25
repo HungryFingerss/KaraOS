@@ -84,9 +84,16 @@ def test_schema_migration_drop_schema_crash_comes_up_degraded(tmp_path, monkeypa
     (no raise from __init__)." This extends to drop_schema/init_schema during
     schema migration — the constructor must complete in degraded mode.
 
-    Pre-fix: constructor raises RuntimeError — this test FAILS.
-    Post-fix: constructor completes with _kuzu_degraded=True, sentinel preserved,
-              brain.db at GRAPH_SCHEMA_VERSION (SQL-first discipline held).
+    Pre-P0.X: constructor raised RuntimeError — this test FAILED.
+    P0.X post-fix: constructor completed with _kuzu_degraded=True, sentinel
+                   preserved, brain.db at GRAPH_SCHEMA_VERSION (SQL-first).
+    P0.B3 D1 (Finding 2 board-meeting 2026-05-21): SQL bump moved AFTER Kuzu
+                   rebuild + sentinel clear. drop_schema crash now leaves
+                   stored_version=OLD (not NEW) → next boot's migration
+                   predicate (stored_version<GRAPH_SCHEMA_VERSION) re-triggers
+                   the upgrade idempotently. This is the LOAD-BEARING fix.
+                   (Plan v1 §1.1 Pass-2 grep undercounted this test file —
+                   banked as P0.B3 Phase 4 in-flight observation.)
     """
     paths = _make_paths(tmp_path)
 
@@ -102,10 +109,15 @@ def test_schema_migration_drop_schema_crash_comes_up_degraded(tmp_path, monkeypa
             "_kuzu_degraded must be True when drop_schema crashes during schema upgrade"
         )
         assert _sentinel_path(tmp_path).exists(), (
-            "sentinel must be preserved when drop_schema crashes"
+            "sentinel must be preserved when drop_schema crashes — sentinel is "
+            "written by _mark_kuzu_dirty() BEFORE drop_schema per ORDERING INVARIANT step 2"
         )
-        assert orch._brain_db.get_graph_schema_version() == GRAPH_SCHEMA_VERSION, (
-            "brain.db version must equal GRAPH_SCHEMA_VERSION (SQL-first discipline)"
+        assert orch._brain_db.get_graph_schema_version() < GRAPH_SCHEMA_VERSION, (
+            "P0.B3 D1 LOAD-BEARING INVARIANT: brain.db version must stay OLD when "
+            "drop_schema crashes — pre-fix the SQL bump happened BEFORE drop_schema "
+            "(SQL=NEW + Kuzu=PARTIAL trap); post-fix the SQL bump is gated on "
+            "_did_schema_upgrade AND lands AFTER _clear_kuzu_dirty (stored_version "
+            "stays OLD on crash → next boot predicate re-triggers migration)"
         )
     finally:
         orch._brain_db._conn.close()
@@ -113,18 +125,24 @@ def test_schema_migration_drop_schema_crash_comes_up_degraded(tmp_path, monkeypa
 
 
 @pytest.mark.slow
-def test_schema_upgrade_drop_crash_leaves_sentinel_and_sql_committed(
+def test_schema_upgrade_drop_crash_leaves_old_version_and_sentinel(
     tmp_path, monkeypatch,
 ):
-    """drop_schema raises after SQL version bump committed → degraded mode (no boot-crash).
+    """drop_schema raises before SQL version bump → degraded mode (no boot-crash).
 
-    P0.X SQL-first discipline: update_graph_schema_version() is called and
-    committed BEFORE drop_schema(). If drop_schema() crashes, the constructor
-    completes in degraded mode; the next boot sees SQL version=GRAPH_SCHEMA_VERSION
-    (durable) and sentinel on disk (written eagerly before any destructive Kuzu op).
+    P0.X-era (Kuzu-first → SQL-first): update_graph_schema_version() was
+    committed BEFORE drop_schema(). If drop_schema() crashed, the constructor
+    completed in degraded mode with SQL version=GRAPH_SCHEMA_VERSION (durable).
 
-    Post-fix: constructor completes — _kuzu_degraded=True, sentinel present,
-              SQL version=GRAPH_SCHEMA_VERSION.
+    P0.B3 D1 (Finding 2 board-meeting 2026-05-21 fix): SQL bump moved AFTER
+    Kuzu rebuild + _clear_kuzu_dirty, gated on _did_schema_upgrade captured
+    at function entry. drop_schema crash now leaves stored_version=OLD
+    (UPDATE never reached) — next boot's migration predicate retriggers
+    the upgrade. This is the inverted assertion: SQL stays OLD on crash
+    by design. The sentinel + degraded-mode invariants are unchanged.
+    (Test renamed from `..._and_sql_committed` → `..._and_old_version` to
+    reflect the new ordering. Plan v1 §1.1 Pass-2 grep undercounted this
+    test file — banked as P0.B3 Phase 4 in-flight observation.)
     """
     paths = _make_paths(tmp_path)
 
@@ -138,14 +156,18 @@ def test_schema_upgrade_drop_crash_leaves_sentinel_and_sql_committed(
         assert orch._kuzu_degraded, (
             "_kuzu_degraded must be True when drop_schema crashes"
         )
-        # Sentinel must exist — written in _ensure_graph_sync before drop_schema.
+        # Sentinel must exist — written by _mark_kuzu_dirty() before drop_schema.
         assert _sentinel_path(tmp_path).exists(), (
             "sentinel must be present after drop_schema crash"
         )
-        # SQL version bump must be durable — committed before drop_schema was called.
-        assert orch._brain_db.get_graph_schema_version() == GRAPH_SCHEMA_VERSION, (
-            "brain.db graph_schema_version must equal GRAPH_SCHEMA_VERSION "
-            "even when drop_schema crashed afterwards"
+        # P0.B3 D1: SQL version bump must stay OLD — UPDATE never reached because
+        # drop_schema raised before the rebuild block ran. Next boot's predicate
+        # (stored_version < GRAPH_SCHEMA_VERSION) re-triggers migration.
+        assert orch._brain_db.get_graph_schema_version() < GRAPH_SCHEMA_VERSION, (
+            "P0.B3 D1 LOAD-BEARING INVARIANT: brain.db graph_schema_version must "
+            "stay OLD when drop_schema crashes — the SQL bump moved AFTER Kuzu "
+            "rebuild + sentinel clear, gated on _did_schema_upgrade, so any "
+            "pre-rebuild crash leaves stored_version unchanged for predicate retry"
         )
     finally:
         orch._brain_db._conn.close()
@@ -158,11 +180,15 @@ def test_schema_upgrade_drop_crash_leaves_sentinel_and_sql_committed(
 def test_schema_upgrade_crash_recovery_on_second_boot(tmp_path, monkeypatch):
     """Boot 2 recovers cleanly after Boot 1's drop_schema crash.
 
-    Boot 1: drop_schema crashes → degraded mode (_kuzu_degraded=True), sentinel on
-            disk, SQL version=GRAPH_SCHEMA_VERSION committed, constructor completes.
-    Boot 2: version==GRAPH_SCHEMA_VERSION (no schema upgrade), sentinel
-            exists → rebuild path fires, empty DB → sentinel cleared,
-            not degraded.
+    Boot 1: drop_schema crashes → degraded mode (_kuzu_degraded=True), sentinel
+            persists on disk, stored_version stays OLD (per P0.B3 D1 ordering —
+            SQL bump moved AFTER Kuzu rebuild + _clear_kuzu_dirty), constructor
+            completes degraded.
+    Boot 2: stored_version < GRAPH_SCHEMA_VERSION → migration predicate TRUE
+            → enter migration block → drop_schema (now unpatched) succeeds →
+            _init_schema → rebuild path fires → empty DB → _clear_kuzu_dirty
+            (sentinel cleared) → update_graph_schema_version (SQL bump lands
+            at end-of-rebuild) → not degraded.
 
     Kuzu single-writer constraint: orch1 must be fully closed and gc'd before
     orch2 can open the same graph path.

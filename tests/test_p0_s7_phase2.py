@@ -18,6 +18,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# P0.S7 D2 — module-level privacy_critical marker; all tests verify the
+# SHARED CONTEXT block (cross-person context construction + disputed gates).
+pytestmark = pytest.mark.privacy_critical
+
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 

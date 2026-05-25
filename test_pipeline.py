@@ -25,30 +25,19 @@ sys.path.insert(0, os.path.dirname(__file__))
 # Idempotent — only installs if not already present (mirrors tests/conftest.py).
 if "core.voice" not in sys.modules:
     _vs = types.ModuleType("core.voice")
+    # P0.R6.Y D3 cascade: 4 voice fns become async; stubs migrate to AsyncMock.
     _vs.load_speaker_embedder = MagicMock(return_value=None)
-    _vs.identify = MagicMock(return_value=(None, 0.0))
-    _vs.diarize = MagicMock(return_value=[])
+    # P0.R6.Y D3 cascade: 4 voice fns become async; stubs use AsyncMock.
+    # P0.R6.Z D3.a/D5 RETIREMENT (2026-05-24): _load_pyannote_pipeline +
+    # _voice_diarize_executor + get_diarize_executor +
+    # shutdown_diarize_executor stubs retired — those production symbols
+    # no longer exist; pyannote pipeline lives subprocess-side.
+    _vs.identify = AsyncMock(return_value=(None, 0.0))
+    _vs.diarize = AsyncMock(return_value=[])
     _vs.get_diarize_stats = MagicMock(return_value={})
     _vs._embedder = MagicMock()
-    _vs._load_pyannote_pipeline = MagicMock(return_value=None)
-    _vs.embed = MagicMock(return_value=None)
-    _vs._voice_diarize_executor = None
-    _vs._diarize_ecapa_valley = MagicMock(return_value=[])
-    def _get_diarize_executor_tp():
-        from concurrent.futures import ThreadPoolExecutor
-        _vsm = sys.modules["core.voice"]
-        if _vsm._voice_diarize_executor is None:
-            _vsm._voice_diarize_executor = ThreadPoolExecutor(
-                max_workers=1, thread_name_prefix="voice-diarize"
-            )
-        return _vsm._voice_diarize_executor
-    def _shutdown_diarize_executor_tp():
-        _vsm = sys.modules["core.voice"]
-        if _vsm._voice_diarize_executor is not None:
-            _vsm._voice_diarize_executor.shutdown(wait=False)
-            _vsm._voice_diarize_executor = None
-    _vs.get_diarize_executor = _get_diarize_executor_tp
-    _vs.shutdown_diarize_executor = _shutdown_diarize_executor_tp
+    _vs.embed = AsyncMock(return_value=None)
+    _vs._diarize_ecapa_valley = AsyncMock(return_value=[])
     sys.modules["core.voice"] = _vs
 if "core.audio" not in sys.modules:
     import re as _re_audio_stub
@@ -59,23 +48,48 @@ if "core.audio" not in sys.modules:
         setattr(_as, _fn, MagicMock())
     _as.speak_stream = AsyncMock()
     _as._load_whisper = MagicMock()
-    def _transcribe_stub(audio):
+    async def _transcribe_stub(audio):
+        """P0.R6.X migration: production transcribe() is async + dispatches
+        via hw.run_heavy("whisper_transcribe", ...). Stub mirrors that
+        contract so tests can monkeypatch hw.run_heavy to inject text.
+        Falls back to the legacy _load_whisper path when hw.run_heavy is
+        unavailable for backward-compat with older monkeypatch tests.
+        """
         import re as _re_tr
+        import sys as _sys_tr
         import time as _time_tr
         if len(audio) == 0:
             return "", "en"
         _t0 = _time_tr.perf_counter()
-        model = _as._load_whisper()
-        segments, _ = model.transcribe(audio)
-        segments_list = list(segments)
-        good = [s for s in segments_list if s.no_speech_prob < 0.6 and s.avg_logprob > -1.5]
-        if not good:
-            candidates = [s for s in segments_list if s.no_speech_prob < 0.4]
-            if candidates:
-                good = [min(candidates, key=lambda s: s.no_speech_prob)]
-            else:
-                return "", "en"
-        text = " ".join(s.text for s in good).strip()
+        _hw_mod = _sys_tr.modules.get("core.heavy_worker")
+        text = None
+        if _hw_mod is not None and hasattr(_hw_mod, "run_heavy"):
+            try:
+                _result = await _hw_mod.run_heavy(
+                    "whisper_transcribe",
+                    getattr(_hw_mod, "whisper_transcribe_worker", lambda *a, **k: ("", "en")),
+                    audio.tobytes() if hasattr(audio, "tobytes") else b"",
+                    audio.shape if hasattr(audio, "shape") else (0,),
+                    audio.dtype.name if hasattr(audio, "dtype") else "float32",
+                    language="en",
+                )
+                text, _lang = _result
+            except Exception:
+                text = None
+        if text is None:
+            model = _as._load_whisper()
+            segments, _ = model.transcribe(audio)
+            segments_list = list(segments)
+            good = [s for s in segments_list if s.no_speech_prob < 0.6 and s.avg_logprob > -1.5]
+            if not good:
+                candidates = [s for s in segments_list if s.no_speech_prob < 0.4]
+                if candidates:
+                    good = [min(candidates, key=lambda s: s.no_speech_prob)]
+                else:
+                    return "", "en"
+            text = " ".join(s.text for s in good).strip()
+        if not text:
+            return "", "en"
         if _re_tr.search(r"(.)\1{15,}", text):
             print(f"[Audio] STT: (char-run hallucination filtered): '{text[:80]}'")
             return "", "en"
@@ -1577,6 +1591,7 @@ def test_tool_intent_map_every_value_points_to_valid_label():
 
 # ── VISION_ROADMAP P3.21 → P3.26 Phase 3A — privacy model config scaffolding ──
 
+@pytest.mark.privacy_critical
 def test_privacy_levels_exhaustive_and_frozen():
     """P3.21/3A.1: PRIVACY_LEVELS is the exhaustive, locked tier set. A new
     tier ('secret'/'room_private'/etc.) requires a deliberate code change
@@ -1587,6 +1602,7 @@ def test_privacy_levels_exhaustive_and_frozen():
     assert isinstance(PRIVACY_LEVELS, frozenset)
 
 
+@pytest.mark.privacy_critical
 def test_privacy_default_is_personal_fail_closed():
     """P3.21/3A.1: novel attributes without explicit classification default to
     'personal' — the most restrictive owner-visible tier. Fail-closed policy:
@@ -1596,6 +1612,7 @@ def test_privacy_default_is_personal_fail_closed():
     assert PRIVACY_LEVEL_DEFAULT in PRIVACY_LEVELS
 
 
+@pytest.mark.privacy_critical
 def test_privacy_static_map_values_valid():
     """P3.21/3A.1: every value in the static fast-path map MUST be a valid
     PRIVACY_LEVEL, otherwise the retrieval site would see a bogus level and
@@ -1743,6 +1760,7 @@ async def test_classify_privacy_llm_malformed_json_fails_closed_no_cache(
 
 # ── VISION_ROADMAP P3.3 / Session 95 3A.3 — visibility clause SQL helper ───
 
+@pytest.mark.privacy_critical
 def test_visibility_clause_best_friend_excludes_only_system_only():
     """3A.3 / 3A.4.6: revised owner-access model — best_friend (household
     owner) has unconditional access to every non-mechanical fact. Single
@@ -1760,6 +1778,7 @@ def test_visibility_clause_best_friend_excludes_only_system_only():
     assert params == []
 
 
+@pytest.mark.privacy_critical
 def test_visibility_clause_non_best_friend_sees_public_own_personal_not_household():
     """3A.3: non-best-friend speakers (strangers, visitors) get public +
     their own personal ONLY. Household tier is the critical exclusion —
@@ -1774,6 +1793,7 @@ def test_visibility_clause_non_best_friend_sees_public_own_personal_not_househol
     assert params == ["lexi_xyz"]
 
 
+@pytest.mark.privacy_critical
 def test_visibility_clause_no_best_friend_id_acts_as_non_privileged():
     """3A.3: pre-first-boot / best_friend not yet set (None) means nobody
     has owner privilege. Household tier excluded universally. Matches the
@@ -1783,6 +1803,7 @@ def test_visibility_clause_no_best_friend_id_acts_as_non_privileged():
     assert "privacy_level = 'household'" not in clause
 
 
+@pytest.mark.privacy_critical
 def test_visibility_clause_never_permits_system_only():
     """3A.3 / 3A.4.6: system_only is the single 'never disclose' tier.
     No (requester, best_friend) combination should yield a clause that
@@ -1802,6 +1823,7 @@ def test_visibility_clause_never_permits_system_only():
             assert "!= 'system_only'" in clause
 
 
+@pytest.mark.privacy_critical
 def test_visibility_clause_composes_cleanly_with_and():
     """3A.3: the returned clause must be wrapped so caller composition with
     outer AND doesn't accidentally mix OR precedence. Per-tier predicates
@@ -1816,6 +1838,7 @@ def test_visibility_clause_composes_cleanly_with_and():
     assert "WHERE entity = ? AND ((" in composed
 
 
+@pytest.mark.privacy_critical
 def test_visibility_clause_params_align_with_placeholders():
     """3A.3: SQL driver will throw if ? count != params length. Verify
     across all 3 distinct shapes (best_friend, non-best-friend, no-bf).
@@ -2623,6 +2646,7 @@ def test_report_identity_mismatch_description_hardens_against_prior_activity_que
     )
 
 
+@pytest.mark.privacy_critical
 def test_search_memory_description_covers_cross_person_recall():
     """Session 98 Bug B: complementary positive framing — the tool that
     SHOULD be called for 'who were you talking to?' must explicitly
@@ -3377,6 +3401,15 @@ async def test_background_scan_uses_temporal_pooling():
     mock_temporal.pool_depth.return_value = 5  # deep pool → no penalty threshold
     mock_db       = MagicMock(); mock_db.recognize.return_value = (None, None, 0.0)
 
+    # P0.R6 D3 — embedding dispatch moved from direct `embedder.embed(...)`
+    # to `await hw.run_heavy("adaface_embed", ...)` (subprocess worker).
+    # Mock the worker entry point to return pre-canned bytes matching what
+    # the production path would produce (1-D float32 ndarray serialized
+    # via .tobytes()). Without this stub the call would attempt a real
+    # subprocess spawn during the test.
+    async def _hw_stub(task_name, fn, *args, **kwargs):
+        return _np.ones(512, dtype=_np.float32).tobytes()
+
     orig_scan_last      = pipeline._vision_face_scan_last
     orig_prev_count     = pipeline._vision_frame_store.peek_prev_det_count()
 
@@ -3384,7 +3417,8 @@ async def test_background_scan_uses_temporal_pooling():
     pipeline._vision_face_scan_last = 0.0
     pipeline._vision_frame_store._sync_set_prev_det_count(0)
 
-    with patch("pipeline.face_quality_score", return_value=0.8):
+    with patch("pipeline.face_quality_score", return_value=0.8), \
+         patch("pipeline.hw.run_heavy", side_effect=_hw_stub):
         task = asyncio.create_task(
             _background_vision_loop(mock_camera, mock_detector, mock_embedder, mock_temporal, mock_db)
         )
@@ -3431,8 +3465,13 @@ async def test_background_scan_uses_adaptive_threshold():
     pipeline._vision_face_scan_last = 0.0
     pipeline._vision_frame_store._sync_set_prev_det_count(0)
 
+    # P0.R6 D3 — same hw.run_heavy stub as test_background_scan_uses_temporal_pooling.
+    async def _hw_stub(task_name, fn, *args, **kwargs):
+        return _np.ones(512, dtype=_np.float32).tobytes()
+
     quality = 0.9  # high quality → threshold should drop below base
-    with patch("pipeline.face_quality_score", return_value=quality):
+    with patch("pipeline.face_quality_score", return_value=quality), \
+         patch("pipeline.hw.run_heavy", side_effect=_hw_stub):
         task = asyncio.create_task(
             _background_vision_loop(mock_camera, mock_detector, mock_embedder, mock_temporal, mock_db)
         )
@@ -6299,7 +6338,7 @@ async def test_accumulate_voice_updates_gallery_for_enrolled_stranger(tmp_path):
     Step 3: session needs identity_evidence with a witness path open (bootstrap credits
     from engagement-gate open is the canonical way to enable first-turn accumulation)."""
     import numpy as np
-    from unittest.mock import patch
+    from unittest.mock import patch, AsyncMock
     from core.db import FaceDB
     import time as _t
 
@@ -6322,7 +6361,8 @@ async def test_accumulate_voice_updates_gallery_for_enrolled_stranger(tmp_path):
                                           now=_t.time(),
                                           bootstrap_credits=_pl.N_INITIAL_VOICE_BOOTSTRAP)
 
-    with patch("pipeline.voice_mod.embed", return_value=fake_emb):
+    # P0.R6.Y D3: voice_mod.embed is async; patch with AsyncMock.
+    with patch("pipeline.voice_mod.embed", new=AsyncMock(return_value=fake_emb)):
         await _pl._accumulate_voice(stranger_id, audio, db)
 
     assert _pl._voice_gallery_store.peek_gallery(stranger_id) is not None, \
@@ -6360,35 +6400,46 @@ async def test_voice_accumulation_refused_with_no_witness():
 
 # ── Within-utterance diarization (Issue 2) ───────────────────────────────────
 
-def test_diarize_returns_empty_when_audio_too_short():
-    """diarize() must return [] when audio is shorter than DIARIZE_MIN_SECS."""
+async def test_diarize_returns_empty_when_audio_too_short():
+    """diarize() must return [] when audio is shorter than DIARIZE_MIN_SECS.
+
+    P0.R6.Y D3 migration: diarize() is async; await the call.
+    """
     import numpy as np
     from core.voice import diarize
     from core.config import DIARIZE_MIN_SECS, MIC_SAMPLE_RATE
 
     short_audio = np.zeros(int(DIARIZE_MIN_SECS * MIC_SAMPLE_RATE) - 1, dtype=np.float32)
-    result = diarize(short_audio, voice_gallery={})
+    result = await diarize(short_audio, voice_gallery={})
     assert result == [], f"Expected [] for short audio, got {result}"
 
 
-def test_diarize_returns_empty_when_embedder_unavailable():
-    """diarize() must return [] when the ECAPA embedder is not loaded."""
+async def test_diarize_returns_empty_when_embedder_unavailable():
+    """diarize() must return [] when the ECAPA embedder is not loaded.
+
+    P0.R6.Y D3 migration: embed() now dispatches to hw.run_heavy; the
+    ECAPA-embedder-not-loaded condition is now represented by the worker
+    returning None. Patches embed() to return None via AsyncMock.
+    """
     import numpy as np
-    from unittest.mock import patch
+    from unittest.mock import patch, AsyncMock
     import core.voice as _voice_mod
     from core.config import DIARIZE_MIN_SECS, MIC_SAMPLE_RATE
 
     audio = np.zeros(int(DIARIZE_MIN_SECS * MIC_SAMPLE_RATE) * 2, dtype=np.float32)
-    # Patch _embedder to None (model not loaded)
-    with patch.object(_voice_mod, "_embedder", None):
-        result = _voice_mod.diarize(audio, voice_gallery={})
+    # P0.R6.Y D3: simulate "embedder not loaded" via embed() returning None.
+    with patch("core.voice.embed", new=AsyncMock(return_value=None)):
+        result = await _voice_mod.diarize(audio, voice_gallery={})
     assert result == []
 
 
-def test_diarize_returns_empty_for_single_speaker():
-    """diarize() must return [] when all windows have high cosine similarity (one speaker)."""
+async def test_diarize_returns_empty_for_single_speaker():
+    """diarize() must return [] when all windows have high cosine similarity (one speaker).
+
+    P0.R6.Y D3 migration: async cascade; patch embed via AsyncMock.
+    """
     import numpy as np
-    from unittest.mock import patch
+    from unittest.mock import patch, AsyncMock
     import core.voice as _voice_mod
     from core.config import DIARIZE_MIN_SECS, MIC_SAMPLE_RATE, VOICE_EMBEDDING_DIM
 
@@ -6399,8 +6450,8 @@ def test_diarize_returns_empty_for_single_speaker():
     same_emb /= np.linalg.norm(same_emb)
 
     with patch.object(_voice_mod, "_embedder", object()):
-        with patch("core.voice.embed", return_value=same_emb):
-            result = _voice_mod.diarize(audio, voice_gallery={})
+        with patch("core.voice.embed", new=AsyncMock(return_value=same_emb)):
+            result = await _voice_mod.diarize(audio, voice_gallery={})
 
     assert result == [], f"Expected [] for single speaker, got {result}"
 
@@ -6411,16 +6462,19 @@ def test_diarize_returns_empty_for_single_speaker():
            "unavailable on Windows dev due to torchaudio DLL crash (OSError "
            "0xc0000139) — stub returns MagicMock([]) not real cosine-valley output",
 )
-def test_diarize_returns_two_segments_on_speaker_change():
+async def test_diarize_returns_two_segments_on_speaker_change():
     """Legacy ECAPA-valley backend (``_diarize_ecapa_valley``) returns 2
     segments when a clear cosine valley is detected. Session 88 P2 moved
     the public ``diarize()`` to pyannote by default — this test targets
     the ECAPA backend directly since the behavior under test (cosine-
     valley binary split from faked embeddings) is specific to that
     backend. Routing through ``diarize()`` would hit pyannote, which has
-    its own segmentation model that ignores our monkeypatched ``embed``."""
+    its own segmentation model that ignores our monkeypatched ``embed``.
+
+    P0.R6.Y D3 migration: async cascade; patch embed + identify via AsyncMock.
+    """
     import numpy as np
-    from unittest.mock import patch
+    from unittest.mock import patch, AsyncMock
     import core.voice as _voice_mod
     from core.config import (
         DIARIZE_MIN_SECS, MIC_SAMPLE_RATE, VOICE_EMBEDDING_DIM,
@@ -6441,10 +6495,10 @@ def test_diarize_returns_two_segments_on_speaker_change():
         return emb_a if call_cnt[0] <= 4 else emb_b
 
     with patch.object(_voice_mod, "_embedder", object()):
-        with patch("core.voice.embed", side_effect=_fake_embed):
+        with patch("core.voice.embed", new=AsyncMock(side_effect=_fake_embed)):
             # identify() calls embed() too — patch identify to avoid recursion
-            with patch("core.voice.identify", return_value=(None, 0.0)):
-                result = _voice_mod._diarize_ecapa_valley(audio, voice_gallery={})
+            with patch("core.voice.identify", new=AsyncMock(return_value=(None, 0.0))):
+                result = await _voice_mod._diarize_ecapa_valley(audio, voice_gallery={})
 
     assert len(result) == 2, f"Expected 2 segments, got {len(result)}"
     assert result[0]["start_sample"] == 0, "First segment must start at 0"
@@ -6526,25 +6580,29 @@ def _fake_pipeline(return_annotation: _FakeAnnotation):
         "tests/test_infra_debt_allowlist.py::INFRA_DEBT_FAILURES."
     ),
 )
-def test_diarize_drops_segments_below_min_segment_secs():
+async def test_diarize_drops_segments_below_min_segment_secs():
     """P2.4 policy: pyannote segments shorter than DIARIZE_MIN_SEGMENT_SECS
     (0.5s) are dropped entirely — ECAPA is too noisy below this bound AND
     pyannote itself often low-confidences these. A 0.3s segment paired with
-    a 1.5s segment must produce exactly one output (the 1.5s one)."""
+    a 1.5s segment must produce exactly one output (the 1.5s one).
+
+    P0.R6.Y D3 migration: async cascade; patch identify via AsyncMock.
+    """
     import numpy as np
-    from unittest.mock import patch
+    from unittest.mock import patch, AsyncMock
     import core.voice as _voice_mod
     from core.config import MIC_SAMPLE_RATE
 
     audio = np.zeros(3 * MIC_SAMPLE_RATE, dtype=np.float32)   # 3s @ 16k
-    ann = _FakeAnnotation([
-        (_FakeSegment(0.0, 0.3), "t0", "SPEAKER_00"),        # too short — drop
-        (_FakeSegment(0.5, 2.0), "t1", "SPEAKER_01"),        # 1.5s — keep + attribute
-    ])
-    fake = _fake_pipeline(ann)
-    with patch.object(_voice_mod, "_load_pyannote_pipeline", return_value=fake), \
-         patch("core.voice.identify", return_value=(None, 0.0)):
-        segs = _voice_mod.diarize(audio, voice_gallery={})
+    # P0.R6.Z D3.b: worker returns list[tuple[float, float, str]] (Q2 (a)
+    # serialization). Mock hw.run_heavy directly to skip the subprocess.
+    segments_raw = [
+        (0.0, 0.3, "SPEAKER_00"),   # too short — drop
+        (0.5, 2.0, "SPEAKER_01"),   # 1.5s — keep + attribute
+    ]
+    with patch("core.heavy_worker.run_heavy", new=AsyncMock(return_value=segments_raw)), \
+         patch("core.voice.identify", new=AsyncMock(return_value=(None, 0.0))):
+        segs = await _voice_mod.diarize(audio, voice_gallery={})
     assert len(segs) == 1, f"expected 1 (0.3s dropped), got {len(segs)}: {segs}"
     assert segs[0]["speaker_label"] == "SPEAKER_01"
 
@@ -6559,25 +6617,28 @@ def test_diarize_drops_segments_below_min_segment_secs():
         "Remediation: P0.R5 pyannote vendor patch."
     ),
 )
-def test_diarize_short_segment_drops_attribution_keeps_label():
+async def test_diarize_short_segment_drops_attribution_keeps_label():
     """P2.4 policy: segments in the DIARIZE_MIN_SEGMENT_SECS–DIARIZE_MIN_EMBED_SECS
     band (0.5s–1.0s) are kept in the output — pyannote's segmentation info
     is preserved — but speaker_id is None because ECAPA needs ≥1.0s for a
     reliable embedding. speaker_label still set so downstream can still
-    differentiate speakers within the call."""
+    differentiate speakers within the call.
+
+    P0.R6.Y D3 migration: async cascade; patch identify via AsyncMock.
+    """
     import numpy as np
-    from unittest.mock import patch
+    from unittest.mock import patch, AsyncMock
     import core.voice as _voice_mod
     from core.config import MIC_SAMPLE_RATE
 
     audio = np.zeros(2 * MIC_SAMPLE_RATE, dtype=np.float32)
-    ann = _FakeAnnotation([
-        (_FakeSegment(0.0, 0.7), "t0", "SPEAKER_00"),   # 0.7s — keep, no attribute
-    ])
-    fake = _fake_pipeline(ann)
-    with patch.object(_voice_mod, "_load_pyannote_pipeline", return_value=fake), \
-         patch("core.voice.identify", return_value=("p1", 0.9)) as mock_identify:
-        segs = _voice_mod.diarize(audio, voice_gallery={"p1": np.ones(192) / (192**0.5)})
+    # P0.R6.Z D3.b: worker returns list[tuple]; mock hw.run_heavy.
+    segments_raw = [
+        (0.0, 0.7, "SPEAKER_00"),   # 0.7s — keep, no attribute
+    ]
+    with patch("core.heavy_worker.run_heavy", new=AsyncMock(return_value=segments_raw)), \
+         patch("core.voice.identify", new=AsyncMock(return_value=("p1", 0.9))) as mock_identify:
+        segs = await _voice_mod.diarize(audio, voice_gallery={"p1": np.ones(192) / (192**0.5)})
     assert len(segs) == 1
     assert segs[0]["speaker_id"] is None, (
         "segment in 0.5-1.0s band must NOT be attributed — ECAPA embedding "
@@ -6598,26 +6659,29 @@ def test_diarize_short_segment_drops_attribution_keeps_label():
         "Remediation: P0.R5 pyannote vendor patch."
     ),
 )
-def test_diarize_three_speaker_returns_distinct_labels():
+async def test_diarize_three_speaker_returns_distinct_labels():
     """P2 regression: pyannote's clustering must differentiate ≥3 speakers
     in a single call, with each segment carrying a distinct speaker_label.
     This is the core Phase 2 capability — legacy _diarize_ecapa_valley
-    silently fails on 3+ speakers (binary split only)."""
+    silently fails on 3+ speakers (binary split only).
+
+    P0.R6.Y D3 migration: async cascade; patch identify via AsyncMock.
+    """
     import numpy as np
-    from unittest.mock import patch
+    from unittest.mock import patch, AsyncMock
     import core.voice as _voice_mod
     from core.config import MIC_SAMPLE_RATE
 
     audio = np.zeros(6 * MIC_SAMPLE_RATE, dtype=np.float32)
-    ann = _FakeAnnotation([
-        (_FakeSegment(0.0, 2.0), "t0", "SPEAKER_00"),
-        (_FakeSegment(2.0, 4.0), "t1", "SPEAKER_01"),
-        (_FakeSegment(4.0, 6.0), "t2", "SPEAKER_02"),
-    ])
-    fake = _fake_pipeline(ann)
-    with patch.object(_voice_mod, "_load_pyannote_pipeline", return_value=fake), \
-         patch("core.voice.identify", return_value=(None, 0.0)):
-        segs = _voice_mod.diarize(audio, voice_gallery={})
+    # P0.R6.Z D3.b: worker returns list[tuple]; mock hw.run_heavy.
+    segments_raw = [
+        (0.0, 2.0, "SPEAKER_00"),
+        (2.0, 4.0, "SPEAKER_01"),
+        (4.0, 6.0, "SPEAKER_02"),
+    ]
+    with patch("core.heavy_worker.run_heavy", new=AsyncMock(return_value=segments_raw)), \
+         patch("core.voice.identify", new=AsyncMock(return_value=(None, 0.0))):
+        segs = await _voice_mod.diarize(audio, voice_gallery={})
     assert len(segs) == 3, f"expected 3 segments, got {len(segs)}"
     labels = {s["speaker_label"] for s in segs}
     assert len(labels) == 3, f"expected 3 distinct labels, got {labels}"
@@ -6634,26 +6698,29 @@ def test_diarize_three_speaker_returns_distinct_labels():
         "Remediation: P0.R5 pyannote vendor patch."
     ),
 )
-def test_diarize_empty_gallery_segments_still_have_speaker_label():
+async def test_diarize_empty_gallery_segments_still_have_speaker_label():
     """P2 edge case: empty voice_gallery → every segment gets
     speaker_id=None (ECAPA has nothing to match against), but
     speaker_label is still populated from pyannote's clustering so
     downstream multi-speaker transcribe can still separate speakers
-    WITHIN the call."""
+    WITHIN the call.
+
+    P0.R6.Y D3 migration: async cascade; patch identify via AsyncMock.
+    """
     import numpy as np
-    from unittest.mock import patch
+    from unittest.mock import patch, AsyncMock
     import core.voice as _voice_mod
     from core.config import MIC_SAMPLE_RATE
 
     audio = np.zeros(4 * MIC_SAMPLE_RATE, dtype=np.float32)
-    ann = _FakeAnnotation([
-        (_FakeSegment(0.0, 2.0), "t0", "SPEAKER_00"),
-        (_FakeSegment(2.0, 4.0), "t1", "SPEAKER_01"),
-    ])
-    fake = _fake_pipeline(ann)
-    with patch.object(_voice_mod, "_load_pyannote_pipeline", return_value=fake), \
-         patch("core.voice.identify", return_value=(None, 0.0)):
-        segs = _voice_mod.diarize(audio, voice_gallery={})
+    # P0.R6.Z D3.b: worker returns list[tuple]; mock hw.run_heavy.
+    segments_raw = [
+        (0.0, 2.0, "SPEAKER_00"),
+        (2.0, 4.0, "SPEAKER_01"),
+    ]
+    with patch("core.heavy_worker.run_heavy", new=AsyncMock(return_value=segments_raw)), \
+         patch("core.voice.identify", new=AsyncMock(return_value=(None, 0.0))):
+        segs = await _voice_mod.diarize(audio, voice_gallery={})
     assert len(segs) == 2
     assert all(s["speaker_id"] is None for s in segs)
     assert {s["speaker_label"] for s in segs} == {"SPEAKER_00", "SPEAKER_01"}
@@ -6669,28 +6736,32 @@ def test_diarize_empty_gallery_segments_still_have_speaker_label():
         "Remediation: P0.R5 pyannote vendor patch."
     ),
 )
-def test_diarize_speaker_id_attribution_via_ecapa_gallery():
+async def test_diarize_speaker_id_attribution_via_ecapa_gallery():
     """P2 happy path: segments ≥1.0s run ECAPA, attribute via
     voice_gallery match. Mock identify to return a known (pid, score)
     and assert it flows into the output segment. This is the real value-
     add over legacy: we preserve both pyannote's clustering (label) AND
-    cross-chunk identity (speaker_id from gallery)."""
+    cross-chunk identity (speaker_id from gallery).
+
+    P0.R6.Y D3 migration: async cascade; patch identify via AsyncMock
+    (side_effect sync callable returns from iter — AsyncMock wraps).
+    """
     import numpy as np
-    from unittest.mock import patch
+    from unittest.mock import patch, AsyncMock
     import core.voice as _voice_mod
     from core.config import MIC_SAMPLE_RATE
 
     audio = np.zeros(3 * MIC_SAMPLE_RATE, dtype=np.float32)
-    ann = _FakeAnnotation([
-        (_FakeSegment(0.0, 1.5), "t0", "SPEAKER_00"),
-        (_FakeSegment(1.5, 3.0), "t1", "SPEAKER_01"),
-    ])
-    fake = _fake_pipeline(ann)
+    # P0.R6.Z D3.b: worker returns list[tuple]; mock hw.run_heavy.
+    segments_raw = [
+        (0.0, 1.5, "SPEAKER_00"),
+        (1.5, 3.0, "SPEAKER_01"),
+    ]
     # identify returns different tuples on successive calls.
     identify_returns = iter([("jagan_abc", 0.85), ("wasim_def", 0.78)])
-    with patch.object(_voice_mod, "_load_pyannote_pipeline", return_value=fake), \
-         patch("core.voice.identify", side_effect=lambda *a, **kw: next(identify_returns)):
-        segs = _voice_mod.diarize(audio, voice_gallery={"jagan_abc": np.ones(192)})
+    with patch("core.heavy_worker.run_heavy", new=AsyncMock(return_value=segments_raw)), \
+         patch("core.voice.identify", new=AsyncMock(side_effect=lambda *a, **kw: next(identify_returns))):
+        segs = await _voice_mod.diarize(audio, voice_gallery={"jagan_abc": np.ones(192)})
     assert segs[0]["speaker_id"] == "jagan_abc"
     assert segs[0]["speaker_score"] == pytest.approx(0.85)
     assert segs[0]["speaker_label"] == "SPEAKER_00"
@@ -6754,31 +6825,39 @@ def test_pipeline_consumer_handles_n_segment_diarize_output():
         "Remediation: P0.R5 pyannote vendor patch."
     ),
 )
-def test_diarize_pyannote_error_falls_back_to_ecapa_and_bumps_counter():
+async def test_diarize_pyannote_error_falls_back_to_ecapa_and_bumps_counter():
     """P2 fail-safe (reviewer's Session 88 observability ask): pyannote
     runtime error with DIARIZATION_FALLBACK_ON_ERROR=True must (1) call
     _diarize_ecapa_valley instead, (2) bump _diarize_fallback_count so
     Phase 5 drift detection can spot pyannote-regression climbing
-    fallback rate before it becomes a silent production bug."""
+    fallback rate before it becomes a silent production bug.
+
+    P0.R6.Y D3 migration: async cascade; _diarize_ecapa_valley fallback
+    is now async (Shape B patch.object migration — fallback_mock uses
+    AsyncMock).
+    """
     import numpy as np
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import patch, AsyncMock
     import core.voice as _voice_mod
     from core.config import MIC_SAMPLE_RATE
 
     audio = np.zeros(3 * MIC_SAMPLE_RATE, dtype=np.float32)
 
-    class _FailingPipeline:
-        def __call__(self, _waveform_dict):
-            raise RuntimeError("simulated pyannote runtime failure")
-
     fallback_sentinel = [{"start_sample": 0, "end_sample": len(audio),
                           "speaker_id": "p1", "speaker_score": 0.9}]
-    fallback_mock = MagicMock(return_value=fallback_sentinel)
 
     before = _voice_mod.get_diarize_stats()["fallback_count"]
-    with patch.object(_voice_mod, "_load_pyannote_pipeline", return_value=_FailingPipeline()), \
-         patch.object(_voice_mod, "_diarize_ecapa_valley", fallback_mock):
-        segs = _voice_mod.diarize(audio, voice_gallery={"p1": np.ones(192)})
+    # P0.R6.Z D3.b: pyannote pipeline now lives subprocess-side. To simulate
+    # a pyannote runtime failure, mock hw.run_heavy to RAISE — the outer
+    # except in _diarize_pyannote catches and routes to ecapa_valley
+    # fallback per existing DIARIZATION_FALLBACK_ON_ERROR logic.
+    # P0.R6.Y D3: _diarize_ecapa_valley is async → inline AsyncMock so
+    # A10 sees it within the 200-char context window.
+    with patch("core.heavy_worker.run_heavy",
+               new=AsyncMock(side_effect=RuntimeError("simulated pyannote runtime failure"))), \
+         patch.object(_voice_mod, "_diarize_ecapa_valley",
+                      AsyncMock(return_value=fallback_sentinel)) as fallback_mock:
+        segs = await _voice_mod.diarize(audio, voice_gallery={"p1": np.ones(192)})
     after = _voice_mod.get_diarize_stats()["fallback_count"]
 
     fallback_mock.assert_called_once()
@@ -8162,9 +8241,11 @@ async def test_accumulate_voice_replenishes_bootstrap_for_engaged_stranger():
     audio = np.zeros(24000, dtype=np.float32)
     # Patch identify so the self-match branch doesn't attempt real ECAPA.
     # For bootstrap path, v_pid doesn't need to match person_id.
-    with patch("pipeline.voice_mod.identify", return_value=(None, 0.0)), \
+    # P0.R6.Y D3: voice_mod.identify + embed are async; use AsyncMock.
+    from unittest.mock import AsyncMock as _AsyncMock  # noqa: PLC0415
+    with patch("pipeline.voice_mod.identify", new=_AsyncMock(return_value=(None, 0.0))), \
          patch("pipeline.voice_mod.embed",
-               return_value=np.ones(192, dtype=np.float32) / (192**0.5)):
+               new=_AsyncMock(return_value=np.ones(192, dtype=np.float32) / (192**0.5))):
         await _pl._accumulate_voice("p1", audio, mock_db)
     # The replenishment should have granted 1 credit, then Path C fired.
     # Accumulation fired → add_voice_embedding called.
@@ -8197,10 +8278,13 @@ async def test_accumulate_voice_no_replenish_when_gate_still_active():
 
 async def test_accumulate_voice_mature_profile_skipped_when_voice_weak():
     """Step 3: face witness and bootstrap both absent; mature profile gate-pass
-    (path B) but the voice didn't self-match → skip this sample."""
+    (path B) but the voice didn't self-match → skip this sample.
+
+    P0.R6.Y D3: voice_mod.identify is async; use AsyncMock.
+    """
     import numpy as np
     import time as _t
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import MagicMock, patch, AsyncMock
     import pipeline as _pl
 
     await _pl._session_store.open_session("p1", "test", "stranger", "voice", now=_t.time(),
@@ -8208,7 +8292,7 @@ async def test_accumulate_voice_mature_profile_skipped_when_voice_weak():
     await _pl._session_store.update_voice_heard("p1", conf=0.60, ts=_t.time())
     mock_db = MagicMock()
     audio = np.zeros(16000, dtype=np.float32)
-    with patch("pipeline.voice_mod.identify", return_value=(None, 0.0)):
+    with patch("pipeline.voice_mod.identify", new=AsyncMock(return_value=(None, 0.0))):
         await _pl._accumulate_voice("p1", audio, mock_db)
     mock_db.add_voice_embedding.assert_not_called()
 
@@ -8531,6 +8615,7 @@ def test_scene_block_disputed_best_friend_labeled_disputed():
     assert "(best friend)" not in result
 
 
+@pytest.mark.privacy_critical
 def test_cross_person_excerpts_disputed_best_friend_labeled_disputed(monkeypatch):
     """Finding M — same rule for the cross-person excerpts helper: disputed
     session suppresses the best_friend role label.
@@ -8596,6 +8681,7 @@ def test_cross_person_excerpts_disputed_best_friend_labeled_disputed(monkeypatch
     assert "Jagan (best friend" not in result
 
 
+@pytest.mark.privacy_critical
 def test_build_cross_person_excerpts_renamed():
     """_build_room_context renamed to _build_cross_person_excerpts — still works."""
     import pipeline as _pl
@@ -8606,15 +8692,24 @@ def test_build_cross_person_excerpts_renamed():
 # ── #36 vad_filter=False ──────────────────────────────────────────────────────
 
 def test_whisper_vad_filter_disabled():
-    """Pipeline's own VAD gates recording; Whisper's internal VAD must be off."""
+    """Pipeline's own VAD gates recording; Whisper's internal VAD must be off.
+
+    P0.R6.X migration: the model.transcribe(vad_filter=False) call moved from
+    core/audio.py into core/heavy_worker.py::whisper_transcribe_worker. Scan
+    BOTH files so the invariant survives the migration regardless of where
+    the inference call lives.
+    """
     import ast, pathlib
-    src = pathlib.Path("core/audio.py").read_text()
-    tree = ast.parse(src)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.keyword) and node.arg == "vad_filter":
-            assert ast.literal_eval(node.value) is False, "vad_filter must be False"
-            return
-    pytest.fail("vad_filter keyword not found in core/audio.py")
+    for path in ("core/audio.py", "core/heavy_worker.py"):
+        src = pathlib.Path(path).read_text()
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.keyword) and node.arg == "vad_filter":
+                assert ast.literal_eval(node.value) is False, (
+                    f"vad_filter must be False in {path}"
+                )
+                return
+    pytest.fail("vad_filter keyword not found in core/audio.py or core/heavy_worker.py")
 
 
 # ── #35 _maybe_record_silent_obs helper ──────────────────────────────────────
@@ -8957,32 +9052,20 @@ def test_audit_gallery_detects_poisoned_embeddings(tmp_path):
     db._conn.close()
 
 
-def test_repair_gallery_removes_outliers(tmp_path):
-    """repair_gallery(mode='remove') deletes outlier rows and rebuilds FAISS."""
+def test_gallery_audit_returns_outlier_ids_without_modification(tmp_path):
+    """FaceDB.gallery_audit() returns outlier_row_ids without modifying the DB.
+
+    P0.S9 D1 replacement: the original `test_repair_gallery_removes_outliers` +
+    `test_repair_gallery_flag_mode_does_not_modify` tests covered the
+    `core.audit.repair_gallery` duplicate that was a P0.5 inverse-check violation
+    (missing _index_lock + transaction + sentinel). P0.S9 D1 consolidated by
+    redirecting `audit_person.py --repair` to `FaceDB.prune_outlier_embeddings`
+    (the P0.5-correct paired-write site) and deleting `repair_gallery` entirely.
+    The original flag-mode test was a no-op preview equivalent to the direct
+    `db.gallery_audit()` read-only call exercised here.
+    """
     import numpy as np
     from core.db import FaceDB
-    from core.audit import repair_gallery, audit_gallery
-
-    db = FaceDB(db_path=tmp_path / "faces.db", faiss_path=tmp_path / "faiss.index")
-    rng = np.random.default_rng(13)
-    good_base = rng.normal(0, 0.1, 512).astype(np.float32)
-    good_embs = [good_base + rng.normal(0, 0.01, 512).astype(np.float32) for _ in range(10)]
-    poison_embs = [-good_base + rng.normal(0, 0.01, 512).astype(np.float32) for _ in range(2)]
-    _seed_person(db, "carol", "Carol", good_embs + poison_embs)
-
-    removed = repair_gallery("carol", db, mode="remove")
-    assert removed >= 1
-
-    r = audit_gallery("carol", db)
-    assert r["total"] == 12 - removed
-    db._conn.close()
-
-
-def test_repair_gallery_flag_mode_does_not_modify(tmp_path):
-    """repair_gallery(mode='flag') only counts outliers without deleting."""
-    import numpy as np
-    from core.db import FaceDB
-    from core.audit import repair_gallery
 
     db = FaceDB(db_path=tmp_path / "faces.db", faiss_path=tmp_path / "faiss.index")
     rng = np.random.default_rng(99)
@@ -8991,10 +9074,12 @@ def test_repair_gallery_flag_mode_does_not_modify(tmp_path):
     poison_embs = [-good_base + rng.normal(0, 0.01, 512).astype(np.float32) for _ in range(2)]
     _seed_person(db, "dave", "Dave", good_embs + poison_embs)
 
-    count_before = db._conn.execute("SELECT COUNT(*) FROM embeddings WHERE person_id='dave'").fetchone()[0]
-    repair_gallery("dave", db, mode="flag")
-    count_after = db._conn.execute("SELECT COUNT(*) FROM embeddings WHERE person_id='dave'").fetchone()[0]
-    assert count_before == count_after, "flag mode must not delete any rows"
+    pre_count = db._conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0]
+    results = db.gallery_audit(person_id="dave")
+    assert results, "gallery_audit should return non-empty results"
+    assert "outlier_row_ids" in results[0]
+    post_count = db._conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0]
+    assert post_count == pre_count, "gallery_audit must not modify DB"
     db._conn.close()
 
 
@@ -11624,30 +11709,26 @@ def test_build_system_prompt_marks_tools_not_available_for_known():
     assert "search_web: available" in p
 
 
-def test_transcribe_prints_stt_with_timestamp_and_latency(capsys, monkeypatch):
+async def test_transcribe_prints_stt_with_timestamp_and_latency(capsys, monkeypatch):
     """Step 1 observability: transcribe()'s STT print must include HH:MM:SS.mmm
-    and (Nms) latency tag so each line is latency-attributable."""
+    and (Nms) latency tag so each line is latency-attributable.
+
+    P0.R6.X migration: transcribe() is async and offloads to hw.run_heavy.
+    Monkeypatches hw.run_heavy to return the expected text without spinning
+    up a worker subprocess.
+    """
     import re
     import numpy as np
     from core import audio as _audio
+    from core import heavy_worker as _hw
 
-    # Stub Whisper so we don't pull models in the test.
-    # P0.S7.5.2 D4 — STT 1-word filter rejects bare "hello" (no terminal
-    # punctuation, not in allowlist). Use a multi-word transcript so the
-    # filter doesn't intercept this observability test.
-    class _FakeSeg:
-        def __init__(self):
-            self.text = "hello there"
-            self.no_speech_prob = 0.1
-            self.avg_logprob = -0.3
-    class _FakeModel:
-        def transcribe(self, *a, **k):
-            return [_FakeSeg()], None
+    async def _stub_run_heavy(task_name, fn, *args, **kwargs):
+        return ("hello there", kwargs.get("language", "en"))
 
-    monkeypatch.setattr(_audio, "_load_whisper", lambda: _FakeModel())
+    monkeypatch.setattr(_hw, "run_heavy", _stub_run_heavy)
     fake_audio = np.ones(16000, dtype=np.float32)
     capsys.readouterr()  # clear
-    text, lang = _audio.transcribe(fake_audio)
+    text, lang = await _audio.transcribe(fake_audio)
     out = capsys.readouterr().out
     assert text == "hello there"
     # STT line must have timestamp + latency tag
@@ -12597,6 +12678,7 @@ def test_s3b1_vision_state_wires_room_block():
 
 # ── P0.S7.D-C Phase 1 — flag-gate + D3 disputed-identity / best_friend role ─
 
+@pytest.mark.privacy_critical
 def test_p0_s7_dc_cross_person_excerpts_enabled_flag_defaults_false():
     """P0.S7.D-C Plan v1 §6 Phase 1 test 1 — the flag MUST default to False.
 
@@ -12622,6 +12704,7 @@ def test_p0_s7_dc_cross_person_excerpts_enabled_flag_defaults_false():
     )
 
 
+@pytest.mark.privacy_critical
 def test_p0_s7_dc_build_cross_person_excerpts_call_site_guarded_by_flag():
     """P0.S7.D-C Plan v1 §6 Phase 1 test 2 — source-inspection: the legacy
     block call site in `conversation_turn` MUST be guarded by the flag.
@@ -12662,6 +12745,7 @@ def test_p0_s7_dc_build_cross_person_excerpts_call_site_guarded_by_flag():
     ],
     ids=["0_disputed", "1_disputed", "N_disputed", "all_disputed"],
 )
+@pytest.mark.privacy_critical
 def test_p0_s7_dc_build_room_block_section1_renders_disputed_identity(
     n_disputed, n_total, case_name,
 ):
@@ -12726,6 +12810,7 @@ def test_p0_s7_dc_build_room_block_section1_renders_disputed_identity(
     _pl._session_store._sessions.clear()
 
 
+@pytest.mark.privacy_critical
 def test_p0_s7_dc_build_room_block_section1_renders_best_friend_role():
     """P0.S7.D-C Plan v1 §6 Phase 1 test 4 — Section 1 MUST render
     `(best_friend)` for the participant whose pid matches the passed
@@ -12780,6 +12865,7 @@ def test_p0_s7_dc_build_room_block_section1_renders_best_friend_role():
     _pl._session_store._sessions.clear()
 
 
+@pytest.mark.privacy_critical
 def test_p0_s7_dc_brain_context_summary_room_field_repointed_to_active_sessions():
     """P0.S7.D-C Plan v1 §6 Phase 2 test 5 — `[Brain] Context:` log line's
     `room=yes/no` field MUST be derived from `len(_all_snaps_ct) >= 2`
@@ -12825,6 +12911,7 @@ def test_p0_s7_dc_brain_context_summary_room_field_repointed_to_active_sessions(
     )
 
 
+@pytest.mark.privacy_critical
 def test_p0_s7_dc_no_room_context_prepending_when_flag_off():
     """P0.S7.D-C Plan v1 §6 Phase 3 test 6 + D7 structural invariant.
 
@@ -14227,6 +14314,7 @@ def test_s114_extract_prompt_has_relationship_extraction_rule():
     )
 
 
+@pytest.mark.privacy_critical
 def test_s114_visitor_alert_dedup_updates_promoted_alerts(tmp_path):
     """Session 114 Part 5 — `update_visitor_alert_for_promoted_person`
     rewrites prior VISITOR_ALERT nudges with the new name + 'known'
@@ -14270,6 +14358,7 @@ def test_s114_visitor_alert_dedup_updates_promoted_alerts(tmp_path):
         bdb._conn.close()
 
 
+@pytest.mark.privacy_critical
 def test_s114_visitor_alert_dedup_skips_unrelated_alerts(tmp_path):
     """Session 114 Part 5 — promotion update MUST NOT touch alerts
     for OTHER visitors (different visitor_id in metadata). Regression
@@ -14569,6 +14658,7 @@ def test_s115_strip_token_cache_removes_field():
 
 # ── Session 116 — presentation-grade logging pass ──────────────────────────
 
+@pytest.mark.privacy_critical
 def test_s116_query_knowledge_for_emits_privacy_audit_log(tmp_path, capsys):
     """Session 116 P1 #1+#2 — every privacy-filtered knowledge read must
     emit a `[Privacy] ... query_knowledge_for ...` line so an outside
@@ -14593,6 +14683,7 @@ def test_s116_query_knowledge_for_emits_privacy_audit_log(tmp_path, capsys):
         bdb._conn.close()
 
 
+@pytest.mark.privacy_critical
 def test_s116_classify_privacy_level_logs_static_map_path(capsys):
     """Session 116 P1 #3 — `_classify_privacy_level` static-map hits must
     log the path so an outside reviewer can audit which classification
@@ -15175,6 +15266,7 @@ def test_s111_conversation_entries_carry_ts_and_addressed_to():
     )
 
 
+@pytest.mark.privacy_critical
 def test_s111_cross_person_excerpts_filter_by_session_boundary(monkeypatch):
     """Session 111 Critical #2: `_build_cross_person_excerpts` must
     exclude messages whose ts predates the other session's
@@ -15224,6 +15316,7 @@ def test_s111_cross_person_excerpts_filter_by_session_boundary(monkeypatch):
     )
 
 
+@pytest.mark.privacy_critical
 def test_s111_cross_person_excerpts_render_addressee_and_age(monkeypatch):
     """Session 111 Critical #3 + HIGH timestamps: assistant excerpts
     render 'you [to X]' when addressed_to is present; each line gets
@@ -15563,32 +15656,31 @@ def test_log_turn_accepts_new_kwargs_when_supplied(tmp_path):
         db._conn.close()
 
 
-def test_transcribe_filters_char_level_repetition_hallucination(capsys, monkeypatch):
+async def test_transcribe_filters_char_level_repetition_hallucination(capsys, monkeypatch):
     """Session 105 Obs A: Whisper emits long runs of a single character
     ('Mmmmm' × 500) when it hallucinates on ambient noise. 2026-04-23
     canary line 444 had this artifact. Word-level filter doesn't catch
     it (single token). Char-run regex `(.)\\1{15,}` matches 16+ char
-    runs — no natural utterance produces that pattern in STT output."""
+    runs — no natural utterance produces that pattern in STT output.
+
+    P0.R6.X migration: transcribe() is async and offloads to hw.run_heavy.
+    Monkeypatches hw.run_heavy to return the 500-char hallucination shape;
+    the main-process filter chain (Q2 (b) lock) catches it.
+    """
     import numpy as np
     from core import audio as _audio
-
-    class _FakeSeg:
-        def __init__(self, text):
-            self.text = text
-            self.no_speech_prob = 0.1
-            self.avg_logprob = -0.3
-    class _FakeModel:
-        def __init__(self, seg_text):
-            self._seg_text = seg_text
-        def transcribe(self, *a, **k):
-            return [_FakeSeg(self._seg_text)], None
+    from core import heavy_worker as _hw
 
     # 500-char run of 'M' — the exact canary shape.
     mmmm = "M" * 500
-    monkeypatch.setattr(_audio, "_load_whisper", lambda: _FakeModel(mmmm))
+
+    async def _stub_run_heavy(task_name, fn, *args, **kwargs):
+        return (mmmm, kwargs.get("language", "en"))
+
+    monkeypatch.setattr(_hw, "run_heavy", _stub_run_heavy)
     fake_audio = np.ones(16000, dtype=np.float32)
     capsys.readouterr()
-    text, _ = _audio.transcribe(fake_audio)
+    text, _ = await _audio.transcribe(fake_audio)
     out = capsys.readouterr().out
     assert text == "", (
         "char-run hallucination must be filtered to empty string — no "
@@ -15600,25 +15692,23 @@ def test_transcribe_filters_char_level_repetition_hallucination(capsys, monkeypa
     )
 
 
-def test_transcribe_allows_short_char_runs(capsys, monkeypatch):
+async def test_transcribe_allows_short_char_runs(capsys, monkeypatch):
     """Session 105 Obs A safety: real utterances with short char runs
     ('Ohhh', 'Mmm', 'Aaaa') must pass through. Threshold 15+ means
-    6-char runs are fine."""
+    6-char runs are fine.
+
+    P0.R6.X migration: transcribe() is async and offloads to hw.run_heavy.
+    """
     import numpy as np
     from core import audio as _audio
+    from core import heavy_worker as _hw
 
-    class _FakeSeg:
-        def __init__(self, text):
-            self.text = text
-            self.no_speech_prob = 0.1
-            self.avg_logprob = -0.3
-    class _FakeModel:
-        def transcribe(self, *a, **k):
-            return [_FakeSeg("Ohhhh that's interesting")], None
+    async def _stub_run_heavy(task_name, fn, *args, **kwargs):
+        return ("Ohhhh that's interesting", kwargs.get("language", "en"))
 
-    monkeypatch.setattr(_audio, "_load_whisper", lambda: _FakeModel())
+    monkeypatch.setattr(_hw, "run_heavy", _stub_run_heavy)
     fake_audio = np.ones(16000, dtype=np.float32)
-    text, _ = _audio.transcribe(fake_audio)
+    text, _ = await _audio.transcribe(fake_audio)
     assert text == "Ohhhh that's interesting", (
         "4-char 'h' run must pass — threshold is 15+ consecutive chars"
     )

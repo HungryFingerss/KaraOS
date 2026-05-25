@@ -85,10 +85,12 @@ def test_remainder_variable_not_in_gate():
 # ── Behavioral self-tests (stubs installed inline) ───────────────────────────
 
 if "core.voice" not in sys.modules:
+    # P0.R6.Y D3 cascade: identify + diarize are async; stubs use AsyncMock.
+    from unittest.mock import AsyncMock as _AsyncMock  # noqa: PLC0415
     _voice_stub = types.ModuleType("core.voice")
     _voice_stub.load_speaker_embedder = MagicMock(return_value=None)
-    _voice_stub.identify = MagicMock(return_value=(None, 0.0))
-    _voice_stub.diarize = MagicMock(return_value=[])
+    _voice_stub.identify = _AsyncMock(return_value=(None, 0.0))
+    _voice_stub.diarize = _AsyncMock(return_value=[])
     _voice_stub.get_diarize_stats = MagicMock(return_value={})
     sys.modules["core.voice"] = _voice_stub
 

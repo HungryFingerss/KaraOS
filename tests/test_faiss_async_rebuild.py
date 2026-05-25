@@ -219,3 +219,107 @@ async def test_rebuild_async_concurrent_invocations_serialize(db):
     )
     # Final index must still be correct
     assert db.index.ntotal == 4
+
+
+# ── P0.B2 D5.3 — Concurrent add_embedding row_id tracking ─────────────────────
+
+async def test_add_embedding_during_async_rebuild_tracks_row_id(db):
+    """P0.B2 D5.3 (fast-tier depth coverage): add_embedding racing with
+    rebuild_faiss_async writes its row_id into _pending_adds_during_rebuild as
+    a 3-tuple, and Phase 3's combined DB UPDATE batch writes the post-swap
+    faiss_idx back to the DB row.
+
+    Without D3's cursor.lastrowid + 3-tuple pending append + post-lock DB
+    UPDATE batch, the pending-add's DB row would carry the pre-swap faiss_idx
+    forever, drifting from the in-memory _idx_to_person mapping. recognize()
+    via that drifted row_id returns the wrong identity.
+
+    Per Plan v2 §4.2: existing db fixture + threading.Event coordination
+    (cross-thread Event is the correct primitive since slow_build runs in a
+    worker thread via run_in_executor; asyncio.Event would not signal across
+    the thread boundary).
+    """
+    _enroll(db, "p1")
+    for _ in range(5):
+        _insert_embedding(db, "p1")
+    # Snapshot the DB row ids so we can identify the post-add row deterministically.
+    pre_rebuild_row_ids = {
+        r[0] for r in db._conn.execute("SELECT id FROM embeddings").fetchall()
+    }
+    assert len(pre_rebuild_row_ids) == 5
+
+    build_started = threading.Event()
+    release_build = threading.Event()
+    orig_build = db._build_faiss_from_snapshot
+
+    def coordinating_build(snapshot):
+        build_started.set()
+        # Wait for the main loop to run add_embedding and signal go-ahead.
+        ok = release_build.wait(timeout=3.0)
+        assert ok, "release_build event was never set — test deadlock"
+        return orig_build(snapshot)
+
+    db._build_faiss_from_snapshot = coordinating_build
+
+    loop = asyncio.get_event_loop()
+    rebuild_task = asyncio.create_task(db.rebuild_faiss_async(loop))
+
+    # Yield so Phase 1 runs and rebuild dispatches to the executor where
+    # coordinating_build blocks until release_build is set.
+    await loop.run_in_executor(None, build_started.wait, 3.0)
+    assert db._rebuild_in_progress, "expected _rebuild_in_progress=True after Phase 1"
+
+    # Add a 6th embedding from a worker thread (add_embedding is sync).
+    new_emb_holder: list = []
+
+    def _add_in_thread():
+        emb = _random_embedding()
+        ok = db.add_embedding(
+            "p1", emb,
+            source="enrollment", confidence=0.9, anti_spoof_verdict=True,
+        )
+        assert ok, "add_embedding returned False"
+        new_emb_holder.append(emb)
+
+    t = threading.Thread(target=_add_in_thread)
+    t.start()
+    t.join(timeout=3.0)
+    assert new_emb_holder, "add_embedding timed out"
+
+    # 6th add must have enqueued a 3-tuple (vec, pid, row_id), not 2-tuple.
+    assert len(db._pending_adds_during_rebuild) == 1
+    pending = db._pending_adds_during_rebuild[0]
+    assert len(pending) == 3, (
+        f"pending entry must be (vec, pid, row_id); got {len(pending)}-tuple"
+    )
+    pending_vec, pending_pid, pending_row_id = pending
+    assert pending_pid == "p1"
+    # row_id must be the NEW row's id (not one of the pre-rebuild snapshot rows).
+    assert pending_row_id not in pre_rebuild_row_ids
+    db_new_row_ids = {
+        r[0] for r in db._conn.execute("SELECT id FROM embeddings").fetchall()
+    } - pre_rebuild_row_ids
+    assert db_new_row_ids == {pending_row_id}
+
+    # Release the build and let rebuild_faiss_async complete Phase 3+4.
+    release_build.set()
+    await rebuild_task
+
+    # All 6 entries in the new index.
+    assert db.index.ntotal == 6, (
+        f"expected ntotal=6 (5 snapshot + 1 pending), got {db.index.ntotal}"
+    )
+    # Pending row's DB faiss_idx must reflect its NEW in-memory position (5 —
+    # the last index appended during pending replay). Pre-fix the DB row would
+    # have kept the pre-swap value forever.
+    db_faiss_idx_for_new_row = db._conn.execute(
+        "SELECT faiss_idx FROM embeddings WHERE id = ?", (pending_row_id,),
+    ).fetchone()[0]
+    assert db_faiss_idx_for_new_row == 5, (
+        f"DB faiss_idx for pending row {pending_row_id} must be 5 (new "
+        f"in-memory position after Phase 3 replay); got {db_faiss_idx_for_new_row}"
+    )
+    # And recognize() via the new embedding returns the right identity — the
+    # full end-to-end invariant the D3 DB UPDATE batch protects.
+    pid, name, score = db.recognize(new_emb_holder[0], threshold=0.0)
+    assert pid == "p1", f"recognize returned wrong identity: pid={pid!r}"

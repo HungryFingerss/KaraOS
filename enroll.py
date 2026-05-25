@@ -78,6 +78,10 @@ def enroll(name: str, n_frames: int = 10, headless: bool = False):
                 continue
 
             embedding = embedder.embed(face_crop)
+            # P0.R1 D1: embed() now returns None on cascading CUDA+CPU failure.
+            if embedding is None:
+                print("[Enroll] ERROR: face embedding failed (CUDA+CPU cascade); aborting")
+                sys.exit(1)
             pending_embeddings.append((embedding, _en_verdict))
             if photo_frame is None:
                 photo_frame = frame

@@ -502,17 +502,50 @@ async def start_writer(db_path: Optional[Path] = None) -> None:
 
 
 async def stop_writer() -> None:
-    """Drain the queue + shutdown. Called during graceful pipeline exit."""
+    """Drain the queue + shutdown. Called during graceful pipeline exit.
+
+    P0.B5 D2 (Bug 8) fix: wrap `_queue.join()` with `asyncio.wait_for` to
+    bound the wait when `_writer_task` has died before sentinel put. Pre-fix:
+    `await _queue.join()` blocked forever because no consumer was calling
+    `task_done()`. Post-fix: timeout proceeds to cleanup; subsequent
+    `wait_for(_writer_task, ...)` surfaces the dead task via cancel path.
+    """
     global _queue, _writer_task, _conn, _recent_parent
-    if _queue is not None:
+
+    # P0.B5 D2: early-exit if writer task is already done. Don't put sentinel
+    # into a queue with no consumer (would just inflate the queue size + lose
+    # envelopes anyway on cleanup).
+    if _writer_task is not None and _writer_task.done():
+        if _queue is not None:
+            _q_size = _queue.qsize()
+            print(
+                f"[EventLog] WARN: stop_writer found writer task already done — "
+                f"skipping queue drain ({_q_size} envelopes lost)"
+            )
+        # Fall through to cleanup below
+    elif _queue is not None:
         # Sentinel: None envelope tells _writer_loop to exit.
         await _queue.put(None)
-        await _queue.join()
+        # P0.B5 D2: bounded wait — protects against writer-task-died-mid-shutdown.
+        try:
+            await asyncio.wait_for(_queue.join(), timeout=5.0)
+        except asyncio.TimeoutError:
+            print(
+                f"[EventLog] WARN: stop_writer queue.join() timed out — "
+                f"writer task likely dead, proceeding to cleanup"
+            )
+
     if _writer_task is not None:
         try:
             await asyncio.wait_for(_writer_task, timeout=5.0)
         except asyncio.TimeoutError:                       # pragma: no cover
             _writer_task.cancel()
+        except asyncio.CancelledError:
+            # P0.B5 D2 (Phase 4 in-flight refinement): if the task was already
+            # cancelled BEFORE stop_writer was called (early-exit branch above
+            # observed `_writer_task.done()`), awaiting it re-raises the
+            # CancelledError. Swallow it here — cleanup must complete.
+            pass
     if _conn is not None:
         _conn.close()
     _queue = None
@@ -526,7 +559,9 @@ async def stop_writer() -> None:
 
 def _reset_for_tests() -> None:
     """Test-mode reset. Closes DB + clears module state."""
-    global _queue, _writer_task, _conn, _drop_count, _recent_parent, _last_drop_log_ts
+    global _queue, _writer_task, _conn, _drop_count, _recent_parent, _last_drop_log_ts, _safe_emit_failure_count
+    #                                                                                   ^^^^^^^^^^^^^^^^^^^^^^^^
+    #                                                                                   P0.B5 D1 — Bug 7 fix
     if _conn is not None:
         try:
             _conn.close()
@@ -539,6 +574,7 @@ def _reset_for_tests() -> None:
     _drop_count = 0
     _recent_parent = {}
     _last_drop_log_ts = 0.0
+    _safe_emit_failure_count = 0  # P0.B5 D1 — Bug 7 fix (test isolation)
 
 
 def _open_testing_db_sync() -> None:

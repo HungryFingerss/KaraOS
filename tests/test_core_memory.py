@@ -83,6 +83,7 @@ def test_get_core_memory_for_disabled(brain_db, monkeypatch):
 
 # ── Test 4: non-best-friend cannot see cross-person personal facts ─────────────
 
+@pytest.mark.privacy_critical
 def test_get_core_memory_for_privacy_cross_person_blocked(brain_db, monkeypatch):
     monkeypatch.setattr("core.brain_agent.CORE_MEMORY_ENABLED", True)
     # Lexi's personal fact stored under Lexi's person_id
@@ -96,6 +97,7 @@ def test_get_core_memory_for_privacy_cross_person_blocked(brain_db, monkeypatch)
 
 # ── Test 5: best_friend (owner) can see personal facts about others ────────────
 
+@pytest.mark.privacy_critical
 def test_get_core_memory_for_best_friend_sees_personal(brain_db, monkeypatch):
     monkeypatch.setattr("core.brain_agent.CORE_MEMORY_ENABLED", True)
     _insert_fact(brain_db, "lexi_xyz", "Lexi", "lives_in", "Chennai", 0.9, "personal")
@@ -107,6 +109,7 @@ def test_get_core_memory_for_best_friend_sees_personal(brain_db, monkeypatch):
 
 # ── Test 6: only returns attributes in CORE_MEMORY_ATTRIBUTES ─────────────────
 
+@pytest.mark.privacy_critical
 def test_get_core_memory_for_attribute_whitelist(brain_db, monkeypatch):
     monkeypatch.setattr("core.brain_agent.CORE_MEMORY_ENABLED", True)
     # Insert a whitelisted attribute and a non-whitelisted one

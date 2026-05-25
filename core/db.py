@@ -27,6 +27,7 @@ from core.config import (
     SILENT_OBS_SIMILARITY, SILENT_OBS_RETENTION_DAYS, SILENT_OBS_SCAN_DAYS,
     CONVERSATION_HISTORY_LIMIT,
     CONVERSATION_ARCHIVE_ENABLED, CONVERSATION_ARCHIVE_AFTER_DAYS,
+    CONVERSATION_ARCHIVE_RETENTION_DAYS,
     STRANGER_TTL_DAYS,
 )
 
@@ -101,7 +102,7 @@ class FaceDB:
         self._index_lock = threading.RLock()
         # Wave 3 Item 15 — async rebuild state
         self._rebuild_in_progress: bool = False
-        self._pending_adds_during_rebuild: list = []  # list of (vec: np.ndarray 1-D, person_id: str)
+        self._pending_adds_during_rebuild: list = []  # list of (vec: np.ndarray 1-D, person_id: str, row_id: int) — P0.B2 D3 3-tuple
         self._rebuild_lock = threading.Lock()  # serialize rebuilds; separate from _index_lock
         # Allow callers (tests, dashboard) to supply a separate FAISS path so they
         # never accidentally overwrite the production faces/faiss.index file.
@@ -356,6 +357,62 @@ class FaceDB:
                 pass  # CLEANUP: DETACH raises if ATTACH failed earlier — no archive DB to release
         return n
 
+    def prune_old_archive_conversation_log(
+        self, retention_days: "int | None" = None, now: "float | None" = None
+    ) -> int:
+        """P0.R12 D1 — delete rows from archive.conversation_log older than retention_days.
+
+        Mirrors archive_old_conversation_log's ATTACH DATABASE + BEGIN EXCLUSIVE +
+        P0.9.1 Imp-2 rollback discipline. Different polarity: archive_old_*
+        MOVES from main → archive; this method DELETES from archive (bounds
+        archive growth at ~1 year of history by default).
+
+        Operator-tunable via CONVERSATION_ARCHIVE_RETENTION_DAYS config (Q1 (a)
+        RATIFIED). Returns count of rows deleted.
+        """
+        if retention_days is None:
+            retention_days = CONVERSATION_ARCHIVE_RETENTION_DAYS
+        if now is None:
+            now = time.time()
+        cutoff_ts = now - retention_days * 86400
+
+        archive_path = self._archive_db_path()
+        if not archive_path.exists():
+            return 0
+
+        self._conn.execute("ATTACH DATABASE ? AS archive", (str(archive_path),))
+        try:
+            n = self._conn.execute(
+                "SELECT COUNT(*) FROM archive.conversation_log WHERE ts < ?",
+                (cutoff_ts,),
+            ).fetchone()[0]
+            if n == 0:
+                return 0
+            self._conn.execute("BEGIN EXCLUSIVE")
+            self._conn.execute(
+                "DELETE FROM archive.conversation_log WHERE ts < ?",
+                (cutoff_ts,),
+            )
+            self._conn.execute("COMMIT")
+        except Exception:
+            # P0.9.1 Imp-2 tightened rollback discipline — re-raise unexpected
+            # OperationalErrors; only S65 "no transaction is active" race
+            # suppressed (ROLLBACK raises if BEGIN EXCLUSIVE failed before).
+            try:
+                self._conn.execute("ROLLBACK")
+            except sqlite3.OperationalError as _rbe:
+                if "no transaction is active" not in str(_rbe).lower():
+                    print(f"[FaceDB] archive-prune rollback failed unexpectedly: {_rbe!r}")
+                    raise
+                # else: # RACE: S65 — known race, suppress per P0.9.1 Imp-2
+            raise
+        finally:
+            try:
+                self._conn.execute("DETACH DATABASE archive")
+            except Exception:
+                pass  # CLEANUP: DETACH raises if ATTACH failed earlier — no archive DB to release
+        return n
+
     def _warn_missing_vectors(self):
         """One-time migration helper: warn if any enrolled persons lack vector BLOBs."""
         row = self._conn.execute(
@@ -426,9 +483,27 @@ class FaceDB:
         ).fetchall()
         self._idx_to_person = {r[0]: r[1] for r in rows}
 
-    def _save_faiss(self):
+    def _save_faiss_unlocked(self) -> None:
+        """Write FAISS index to disk. MUST be called WITH _index_lock already held.
+
+        Extracted from _save_faiss() to make the lock-held precondition explicit
+        at every internal call site (P0.B5 D3 / ceo-morning Finding 3 — was
+        implicitly relying on RLock re-entrancy; explicit naming prevents future
+        refactor from breaking the contract if _index_lock is ever changed from
+        threading.RLock to threading.Lock).
+        """
+        faiss.write_index(self.index, str(self._faiss_path))
+
+    def _save_faiss(self) -> None:
+        """Public-facing save. Acquires _index_lock + calls _save_faiss_unlocked.
+
+        External callers (callers that do NOT already hold _index_lock) use this
+        method. Internal callers that already hold _index_lock (inside a
+        `with self._index_lock:` block) MUST use _save_faiss_unlocked() directly
+        to make the lock-held precondition visible at the call site.
+        """
         with self._index_lock:
-            faiss.write_index(self.index, str(self._faiss_path))
+            self._save_faiss_unlocked()
 
     # ── Enroll ────────────────────────────────────────────────────────────────
     def add_person(self, person_id: str, name: str, photo_path: str = None, person_type: str = 'known'):
@@ -693,19 +768,26 @@ class FaceDB:
         # P0.5: SQL durable, FAISS derived; boot reconciliation handles divergence.
         with self._index_lock:
             faiss_idx = self.index.ntotal
+            # P0.B2 D3 (closed 2026-05-21): capture `cur.lastrowid` via
+            # explicit-cursor pattern (Plan v2 §4.1). Required because Phase 3
+            # of `rebuild_faiss_async` needs the row_id to write the new
+            # `faiss_idx` back to the DB after the async swap.
             with self.transaction():
-                self._conn.execute(
+                cur = self._conn.execute(
                     "INSERT INTO embeddings (person_id, faiss_idx, vector, captured_at, source, confidence_at_write)"
                     " VALUES (?, ?, ?, ?, ?, ?)",
                     (person_id, faiss_idx, emb_1d.tobytes(), time.time(), source, confidence)
                 )
+                _row_id = cur.lastrowid
             try:
                 self.index.add(emb)
                 self._idx_to_person[faiss_idx] = person_id
                 if self._rebuild_in_progress:
                     # Enqueue so the async rebuild can replay this addition onto the new index.
-                    self._pending_adds_during_rebuild.append((emb[0].copy(), person_id))
-                self._save_faiss()
+                    # P0.B2 D3: 3-tuple `(vec, person_id, row_id)` enables Phase 3 to write
+                    # the post-replay `faiss_idx` back to the DB row for this pending add.
+                    self._pending_adds_during_rebuild.append((emb[0].copy(), person_id, _row_id))
+                self._save_faiss_unlocked()  # P0.B5 D3 — lock already held at line 694
             except Exception as e:
                 print(f"[FaceDB] FAISS update failed; will reconcile on next boot: {e!r}")
                 self._mark_faiss_dirty()
@@ -930,29 +1012,47 @@ class FaceDB:
     # ── Wave 3 Item 15 — async FAISS rebuild ──────────────────────────────────
 
     def _fetch_all_embeddings_for_index(self) -> tuple:
-        """Snapshot all embeddings for index rebuild. Must be called under _index_lock."""
+        """Snapshot all embeddings for index rebuild. Must be called under _index_lock.
+
+        P0.B2 D1 (closed 2026-05-21): returns 3-tuple `(vecs, person_ids, row_ids)`.
+        `row_ids` enables Phase 3 of `rebuild_faiss_async` to write the new
+        `faiss_idx` values back to the `embeddings` table — the Bug 1 fix
+        (sync `_rebuild_faiss` already does this DB UPDATE; async path was
+        missing it pre-P0.B2).
+        """
         rows = self._conn.execute(
-            "SELECT person_id, vector FROM embeddings WHERE vector IS NOT NULL ORDER BY id"
+            "SELECT id, person_id, vector FROM embeddings WHERE vector IS NOT NULL ORDER BY id"
         ).fetchall()
         if not rows:
-            return np.empty((0, EMBEDDING_DIM), dtype=np.float32), []
-        person_ids = [r[0] for r in rows]
+            return np.empty((0, EMBEDDING_DIM), dtype=np.float32), [], []
+        row_ids = [r[0] for r in rows]
+        person_ids = [r[1] for r in rows]
         vecs = np.vstack([
-            np.frombuffer(r[1], dtype=np.float32).copy().reshape(1, -1)
+            np.frombuffer(r[2], dtype=np.float32).copy().reshape(1, -1)
             for r in rows
         ]).astype(np.float32)
-        return vecs, person_ids
+        return vecs, person_ids, row_ids
 
     def _build_faiss_from_snapshot(self, snapshot: tuple) -> tuple:
         """Build a new IndexFlatIP from snapshot data. Pure — no DB access, no lock.
-        Returns (new_index, new_idx_to_person). Safe to run in a worker thread."""
-        vecs, person_ids = snapshot
+
+        P0.B2 D2 (closed 2026-05-21): returns 4-tuple `(new_index,
+        new_idx_to_person, snapshot_idx_updates)` where `snapshot_idx_updates`
+        is `list[tuple[int, int]]` of `(new_idx, row_id)` pairs. Caller
+        (`rebuild_faiss_async` Phase 3) uses this list to write the new
+        `faiss_idx` values back to the `embeddings` table after the swap.
+
+        Safe to run in a worker thread (no DB access, no lock).
+        """
+        vecs, person_ids, row_ids = snapshot
         new_index = faiss.IndexFlatIP(EMBEDDING_DIM)
         new_idx_to_person: dict = {}
-        for i, pid in enumerate(person_ids):
+        snapshot_idx_updates: list = []
+        for i, (pid, row_id) in enumerate(zip(person_ids, row_ids)):
             new_index.add(vecs[i].reshape(1, -1))
             new_idx_to_person[i] = pid
-        return new_index, new_idx_to_person
+            snapshot_idx_updates.append((i, row_id))
+        return new_index, new_idx_to_person, snapshot_idx_updates
 
     async def rebuild_faiss_async(self, loop: asyncio.AbstractEventLoop) -> None:
         """Rebuild FAISS index without blocking concurrent recognize/add_embedding.
@@ -960,6 +1060,24 @@ class FaceDB:
         Snapshot under lock (~ms), build outside lock (~50ms-3s), swap under lock (~ms).
         Concurrent add_embedding calls during the build phase are queued and replayed
         onto the new index before swap, so no additions are lost.
+
+        P0.B2 D3+D4 (closed 2026-05-21) — ORDERING INVARIANT:
+            sentinel SET → Phase 3 in-memory swap → DB UPDATE batch + commit
+            → Phase 4 _save_faiss → sentinel CLEAR
+
+        Each crash point has an explicit recovery path:
+            - Crash before sentinel set: in-memory swap not yet applied; OLD
+              state still on disk. Boot loads OLD state cleanly; no rebuild.
+            - Crash after sentinel set, before DB UPDATE commit: sentinel
+              triggers `_rebuild_faiss` on next boot (which uses the sync
+              path's SELECT + UPDATE + commit + save discipline).
+            - Crash mid-DB-UPDATE batch: SQLite transaction atomicity rolls
+              back partial commits; sentinel still set; boot rebuilds.
+            - Crash after DB UPDATE commit, before _save_faiss: DB is fresh;
+              disk faiss.index is stale; sentinel still set; boot rebuilds
+              the in-memory index from the fresh DB.
+            - Crash after _save_faiss, before sentinel clear: DB + disk both
+              fresh; sentinel triggers redundant-but-safe rebuild on boot.
         """
         if not self._rebuild_lock.acquire(blocking=False):
             print("[FaceDB] rebuild already in progress, skipping")
@@ -974,7 +1092,7 @@ class FaceDB:
 
             # Phase 2: build new index in worker thread (slow, no lock held)
             try:
-                new_index, new_idx_to_person = await loop.run_in_executor(
+                new_index, new_idx_to_person, snapshot_idx_updates = await loop.run_in_executor(
                     None,
                     self._build_faiss_from_snapshot,
                     snapshot,
@@ -985,25 +1103,65 @@ class FaceDB:
                     self._pending_adds_during_rebuild = []
                 raise
 
+            # P0.B2 D4: sentinel SET BEFORE Phase 3 swap (ORDERING INVARIANT
+            # step 1). If the in-memory swap completes but the DB UPDATE
+            # batch crashes or _save_faiss fails, boot reconciliation reads
+            # the sentinel and re-runs the sync `_rebuild_faiss` to repair.
+            self._mark_faiss_dirty()
+
             # Phase 3: replay pending adds onto new index, swap atomically (under lock, fast)
             # Replay BEFORE setting self.index so that an add_embedding racing between the
             # assignment and _rebuild_in_progress=False doesn't double-add. All three
             # mutations happen inside one lock acquisition — correct by construction.
+            #
+            # P0.B2 D3: pending-add row_ids are captured via add_embedding's
+            # explicit-cursor pattern (line ~706); replay positions are
+            # captured into `pending_idx_updates` for the post-lock DB UPDATE
+            # batch. Combined with `snapshot_idx_updates` from Phase 2 to
+            # cover all rows whose `faiss_idx` changed during the rebuild.
+            pending_idx_updates: list = []
             with self._index_lock:
-                for vec, person_id in self._pending_adds_during_rebuild:
+                for vec, person_id, row_id in self._pending_adds_during_rebuild:
                     new_idx = new_index.ntotal
                     new_index.add(vec.reshape(1, -1))
                     new_idx_to_person[new_idx] = person_id
+                    pending_idx_updates.append((new_idx, row_id))
                 self.index = new_index
                 self._idx_to_person = new_idx_to_person
                 self._rebuild_in_progress = False
                 self._pending_adds_during_rebuild = []
 
+            # P0.B2 D3: DB UPDATE batch AFTER releasing _index_lock (matches
+            # sync `_rebuild_faiss` precedent at lines 1075-1080). Combined
+            # updates cover BOTH snapshot rows AND pending-add rows so the
+            # DB `embeddings.faiss_idx` column reflects the new in-memory
+            # positions. ORDERING INVARIANT step 2.
+            try:
+                all_idx_updates = snapshot_idx_updates + pending_idx_updates
+                if all_idx_updates:
+                    for new_idx, row_id in all_idx_updates:
+                        self._conn.execute(
+                            "UPDATE embeddings SET faiss_idx = ? WHERE id = ?",
+                            (new_idx, row_id),
+                        )
+                    self._conn.commit()
+            except Exception as e:
+                # Sentinel stays set; next boot rebuilds via _rebuild_faiss.
+                print(f"[FaceDB] async DB UPDATE batch failed; sentinel set for boot rebuild: {e!r}")
+                raise
+
             # Phase 4: persist to disk (lock-free; no readers depend on file content)
+            # ORDERING INVARIANT step 3.
             try:
                 await loop.run_in_executor(None, self._save_faiss)
             except Exception as e:
                 print(f"[FaceDB] async save_faiss failed (index in memory OK): {e!r}")
+                return  # leave sentinel set so boot rebuilds from fresh DB
+
+            # P0.B2 D4: sentinel CLEAR after BOTH DB UPDATE commit AND
+            # _save_faiss succeed (ORDERING INVARIANT step 4). Any earlier
+            # exception leaves the sentinel set — boot reconciliation handles.
+            self._clear_faiss_dirty()
         finally:
             self._rebuild_lock.release()
 

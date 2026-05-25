@@ -14,15 +14,16 @@ AFTER fix:  transition_to_disputed captures actual person_type → test PASSES
 import asyncio
 import sys
 import types
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 # Stub core.voice and core.audio before importing pipeline to avoid the
 # Windows torchaudio DLL crash (OSError 0xc0000139).
+# P0.R6.Y D3 cascade: identify + diarize are async; stubs use AsyncMock.
 if "core.voice" not in sys.modules:
     _voice_stub = types.ModuleType("core.voice")
     _voice_stub.load_speaker_embedder = MagicMock(return_value=None)
-    _voice_stub.identify = MagicMock(return_value=(None, 0.0))
-    _voice_stub.diarize = MagicMock(return_value=[])
+    _voice_stub.identify = AsyncMock(return_value=(None, 0.0))
+    _voice_stub.diarize = AsyncMock(return_value=[])
     _voice_stub.get_diarize_stats = MagicMock(return_value={})
     sys.modules["core.voice"] = _voice_stub
 

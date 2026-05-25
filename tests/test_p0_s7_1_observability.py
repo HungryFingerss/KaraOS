@@ -25,6 +25,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# P0.S7 D2 — module-level privacy_critical marker; all tests observe
+# shared_context emit per outcome + brain context summary format.
+pytestmark = pytest.mark.privacy_critical
+
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 _PIPELINE_PY = _REPO_ROOT / "pipeline.py"

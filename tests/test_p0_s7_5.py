@@ -63,6 +63,11 @@ import time
 
 import pytest
 
+# P0.S7 D2 — module-level privacy_critical marker; all tests verify
+# bundled-queue canary fixes (visitor alert persistence + shared context
+# fallback + known speaker block + HONESTY POLICY + nudge gating).
+pytestmark = pytest.mark.privacy_critical
+
 
 _PIPELINE_PY     = pathlib.Path(__file__).resolve().parent.parent / "pipeline.py"
 _BRAIN_PY        = _PIPELINE_PY.parent / "core" / "brain.py"

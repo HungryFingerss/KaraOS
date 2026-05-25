@@ -196,6 +196,11 @@ class TestPipelineStateStoreSchema:
         "_last_user_speech_at",
         "_last_kairos_at",
         "_last_silent_update",
+        # P0.R3 D3: vision-loop watchdog state (2)
+        "_vision_heartbeat_at",
+        "_vision_degraded",
+        # P0.R6 D4: heavy-worker pool health (1)
+        "_heavy_worker_status",
     }
     EXPECTED_CLOUD_SNAPSHOT_FIELDS = {
         "cloud_state", "cloud_failed_at", "cloud_monitor_task", "cloud_recovered",
@@ -216,9 +221,11 @@ class TestPipelineStateStoreSchema:
         names = {f.name for f in dataclasses.fields(CloudSnapshot)}
         assert names == self.EXPECTED_CLOUD_SNAPSHOT_FIELDS
 
-    def test_field_count_is_fourteen(self) -> None:
-        """Explicit count guard — P0.6.6 migrated exactly 14 globals."""
-        assert len(self.EXPECTED_FIELDS) == 14
+    def test_field_count_is_seventeen(self) -> None:
+        """Explicit count guard — P0.6.6 migrated 14 globals; P0.R3 D3 added 2
+        watchdog fields (_vision_heartbeat_at + _vision_degraded) → 16; P0.R6 D4
+        added 1 field (_heavy_worker_status) → 17 total."""
+        assert len(self.EXPECTED_FIELDS) == 17
 
 
 # ── VisionFrameStore ────────────────────────────────────────────────────

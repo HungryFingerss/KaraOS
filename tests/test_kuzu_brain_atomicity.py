@@ -196,16 +196,36 @@ def test_schema_upgrade_init_schema_failure_writes_sentinel(tmp_path, monkeypatc
 
 
 @pytest.mark.slow
-def test_schema_upgrade_sql_commit_failure_writes_sentinel(tmp_path, monkeypatch):
-    """SQL UPDATE brain_state fails mid-upgrade — sentinel exists; version unchanged.
+def test_schema_upgrade_sql_commit_failure_leaves_version_old(tmp_path, monkeypatch):
+    """SQL UPDATE brain_state fails post-Kuzu-rebuild — version unchanged; degraded mode set.
 
-    Pre-fix (Kuzu-first): drop+reinit ran before SQL fails → Kuzu mutated, SQL stale, no sentinel.
-    Post-fix (SQL-first): sentinel written eagerly; SQL fails before Kuzu → Kuzu untouched;
-    sentinel exists; stored schema version unchanged.
+    P0.X-era pre-fix (Kuzu-first): drop+reinit ran before SQL fails → Kuzu mutated,
+    SQL stale, no sentinel — silent divergence.
+
+    P0.X-era post-fix (SQL-first): sentinel written eagerly; SQL UPDATE happened
+    BEFORE drop_schema/rebuild — failure left Kuzu untouched + sentinel preserved
+    + stored_version unchanged. This was the locked invariant from P0.X close.
+
+    P0.B3 D1 (Finding 2 board-meeting 2026-05-21 fix): the SQL UPDATE moved AFTER
+    rebuild + _clear_kuzu_dirty, gated on `_did_schema_upgrade`. Crash semantics
+    change:
+      - rebuild block's `except Exception` swallows the SQL UPDATE failure +
+        sets `_kuzu_degraded=True` (no re-raise) → the old `pytest.raises`
+        wrapper no longer applies.
+      - `_clear_kuzu_dirty()` runs BEFORE the failing UPDATE → sentinel is
+        cleared. Recovery on next boot is driven by the migration PREDICATE
+        (stored_version < GRAPH_SCHEMA_VERSION), NOT the sentinel.
+
+    What still holds (the core invariant): stored_version=OLD after the failed
+    UPDATE → predicate at function entry on next boot returns TRUE → migration
+    retries idempotently. This is the LOAD-BEARING property D1 protects.
+
+    (Plan v1 §1.1 disposition for this test was "docstring update only" but
+    the actual D1 semantics required broader adjustment — banked as P0.B3
+    Phase 4 in-flight observation.)
     """
     orch1 = _make_orch(tmp_path)
     current_version = _get_schema_version(orch1._brain_db)
-    sentinel = _kuzu_sentinel(tmp_path / "brain_graph")
 
     monkeypatch.setattr(brain_agent_mod, "GRAPH_SCHEMA_VERSION", current_version + 1)
     orch1._brain_db._conn = _BrainConnProxy(
@@ -213,19 +233,25 @@ def test_schema_upgrade_sql_commit_failure_writes_sentinel(tmp_path, monkeypatch
         lambda s: "UPDATE brain_state SET graph_schema_version" in s,
     )
 
-    with pytest.raises(RuntimeError, match="simulated SQL failure"):
-        orch1._ensure_graph_sync()
+    # Under P0.B3 D1, the SQL UPDATE failure is swallowed by the rebuild
+    # block's `except Exception` clause + sets _kuzu_degraded=True. No
+    # exception propagates to the caller. (Pre-D1 the same proxy would
+    # have raised RuntimeError; the pytest.raises wrapper has been dropped
+    # for the new ordering.)
+    orch1._ensure_graph_sync()
 
-    assert sentinel.exists(), (
-        "P0.X: sentinel not written before SQL-first schema upgrade attempt"
+    assert orch1._kuzu_degraded is True, (
+        "P0.B3 D1: SQL UPDATE failure inside the rebuild try-block must set "
+        "_kuzu_degraded=True (caught by rebuild-block except Exception)"
     )
     real_conn = orch1._brain_db._conn._real
     stored = real_conn.execute(
         "SELECT graph_schema_version FROM brain_state WHERE singleton = 1"
     ).fetchone()[0]
     assert stored == current_version, (
-        f"P0.X: schema version advanced to {stored} despite SQL failure "
-        f"(expected {current_version})"
+        f"P0.B3 D1 LOAD-BEARING INVARIANT: schema version advanced to {stored} "
+        f"despite SQL UPDATE failure (expected {current_version}). The migration "
+        f"predicate at function entry depends on stored_version<NEW for recovery."
     )
 
 

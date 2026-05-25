@@ -286,7 +286,9 @@ class TestToSnapshotListCopy:
             person_id="p1", person_name="Alice", person_type="known",
             session_type="face", started_at=1.0, last_face_seen=1.0, last_spoke_at=1.0,
         )
-        s.evidence.face_match_conf = 0.95
+        # P0.B1 D1: VoiceEvidence is now frozen — seed via replace() instead
+        # of direct attribute assignment (which raises FrozenInstanceError).
+        s.evidence = dataclasses.replace(s.evidence, face_match_conf=0.95)
         snap = _to_snapshot(s)
         assert snap.evidence is not s.evidence
         assert snap.evidence.face_match_conf == 0.95

@@ -5,12 +5,14 @@ Pipeline writes → dashboard reads via /api/status
 import json
 import os
 import tempfile
+import threading                                            # P0.B5 D4 — Bug 10 fix
 import time
 from typing import Optional
 from core.config import STATE_FILE
 
 
 _persistent: dict = {}  # fields merged into every write() — set once at startup
+_persistent_lock = threading.Lock()  # P0.B5 D4 — Bug 10 fix (V5 GIL-free safety)
 
 
 def set_persistent(key: str, value) -> None:
@@ -21,14 +23,20 @@ def set_persistent(key: str, value) -> None:
     concurrent reader iterating the OLD dict reference sees a
     consistent snapshot.
 
-    NOTE: This protects readers from torn iteration. It does NOT protect
-    against concurrent writers losing updates (RMW race — multiple
-    writers can both load the old dict, both build new dicts, and the
-    second STORE wins). Production has 1 writer at startup, so RMW is
-    not a concern. If runtime writers are added, add `threading.Lock`.
+    P0.B5 D4 (Bug 10 / V5) — added explicit `threading.Lock` wrapping
+    the rebind preemptively for GIL-free Python forward-compatibility
+    (Python 3.13+ --disable-gil builds break the STORE_NAME-atomicity
+    assumption that backed the original design). Lock acquisition ~100ns;
+    negligible overhead for the current single-startup-writer use case.
+
+    NOTE: This protects readers from torn iteration (via GIL-atomic
+    STORE_NAME on CPython) AND protects against concurrent writers
+    losing updates (via the new lock). On GIL-free Python builds, the
+    lock is the load-bearing safety mechanism.
     """
     global _persistent
-    _persistent = {**_persistent, key: value}
+    with _persistent_lock:
+        _persistent = {**_persistent, key: value}
 
 
 def write(

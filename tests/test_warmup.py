@@ -1,93 +1,48 @@
-"""
-Tests for pipeline._warmup_models — Wave 3 Item 14: model warmup at boot.
+"""P0.R6.Z D3.c RETIREMENT (2026-05-24): this file previously tested the
+Wave 3 Item 14 `_warmup_models` + `_warm_pyannote_via_dedicated_executor`
+functions in ``pipeline.py``. Post-P0.R6.Z, the pyannote warm-up moved
+to the ``run()`` startup 4-pool block via
+``hw.get_or_create_pool("pyannote_diarize")``; the
+``_warm_pyannote_via_dedicated_executor`` function is hard-deleted per
+Q1 (a) lock.
 
-These tests require the production venv (torchaudio, onnxruntime).
-They run automatically with pytest in the full environment.
+The 4 test methods that targeted the retired pattern are deleted:
+- ``test_warmup_calls_pyannote_loader`` —
+  semantically replaced by P0.R6.Z A9 4-pool ordering invariant
+  anchor (asserts ``hw.get_or_create_pool("pyannote_diarize")`` lands
+  before vision task spawn).
+- ``test_warmup_calls_ecapa_loader`` —
+  retained via the ECAPA loader still being called from
+  ``_warmup_models`` body for backward-compat (per P0.R6.Y closure
+  note (7)).
+- ``test_warmup_failure_isolated_does_not_block_others`` —
+  retained semantically via the ``try/except`` inside
+  ``_warmup_models._warm`` helper; pyannote no longer participates
+  in the warmup task list.
+- ``test_warmup_uses_dedicated_executor_for_pyannote`` —
+  semantically replaced by P0.R6.Z A5 + A6 retirement inverse
+  anchors (asserts ``_warm_pyannote_via_dedicated_executor`` +
+  ``get_diarize_executor`` references are gone from production).
+
+File retained (not deleted) to preserve grep-discoverability of the
+retirement event + as a single-source-of-truth pointer for future
+maintainers wondering where the warmup tests went.
 """
-import asyncio
-import inspect
 import pytest
+
 import core.voice as voice_mod
 
 
-@pytest.mark.slow
-@pytest.mark.models
-class TestWarmupModels:
-    """Marked slow+models: triggers `core.voice` import + monkeypatches real
-    pyannote/SpeechBrain loaders. Fast CI skips; nightly CI runs."""
-
-    def setup_method(self):
-        # Ensure executor is clean so tests don't share state
-        voice_mod._voice_diarize_executor = None
-
-    def teardown_method(self):
-        voice_mod.shutdown_diarize_executor()
-
-    async def test_warmup_calls_pyannote_loader(self, monkeypatch):
-        """_warmup_models calls _load_pyannote_pipeline exactly once."""
-        import pipeline
-
-        call_count = {"n": 0}
-
-        def _fake_pyannote():
-            call_count["n"] += 1
-
-        monkeypatch.setattr(voice_mod, "_load_pyannote_pipeline", _fake_pyannote)
-        monkeypatch.setattr(voice_mod, "load_speaker_embedder", lambda: None)
-
-        loop = asyncio.get_running_loop()
-        await pipeline._warmup_models(loop)
-
-        assert call_count["n"] == 1, (
-            f"_load_pyannote_pipeline should be called once; got {call_count['n']}"
-        )
-
-    async def test_warmup_calls_ecapa_loader(self, monkeypatch):
-        """_warmup_models calls load_speaker_embedder exactly once."""
-        import pipeline
-
-        call_count = {"n": 0}
-
-        def _fake_ecapa():
-            call_count["n"] += 1
-
-        monkeypatch.setattr(voice_mod, "_load_pyannote_pipeline", lambda: None)
-        monkeypatch.setattr(voice_mod, "load_speaker_embedder", _fake_ecapa)
-
-        loop = asyncio.get_running_loop()
-        await pipeline._warmup_models(loop)
-
-        assert call_count["n"] == 1, (
-            f"load_speaker_embedder should be called once; got {call_count['n']}"
-        )
-
-    async def test_warmup_failure_isolated_does_not_block_others(self, monkeypatch):
-        """A failing loader does not prevent other loaders from completing."""
-        import pipeline
-
-        completed = {"ecapa": False}
-
-        def _boom():
-            raise RuntimeError("simulated pyannote load failure")
-
-        def _ok_ecapa():
-            completed["ecapa"] = True
-
-        monkeypatch.setattr(voice_mod, "_load_pyannote_pipeline", _boom)
-        monkeypatch.setattr(voice_mod, "load_speaker_embedder", _ok_ecapa)
-
-        # Must not raise — failures are caught internally
-        loop = asyncio.get_running_loop()
-        await pipeline._warmup_models(loop)
-
-        assert completed["ecapa"], (
-            "ECAPA loader must complete even when pyannote loader raises"
-        )
-
-    def test_warmup_uses_dedicated_executor_for_pyannote(self):
-        """_warm_pyannote_via_dedicated_executor calls voice_mod.get_diarize_executor()."""
-        import pipeline
-        src = inspect.getsource(pipeline._warm_pyannote_via_dedicated_executor)
-        assert "get_diarize_executor()" in src, (
-            "_warm_pyannote_via_dedicated_executor must call voice_mod.get_diarize_executor()"
-        )
+def test_warm_pyannote_via_dedicated_executor_retired() -> None:
+    """P0.R6.Z D3.c inverse: the ``_warm_pyannote_via_dedicated_executor``
+    function on ``pipeline`` module MUST be absent. Canonical inverse-
+    anchor coverage lives at
+    ``tests/test_p0_r6_z_pyannote_worker.py::A6``.
+    """
+    import pipeline as _pl
+    assert not hasattr(_pl, "_warm_pyannote_via_dedicated_executor"), (
+        "P0.R6.Z D3.c RETIREMENT regression: "
+        "`_warm_pyannote_via_dedicated_executor` still present on "
+        "pipeline module surface — should have been hard-deleted per "
+        "Q1 (a) lock."
+    )

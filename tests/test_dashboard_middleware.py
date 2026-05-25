@@ -218,3 +218,117 @@ def test_middleware_returns_401_when_token_file_missing(middleware_src):
         "fs.readFileSync MUST be wrapped in try/catch (ENOENT-tolerant); "
         "without this, the route 500s on missing token instead of 401-ing"
     )
+
+
+# ───────────────────────────────────────────────────────────────────────
+# P0.S8 D4 — rate-limiting source-inspection coverage (5 tests)
+# ───────────────────────────────────────────────────────────────────────
+
+
+def test_p0_s8_d1_lru_cache_dependency_added():
+    """P0.S8 D1: dog-ai-dashboard/package.json must declare lru-cache dependency."""
+    import json
+    pkg = json.loads((_DASHBOARD / "package.json").read_text(encoding="utf-8"))
+    deps = pkg.get("dependencies", {})
+    assert "lru-cache" in deps, (
+        "P0.S8 D1: lru-cache must be in dog-ai-dashboard/package.json dependencies"
+    )
+    # Version pin: ^10.x or compatible. Reject obviously-wrong versions.
+    version = deps["lru-cache"]
+    assert version.startswith("^10") or version.startswith("10"), (
+        f"P0.S8 D1: lru-cache version should be ^10.x per Q1 LOCK; got {version!r}"
+    )
+
+
+def test_p0_s8_d2_lru_cache_instance_config(middleware_src):
+    """P0.S8 D2: middleware.ts declares LRUCache<string, number[]> with max=100, ttl=60_000."""
+    # Import present.
+    assert "import { LRUCache } from 'lru-cache'" in middleware_src, (
+        "P0.S8 D2: middleware.ts must import LRUCache from lru-cache"
+    )
+    # Instance declared at module scope.
+    assert "new LRUCache<string, number[]>" in middleware_src, (
+        "P0.S8 D2: LRUCache instance must use <string, number[]> type parameters"
+    )
+    # Config: max=100, ttl=60_000. Use trailing comma in substring to avoid
+    # prefix-collision with `max: 1000`, `max: 10000`, etc. (regression gap
+    # surfaced by P0.S8 Phase 4 §2.5 deliberate-regression check (b) under
+    # the ### Induction-surfaces-invariant-gaps discipline — original
+    # assertion `"max: 100" in src` matched `max: 1000` as a prefix.)
+    assert "max: 100," in middleware_src, (
+        "P0.S8 D2 Q2 LOCK: LRUCache max must be 100 (with trailing comma; "
+        "loose `max: 100` substring is a prefix of `max: 1000`)"
+    )
+    assert "ttl: 60_000," in middleware_src or "ttl: 60000," in middleware_src, (
+        "P0.S8 D2: LRUCache ttl must be 60_000 (or 60000) ms (with trailing comma; "
+        "loose `ttl: 60_000` substring is a prefix of `ttl: 60_0000`)"
+    )
+
+
+def test_p0_s8_d3_rate_limit_after_auth_ordering_invariant(middleware_src):
+    """P0.S8 D3 ORDERING INVARIANT (load-bearing per auditor Phase 0 verdict):
+    rate-limit check MUST sit AFTER _safeEqual validation in middleware(req).
+
+    Pre-fix: no rate-limit (the bug). Post-fix: rate-limit AFTER auth so
+    failed-auth requests do NOT populate the LRUCache + do NOT consume
+    per-token rate-limit budget. Moving rate-limit BEFORE auth would
+    allow unauthenticated requests to flood the LRUCache (bypassing
+    per-token semantic + creating DoS vector against rate-limit state).
+    """
+    # Find positions of key landmarks in the middleware source.
+    safeequal_idx = middleware_src.find("_safeEqual(cookieValue, fileToken)")
+    rate_limit_idx = middleware_src.find("_rateLimitCache.get(cookieValue)")
+    pass_through_idx = middleware_src.find("// Authenticated AND within rate limit")
+    assert safeequal_idx > 0, (
+        "P0.S8 D3: _safeEqual(cookieValue, fileToken) call must be present"
+    )
+    assert rate_limit_idx > 0, (
+        "P0.S8 D3: _rateLimitCache.get(cookieValue) call must be present"
+    )
+    assert pass_through_idx > 0, (
+        "P0.S8 D3: pass-through comment 'Authenticated AND within rate limit' must be present"
+    )
+    assert safeequal_idx < rate_limit_idx < pass_through_idx, (
+        f"P0.S8 D3 ORDERING INVARIANT violation: rate-limit check must sit "
+        f"AFTER _safeEqual validation (idx={safeequal_idx}) and BEFORE pass-through "
+        f"(idx={pass_through_idx}); got rate-limit at idx={rate_limit_idx}."
+    )
+    # ORDERING INVARIANT comment block must be present.
+    assert "ORDERING INVARIANT" in middleware_src, (
+        "P0.S8 D3: ORDERING INVARIANT comment block must document the rate-limit-AFTER-auth rule"
+    )
+    assert "rate-limit check MUST run AFTER" in middleware_src, (
+        "P0.S8 D3: ORDERING INVARIANT comment must contain the verbatim load-bearing assertion"
+    )
+
+
+def test_p0_s8_d3_sliding_window_logic(middleware_src):
+    """P0.S8 D3: sliding-window logic — 60 req/min via timestamp array filter."""
+    assert "now - ts < windowMs" in middleware_src or "now - ts < 60" in middleware_src, (
+        "P0.S8 D3: sliding-window filter must compare timestamps against 60s window"
+    )
+    assert "windowMs = 60_000" in middleware_src or "windowMs = 60000" in middleware_src, (
+        "P0.S8 D3: windowMs constant must be 60_000 (or 60000) per spec"
+    )
+    assert "limit = 60" in middleware_src, (
+        "P0.S8 D3: rate-limit threshold must be 60 per spec"
+    )
+    assert "recent.length >= limit" in middleware_src, (
+        "P0.S8 D3: rate-limit gate must reject when timestamp count >= 60"
+    )
+
+
+def test_p0_s8_d3_429_response_shape(middleware_src):
+    """P0.S8 D3: 429 response includes Retry-After header + retry_after_seconds JSON field."""
+    assert "status: 429" in middleware_src, (
+        "P0.S8 D3: 429 status code must be used for rate-limit-exceeded response"
+    )
+    assert "'Retry-After'" in middleware_src or '"Retry-After"' in middleware_src, (
+        "P0.S8 D3: Retry-After header must be set on 429 response"
+    )
+    assert "retry_after_seconds" in middleware_src, (
+        "P0.S8 D3: retry_after_seconds JSON field must be in 429 response body"
+    )
+    assert "'Rate limit exceeded'" in middleware_src or '"Rate limit exceeded"' in middleware_src, (
+        "P0.S8 D3: 429 error message must be 'Rate limit exceeded'"
+    )

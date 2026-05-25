@@ -1,8 +1,12 @@
 """
-core/audit.py — Gallery outlier detection and repair.
+core/audit.py — Gallery outlier detection.
 
 audit_gallery(person_id, db) → dict  — analysis with outlier list
-repair_gallery(person_id, db, mode)  — 'flag' (list) or 'remove' (delete + rebuild)
+
+For the destructive remove-outliers operation, use `FaceDB.prune_outlier_embeddings`
+which is the P0.5-correct paired-write site (SQL-first transaction + FAISS rebuild
++ sentinel discipline). P0.S9 D1 consolidated by removing the local `repair_gallery`
+duplicate; see `audit_person.py --repair` flag for CLI usage.
 """
 from __future__ import annotations
 
@@ -64,26 +68,3 @@ def audit_gallery(person_id: str, db) -> dict:
         "outliers":      outliers,
     }
 
-
-def repair_gallery(person_id: str, db, mode: str = "flag") -> int:
-    """Remove outlier embeddings for a person.
-
-    mode='flag'   — return outlier count without modifying anything.
-    mode='remove' — delete outlier rows and rebuild FAISS index.
-
-    Returns the number of outlier rows found (mode='flag') or deleted (mode='remove').
-    """
-    result = audit_gallery(person_id, db)
-    outliers = result["outliers"]
-
-    if mode == "flag":
-        return len(outliers)
-
-    if mode == "remove" and outliers:
-        ids = [o["row_id"] for o in outliers]
-        placeholders = ",".join("?" * len(ids))
-        db._conn.execute(f"DELETE FROM embeddings WHERE id IN ({placeholders})", ids)
-        db._conn.commit()
-        db._rebuild_faiss()
-
-    return len(outliers)

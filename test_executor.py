@@ -256,33 +256,34 @@ def test_capture_frames_async_stops_on_event():
 # ── Test 5: transcribe runs in executor (smoke) ───────────────────────────────
 
 def test_transcribe_in_executor_returns_tuple():
-    """run_in_executor with transcribe() must unpack to (str, str) correctly."""
-    print("\nTEST 5: transcribe() via run_in_executor returns (str, str) tuple")
+    """transcribe() (now async per P0.R6.X D3) must unpack to (str, str) correctly.
+
+    P0.R6.X migration: transcribe() became async and offloads inference to a
+    ProcessPoolExecutor subprocess via hw.run_heavy("whisper_transcribe", ...).
+    Callers now `await transcribe(audio)` directly — no run_in_executor wrap.
+    This test patches hw.run_heavy to return a stub (text, language) tuple so
+    the async path runs without subprocess startup cost.
+    """
+    print("\nTEST 5: transcribe() async returns (str, str) tuple")
 
     from unittest.mock import patch
     import numpy as np
     import core.audio as audio_mod
+    import core.heavy_worker as hw
 
     fake_audio = np.zeros(16000, dtype=np.float32)  # 1s of silence
 
     async def run():
-        loop = asyncio.get_running_loop()
-        with patch.object(audio_mod, "_load_whisper") as mock_load:
-            mock_model = mock_load.return_value
-            mock_model.transcribe.return_value = (
-                iter([]),
-                type("Info", (), {
-                    "language": "en",
-                    "language_probability": 0.9
-                })()
-            )
-            result = await loop.run_in_executor(None, audio_mod.transcribe, fake_audio)
+        async def _stub_run_heavy(task_name, fn, *args, **kwargs):
+            return ("", kwargs.get("language", "en"))
+        with patch.object(hw, "run_heavy", _stub_run_heavy):
+            result = await audio_mod.transcribe(fake_audio)
         return result
 
     text, lang = asyncio.run(run())
     assert isinstance(text, str)
     assert isinstance(lang, str)
-    print(f"  -> got ('{text}', '{lang}') — tuple unpacks correctly OK")
+    print(f"  -> got ('{text}', '{lang}') — async tuple unpacks correctly OK")
 
 
 if __name__ == "__main__":

@@ -174,19 +174,28 @@ class FaceDetector:
         # FaceAnalysis uses the buffalo_l pack which includes RetinaFace detector
         # Auto-downloads on first run (~500MB) — best accuracy available
         # Suppress InsightFace/ONNX verbose stdout (Applied providers, model ignore, set det-size)
+        # P0.R2 D2: build BOTH CUDA + CPU FaceAnalysis instances at startup; detect()
+        # routes via `_vision_provider_state.get_active_provider()`. CUDA failure
+        # auto-falls-back to CPU via the state machine.
         _buf = io.StringIO()
         _old = sys.stdout
         try:
             sys.stdout = _buf
-            self._app = insightface.app.FaceAnalysis(
+            self._app_cuda = insightface.app.FaceAnalysis(
                 name='buffalo_l',
                 allowed_modules=['detection'],
                 providers=['CUDAExecutionProvider']
             )
-            self._app.prepare(ctx_id=0, det_size=(640, 640))
+            self._app_cuda.prepare(ctx_id=0, det_size=(640, 640))
+            self._app_cpu = insightface.app.FaceAnalysis(
+                name='buffalo_l',
+                allowed_modules=['detection'],
+                providers=['CPUExecutionProvider']
+            )
+            self._app_cpu.prepare(ctx_id=-1, det_size=(640, 640))  # ctx_id=-1 for CPU
         finally:
             sys.stdout = _old
-        print(f"[Vision] RetinaFace (buffalo_l) loaded on GPU")
+        print(f"[Vision] RetinaFace (buffalo_l) loaded on GPU + CPU fallback")
 
         self._detect_every = detect_every
         self._frame_count  = 0
@@ -257,8 +266,25 @@ class FaceDetector:
     def _run_detection(
         self, frame: np.ndarray, h: int, w: int
     ) -> tuple[np.ndarray, list[Detection]]:
-        """Run RetinaFace on frame. Returns (dets_np for SORT, raw Detection list)."""
-        faces = self._app.get(frame)
+        """Run RetinaFace on frame. Returns (dets_np for SORT, raw Detection list).
+
+        P0.R2 D2: routes via `_vision_provider_state.get_active_provider()` for
+        CUDA ↔ CPU switching; CUDA RuntimeError triggers state-machine fallback
+        + retries on CPU. Cascading CPU failure returns empty result.
+        """
+        from core import vision_provider_state as _vps
+        active = _vps.get_active_provider()
+        app = self._app_cpu if active == "cpu" else self._app_cuda
+        try:
+            faces = app.get(frame)
+        except Exception as e:
+            print(f"[Vision] buffalo_l detection failed: {e}, falling back to CPU")
+            _vps.record_cuda_failure()
+            try:
+                faces = self._app_cpu.get(frame)
+            except Exception as e2:
+                print(f"[Vision] buffalo_l CPU fallback also failed: {e2}")
+                return np.empty((0, 5), dtype=np.float32), []
         dets_list = []
         raw_list  = []
 
@@ -318,20 +344,48 @@ class FaceEmbedder:
         if model_path is None:
             model_path = str(MODEL_DIR / "adaface_ir101.onnx")
 
+        # P0.R2 D3: graceful CPU-only degradation when CUDA structurally unavailable
+        # (replaces P0.R1's boot-hard-fail RuntimeError). Pipeline continues running.
+        # P0.R2 D1: proactive CPU-EP session construction at startup (replaces P0.R1's
+        # lazy-build-on-first-failure pattern). One-time ~1s build cost + ~80MB memory.
+        from core import vision_provider_state as _vps
         available = ort.get_available_providers()
+        self._model_path: str = model_path  # store for any future lazy rebuild
         if "CUDAExecutionProvider" not in available:
-            raise RuntimeError(
-                f"CUDAExecutionProvider not available (available: {available}). "
-                "Install onnxruntime-gpu and ensure CUDA 12.x is installed."
-            )
-        self._session    = ort.InferenceSession(model_path, providers=["CUDAExecutionProvider"])
+            print(f"[Vision] CUDA unavailable; AdaFace running CPU-only (available: {available})")
+            self._session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+            self._cpu_session = self._session  # satisfy embed() fallback contract
+            _vps.set_cpu_only_permanent()
+        else:
+            self._session = ort.InferenceSession(model_path, providers=["CUDAExecutionProvider"])
+            self._cpu_session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+            print(f"[Vision] AdaFace loaded on GPU + CPU fallback (proactive at startup)")
         self._input_name = self._session.get_inputs()[0].name
-        print(f"[Vision] AdaFace loaded on GPU")
 
-    def embed(self, face_crop: np.ndarray) -> np.ndarray:
-        """Extract 512-dim embedding from a face crop."""
+    def embed(self, face_crop: np.ndarray) -> "np.ndarray | None":
+        """Extract 512-dim embedding from a face crop.
+
+        P0.R1 D1: returns None on cascading CUDA+CPU failure (caller treats
+        as recognize-miss via existing P0.5 / P0.S1 None-handling paths).
+        P0.R2 D1: CPU fallback session is now PROACTIVELY built at __init__()
+        (lazy build removed); embed() uses pre-built `self._cpu_session` directly.
+        P0.R2 D4: CUDA failure also reports to provider state machine for
+        active-provider switch + counter/timer-based CUDA restoration.
+        """
+        from core import vision_provider_state as _vps
         img = self._preprocess(face_crop)
-        output = self._session.run(None, {self._input_name: img})
+        try:
+            output = self._session.run(None, {self._input_name: img})
+        except Exception as e:
+            # P0.R1 D1 + P0.R2 D1: log + proactive CPU-EP fallback (no lazy build).
+            # P0.R2 D4: notify state machine of CUDA failure.
+            print(f"[Vision] AdaFace inference failed: {e}, falling back to CPU")
+            _vps.record_cuda_failure()
+            try:
+                output = self._cpu_session.run(None, {self._input_name: img})
+            except Exception as e2:
+                print(f"[Vision] AdaFace CPU fallback also failed: {e2}")
+                return None
         embedding = output[0].flatten()
         # L2 normalize
         norm = np.linalg.norm(embedding)

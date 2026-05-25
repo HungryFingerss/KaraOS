@@ -95,6 +95,8 @@ node_modules/
 .next/
 dog-ai-dashboard/.next/
 dog-ai-dashboard/node_modules/
+dog-ai-dashboard/tsconfig.tsbuildinfo
+*.tsbuildinfo
 
 # =============================================================================
 # Live session logs — REAL personal data including conversations with people

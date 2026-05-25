@@ -31,6 +31,53 @@ _last_stt_elapsed_ms: float = 0.0
 # to avoid churning record_until_silence's 1-tuple return signature.
 _last_speech_secs: float = 0.0
 
+# ─────────────────────────────────────────────────────────────────────────────
+# P0.R10 D3 — audio device failure tracking (mirror P0.R8 D1)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Module-level per-channel failure event tracking for the audio-device
+# watchdog's burst-detection logic. Q1 (a) RATIFIED: per-channel keys ('mic',
+# 'speaker') tracked independently — USB mic disconnect != speaker driver
+# crash; per-channel granularity meaningful operationally.
+#
+# Thread-safety: callers may be async (speak/speak_stream) OR sync (play_filler,
+# stop_audio). threading.Lock guards mutation under concurrent access.
+_AUDIO_FAILURE_HISTORY: "dict[str, list[float]]" = {}
+_AUDIO_FAILURE_LOCK = threading.Lock()
+
+
+def _record_audio_failure(channel: str, now: "float | None" = None) -> None:
+    """Record an audio-device-failure event for burst detection. Mirrors
+    P0.R8's _record_pool_crash shape. channel in {'mic', 'speaker'}.
+    """
+    if now is None:
+        now = time.time()
+    with _AUDIO_FAILURE_LOCK:
+        _AUDIO_FAILURE_HISTORY.setdefault(channel, []).append(now)
+
+
+def count_recent_audio_failures(
+    channel: str, window_secs: float, now: "float | None" = None
+) -> int:
+    """Count audio-device failures within rolling window. Mirrors P0.R8's
+    count_recent_crashes shape; auto-prunes events older than window.
+    """
+    if now is None:
+        now = time.time()
+    cutoff = now - window_secs
+    with _AUDIO_FAILURE_LOCK:
+        events = _AUDIO_FAILURE_HISTORY.get(channel, [])
+        events = [t for t in events if t >= cutoff]
+        _AUDIO_FAILURE_HISTORY[channel] = events
+        return len(events)
+
+
+def peek_audio_failure_history(channel: str) -> "list[float]":
+    """Read-only accessor for audio-failure history. Tests + observability."""
+    with _AUDIO_FAILURE_LOCK:
+        return list(_AUDIO_FAILURE_HISTORY.get(channel, []))
+
+
 # ── TTS text cleaning — strip LLM formatting artifacts before synthesis ───────
 import re as _re
 _TTS_BOLD_RE    = _re.compile(r'\*{1,3}(.*?)\*{1,3}')                # **bold**, *italic*, ***both***
@@ -318,6 +365,11 @@ def play_filler(message: str = ""):
     pcm, sr = _random.choice(pool)
     try:
         sd.play(pcm, samplerate=sr)
+    except (sd.PortAudioError, OSError) as e:
+        # P0.R10 D2.c — speaker device failure: log + record for burst detection;
+        # fall through naturally (low-stakes filler, caller's contract preserved).
+        print(f"[Audio] WARN speaker device failure in play_filler: {e!r}")
+        _record_audio_failure("speaker")
     except Exception as e:
         print(f"[Audio] Filler play error: {e}")
 
@@ -339,7 +391,7 @@ def record_until_silence(
     silence_duration: float = SILENCE_DURATION,
     max_duration: float = 30.0,
     speech_onset_timeout: float = 0.0,
-) -> np.ndarray:
+) -> "np.ndarray | None":
     """Record from mic until speech then silence is detected.
 
     VAD_SWITCH=True:  Silero VAD (accurate, GPU-backed on Jetson/PCB)
@@ -379,94 +431,107 @@ def record_until_silence(
         import torch
         vad_model = _load_vad()
 
-    with sd.InputStream(samplerate=sample_rate, channels=1, dtype='float32') as stream:
-        stream_open_time = time.time()
-        echo_clear_until = _tts_end_time + _POST_TTS_ECHO_WINDOW
+    # P0.R10 D1 Q3 (a) RATIFIED LOAD-BEARING: wrap sd.InputStream context
+    # manager in try/except for (sd.PortAudioError, OSError). On failure:
+    # record event via _record_audio_failure('mic') + return None (distinct
+    # sentinel — empty audio means 'user was silent', None means 'device
+    # failed'). Caller (listen_and_transcribe + pipeline.py callers) inspects
+    # None vs empty-array to route differently (silence vs device-error).
+    try:
+        with sd.InputStream(samplerate=sample_rate, channels=1, dtype='float32') as stream:
+            stream_open_time = time.time()
+            echo_clear_until = _tts_end_time + _POST_TTS_ECHO_WINDOW
 
-        for chunk_idx in range(max_chunks):
-            if _interrupt_flag.is_set():
-                break
-            if onset_chunks > 0 and not started and chunk_idx >= onset_chunks:
-                break  # no speech onset detected within timeout — exit early
-            chunk, _ = stream.read(chunk_size)
-            chunk_1d  = chunk.flatten()
+            for chunk_idx in range(max_chunks):
+                if _interrupt_flag.is_set():
+                    break
+                if onset_chunks > 0 and not started and chunk_idx >= onset_chunks:
+                    break  # no speech onset detected within timeout — exit early
+                chunk, _ = stream.read(chunk_size)
+                chunk_1d  = chunk.flatten()
 
-            if VAD_SWITCH:
-                tensor     = torch.from_numpy(chunk_1d)
-                is_speech  = vad_model(tensor, sample_rate).item() > VAD_THRESHOLD
-            else:
-                is_speech  = float(np.sqrt(np.mean(chunk_1d ** 2))) > RMS_THRESHOLD
+                if VAD_SWITCH:
+                    tensor     = torch.from_numpy(chunk_1d)
+                    is_speech  = vad_model(tensor, sample_rate).item() > VAD_THRESHOLD
+                else:
+                    is_speech  = float(np.sqrt(np.mean(chunk_1d ** 2))) > RMS_THRESHOLD
 
-            if is_speech:
-                if not started:
-                    started = True
-                    print(f"[Audio] Speech started (chunk #{chunk_idx}, {_now_log_ts()})")
-                    chunk_time = stream_open_time + chunk_idx * chunk_dur
-                    if chunk_time > echo_clear_until:
-                        # Pre_roll may still contain echo chunks from its earliest portion
-                        # (captured right after the stream opened, before the echo cleared).
-                        # Trim those leading chunks so Whisper only sees clean audio.
-                        pre_roll_start = stream_open_time + (chunk_idx - len(pre_roll)) * chunk_dur
-                        echo_skip = min(max(0, int((echo_clear_until - pre_roll_start) / chunk_dur)), len(pre_roll))
-                        if echo_skip > 0:
-                            print(f"[Audio] Echo skip: {echo_skip}/{len(pre_roll)} pre-roll chunks trimmed")
-                        audio_chunks.extend(pre_roll[echo_skip:])
-                silent_streak    = 0
-                _speech_run     += 1
-                if _speech_run >= 9:             # ~288ms sustained speech resets silence flag
-                    _in_silence  = False         # prevents micropause within utterance re-firing log
-                smart_turn_fired = False        # allow another Smart-Turn check on next pause
-                silence_count    = original_silence_count  # restore if Smart-Turn had shrunk it
-                lip_extensions   = 0            # reset lip extension budget
-                speech_chunks   += 1
-                audio_chunks.append(chunk_1d)
-            elif started:
-                audio_chunks.append(chunk_1d)
-                _speech_run = 0                  # reset sustained-speech counter
-                if not _in_silence:
-                    _in_silence = True
-                    print(f"[Audio] Silence detected — waiting for end-of-turn...")
-                silent_streak += 1
+                if is_speech:
+                    if not started:
+                        started = True
+                        print(f"[Audio] Speech started (chunk #{chunk_idx}, {_now_log_ts()})")
+                        chunk_time = stream_open_time + chunk_idx * chunk_dur
+                        if chunk_time > echo_clear_until:
+                            # Pre_roll may still contain echo chunks from its earliest portion
+                            # (captured right after the stream opened, before the echo cleared).
+                            # Trim those leading chunks so Whisper only sees clean audio.
+                            pre_roll_start = stream_open_time + (chunk_idx - len(pre_roll)) * chunk_dur
+                            echo_skip = min(max(0, int((echo_clear_until - pre_roll_start) / chunk_dur)), len(pre_roll))
+                            if echo_skip > 0:
+                                print(f"[Audio] Echo skip: {echo_skip}/{len(pre_roll)} pre-roll chunks trimmed")
+                            audio_chunks.extend(pre_roll[echo_skip:])
+                    silent_streak    = 0
+                    _speech_run     += 1
+                    if _speech_run >= 9:             # ~288ms sustained speech resets silence flag
+                        _in_silence  = False         # prevents micropause within utterance re-firing log
+                    smart_turn_fired = False        # allow another Smart-Turn check on next pause
+                    silence_count    = original_silence_count  # restore if Smart-Turn had shrunk it
+                    lip_extensions   = 0            # reset lip extension budget
+                    speech_chunks   += 1
+                    audio_chunks.append(chunk_1d)
+                elif started:
+                    audio_chunks.append(chunk_1d)
+                    _speech_run = 0                  # reset sustained-speech counter
+                    if not _in_silence:
+                        _in_silence = True
+                        print(f"[Audio] Silence detected — waiting for end-of-turn...")
+                    silent_streak += 1
 
-                # Smart-Turn: at the first 0.5s of silence, ask the neural model
-                # whether the turn is complete. No wordlists — it reads audio patterns.
-                # On a confident completion, shrink the remaining silence window to
-                # addendum_count (0.35s). If the person resumes speaking within that
-                # grace window, smart_turn_fired resets and recording continues.
-                # If they stay silent for 0.35s more, the hard-stop below fires.
-                #
-                # P0.S7.5.2 D4 — broaden the silent_streak guard from `==` to `>=`
-                # so a missed boundary chunk doesn't skip Smart-Turn for the
-                # whole streak; the `not smart_turn_fired` flag (reset on resumed
-                # speech, line 418) is the debounce — invariant "fires at most
-                # once per silence streak" preserved.
-                if (not smart_turn_fired
-                        and silent_streak >= smart_turn_count
-                        and speech_chunks >= min_speech):
-                    smart_turn_fired = True
-                    prob = _smart_turn_predict(np.concatenate(audio_chunks))
-                    if prob > SMART_TURN_THRESHOLD:
-                        # Adaptive grace: very high confidence → shorter window (saves ~300ms).
-                        # Moderate confidence → full window in case of genuine mid-thought pause.
-                        used_addendum = int(addendum_count * 0.4) if prob >= 0.95 else addendum_count
-                        print(f"[Audio] Smart-Turn: turn complete (p={prob:.2f}, grace={used_addendum * chunk_dur:.2f}s)")
-                        silence_count = smart_turn_count + used_addendum
+                    # Smart-Turn: at the first 0.5s of silence, ask the neural model
+                    # whether the turn is complete. No wordlists — it reads audio patterns.
+                    # On a confident completion, shrink the remaining silence window to
+                    # addendum_count (0.35s). If the person resumes speaking within that
+                    # grace window, smart_turn_fired resets and recording continues.
+                    # If they stay silent for 0.35s more, the hard-stop below fires.
+                    #
+                    # P0.S7.5.2 D4 — broaden the silent_streak guard from `==` to `>=`
+                    # so a missed boundary chunk doesn't skip Smart-Turn for the
+                    # whole streak; the `not smart_turn_fired` flag (reset on resumed
+                    # speech, line 418) is the debounce — invariant "fires at most
+                    # once per silence streak" preserved.
+                    if (not smart_turn_fired
+                            and silent_streak >= smart_turn_count
+                            and speech_chunks >= min_speech):
+                        smart_turn_fired = True
+                        prob = _smart_turn_predict(np.concatenate(audio_chunks))
+                        if prob > SMART_TURN_THRESHOLD:
+                            # Adaptive grace: very high confidence → shorter window (saves ~300ms).
+                            # Moderate confidence → full window in case of genuine mid-thought pause.
+                            used_addendum = int(addendum_count * 0.4) if prob >= 0.95 else addendum_count
+                            print(f"[Audio] Smart-Turn: turn complete (p={prob:.2f}, grace={used_addendum * chunk_dur:.2f}s)")
+                            silence_count = smart_turn_count + used_addendum
 
-                # Hard stop: fires when silence_count is reached.
-                # Lip tracking gets a final veto: if lips are still moving, extend
-                # one chunk (~32ms) at a time up to LIP_MAX_EXTENSION total.
-                if silent_streak >= silence_count and speech_chunks >= min_speech:
-                    if _lip_active.is_set() and lip_extensions < max_lip_chunks:
-                        lip_extensions += 1
-                        if lip_extensions == 1:
-                            print(f"[Audio] Lip extension: holding turn (lips still moving)")
-                    else:
-                        print(f"[Audio] Turn end — {speech_chunks} speech chunks, {lip_extensions} lip extension(s)")
-                        break
-            else:
-                pre_roll.append(chunk_1d)
-                if len(pre_roll) > pre_roll_size:
-                    pre_roll.pop(0)
+                    # Hard stop: fires when silence_count is reached.
+                    # Lip tracking gets a final veto: if lips are still moving, extend
+                    # one chunk (~32ms) at a time up to LIP_MAX_EXTENSION total.
+                    if silent_streak >= silence_count and speech_chunks >= min_speech:
+                        if _lip_active.is_set() and lip_extensions < max_lip_chunks:
+                            lip_extensions += 1
+                            if lip_extensions == 1:
+                                print(f"[Audio] Lip extension: holding turn (lips still moving)")
+                        else:
+                            print(f"[Audio] Turn end — {speech_chunks} speech chunks, {lip_extensions} lip extension(s)")
+                            break
+                else:
+                    pre_roll.append(chunk_1d)
+                    if len(pre_roll) > pre_roll_size:
+                        pre_roll.pop(0)
+    except (sd.PortAudioError, OSError) as e:
+        # P0.R10 D1 Q3 (a) — mic device failure: log + record for burst
+        # detection + return None (distinct sentinel — see docstring above).
+        print(f"[Audio] WARN mic device failure during record_until_silence: {e!r}")
+        _record_audio_failure("mic")
+        return None
 
     if not audio_chunks or speech_chunks < min_speech:
         # Empty / sub-threshold recording — DO NOT publish. Session 78 learned
@@ -490,8 +555,16 @@ def record_until_silence(
 
 # ── STT ───────────────────────────────────────────────────────────────────────
 
-def transcribe(audio: np.ndarray) -> tuple[str, str]:
+async def transcribe(audio: np.ndarray) -> tuple[str, str]:
     """Transcribe audio using faster-whisper. English only.
+
+    P0.R6.X migration: inference offloaded to ProcessPoolExecutor subprocess
+    via ``hw.run_heavy("whisper_transcribe", ...)``. The subprocess holds the
+    persistent WhisperModel singleton (loaded once at startup); the asyncio
+    loop is not blocked during the ~100-300ms inference call. Segment
+    filtering (no_speech_prob / avg_logprob gates) happens in the subprocess
+    (per Plan v1 §2.1); the local text filter chain at lines below stays in
+    the main process per Q2(b) LOCK.
 
     Observability: the elapsed ms is exposed via the module-level
     ``_last_stt_elapsed_ms`` global and also printed alongside the transcript.
@@ -502,33 +575,19 @@ def transcribe(audio: np.ndarray) -> tuple[str, str]:
         return "", "en"
 
     import time as _time
+    import core.heavy_worker as hw  # noqa: PLC0415
     _t0 = _time.perf_counter()
-    model = _load_whisper()
-    segments, _ = model.transcribe(
-        audio,
+    text, _ = await hw.run_heavy(
+        "whisper_transcribe",
+        hw.whisper_transcribe_worker,
+        audio.tobytes(),
+        audio.shape,
+        audio.dtype.name,
         language=SPEAKER_LANGUAGES[0],
-        beam_size=5,
-        vad_filter=False,
-        vad_parameters={"min_silence_duration_ms": 200},
-        condition_on_previous_text=False,
-        no_speech_threshold=0.7,
-        compression_ratio_threshold=2.4,
-        log_prob_threshold=-1.5,
-        temperature=0.0,
-        task="transcribe",
     )
-    segments_list = list(segments)
-
-    good = [s for s in segments_list if s.no_speech_prob < 0.6 and s.avg_logprob > -1.5]
-    if not good:
-        candidates = [s for s in segments_list if s.no_speech_prob < 0.4]
-        if candidates:
-            good = [min(candidates, key=lambda s: s.no_speech_prob)]
-        else:
-            print("[Audio] STT: (filtered)")
-            return "", "en"
-
-    text = " ".join(s.text for s in good).strip()
+    if not text:
+        print("[Audio] STT: (filtered)")
+        return "", "en"
 
     # Discard if transcript is mostly non-ASCII (Whisper hallucination on noise)
     non_ascii = sum(1 for c in text if not c.isascii())
@@ -617,7 +676,7 @@ async def listen_and_transcribe(
     )
     if len(audio) == 0:
         return "", "en", audio
-    text, lang = await loop.run_in_executor(None, transcribe, audio)
+    text, lang = await transcribe(audio)
     # P0.0.7 H1 — emit audio_in event via safe_emit_sync. session_id=None
     # at this boundary (audio capture is session-agnostic; identity_claim
     # downstream threads session via the natural-pair chain). The
@@ -677,6 +736,12 @@ async def speak(text: str, language: str = "en"):
             sample_rate=sample_rate,
         )
 
+    except (sd.PortAudioError, OSError) as e:
+        # P0.R10 D2.a — speaker device failure: log + record for burst
+        # detection + return silently (caller's contract preserved).
+        print(f"[Audio] WARN speaker device failure in speak: {e!r}")
+        _record_audio_failure("speaker")
+        return
     except Exception as e:
         print(f"[Audio] TTS error: {e}")
 
@@ -783,11 +848,18 @@ async def speak_stream(sentences, language: str = "en"):
     async def _play_worker():
         global _tts_end_time
         first = True
+        # P0.R10 D2.b Q2 (b) RATIFIED — per-sentence count tracking for
+        # diagnostic context on mid-stream device failures. _sentence_total
+        # bumps when each item is dequeued; _sentence_count bumps after
+        # each successful playback.
+        _sentence_count = 0
+        _sentence_total = 0
         while True:
             try:
                 item = await audio_q.get()
                 if item is None:
                     break
+                _sentence_total += 1
                 pcm, sr = item
                 if first:
                     sd.stop()  # stop any pre-rendered filler
@@ -798,7 +870,19 @@ async def speak_stream(sentences, language: str = "en"):
                 # is busy (BrainAgent tasks, network callbacks), clipping the last word.
                 await loop.run_in_executor(None, sd.wait)
                 _tts_end_time = time.time()  # set after actual hardware completion
+                _sentence_count += 1
                 print(f"[Audio] Playback complete — echo window reset ({_now_log_ts()})")
+            except (sd.PortAudioError, OSError) as e:
+                # P0.R10 D2.b Q2 (b) RATIFIED — speaker device failure mid-stream:
+                # abort whole stream + record once + log per-sentence count for
+                # diagnostic context. Caller's contract preserved (no exception
+                # propagates); synth_worker drains naturally on cancellation.
+                print(
+                    f"[Audio] WARN speaker device failure in speak_stream "
+                    f"(sentence {_sentence_count}/{_sentence_total}): {e!r}"
+                )
+                _record_audio_failure("speaker")
+                break
             except Exception as e:
                 print(f"[Audio] Playback error: {e}")
                 break
@@ -827,6 +911,8 @@ def stop_audio():
     Safe to call at any time, including during shutdown."""
     try:
         sd.stop()
-    except Exception:
+    except (sd.PortAudioError, OSError):
         pass  # CLEANUP: sd.stop() raises if no active stream or device gone — interrupt flag still set
+    except Exception:
+        pass  # CLEANUP: defensive — preserves P0.4 silent-except policy
     _interrupt_flag.set()

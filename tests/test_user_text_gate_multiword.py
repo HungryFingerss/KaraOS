@@ -15,17 +15,18 @@ tests/test_multispeaker_integration.py and tests/test_dispute_auto_clear.py.
 """
 import sys
 import types
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 # ── stubs must be installed BEFORE importing pipeline ────────────────────────
+# P0.R6.Y D3 cascade: identify + diarize are async; stubs use AsyncMock.
 
 if "core.voice" not in sys.modules:
     _voice_stub = types.ModuleType("core.voice")
     _voice_stub.load_speaker_embedder = MagicMock(return_value=None)
-    _voice_stub.identify = MagicMock(return_value=(None, 0.0))
-    _voice_stub.diarize = MagicMock(return_value=[])
+    _voice_stub.identify = AsyncMock(return_value=(None, 0.0))
+    _voice_stub.diarize = AsyncMock(return_value=[])
     _voice_stub.get_diarize_stats = MagicMock(return_value={})
     sys.modules["core.voice"] = _voice_stub
 

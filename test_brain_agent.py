@@ -587,6 +587,7 @@ class TestExtractionAgent:
             results = await agent.extract("I live in Hyderabad", "Jagan", [])
         assert results[0].attribute == "lives_in_city"
 
+    @pytest.mark.privacy_critical
     def test_extract_system_prompt_emits_dual_attribute_for_safety_critical(self):
         """Session 105 Bug N Part 1: when user expresses self-harm
         ideation, extraction must emit BOTH momentary `current_mood` AND
@@ -857,6 +858,7 @@ class TestContradictionAgent:
         import httpx
         return ContradictionAgent(httpx.AsyncClient())
 
+    @pytest.mark.privacy_critical
     async def test_safety_critical_attribute_never_replaces(self):
         """Session 105 Bug N Part 2: when the attribute matches any
         SAFETY_CRITICAL_ATTRIBUTE_PATTERNS regex, ContradictionAgent
@@ -887,6 +889,7 @@ class TestContradictionAgent:
         )
         assert "safety" in reason.lower() or "append" in reason.lower()
 
+    @pytest.mark.privacy_critical
     async def test_safety_critical_various_mentioned_attributes_blocked(self):
         """Session 105 Bug N Part 2: pattern coverage — each of the
         documented mentioned_* shapes from SAFETY_CRITICAL_ATTRIBUTE_PATTERNS
@@ -4120,6 +4123,7 @@ class TestFrictionDetectionAgent:
 
 # ── G5a: _run_visitor_alert ────────────────────────────────────────────────────
 
+@pytest.mark.privacy_critical
 class TestVisitorAlert:
     """Tests for BrainOrchestrator._run_visitor_alert (G5a)."""
 
@@ -4849,6 +4853,7 @@ class TestSessionEndSynthesisS113:
 
 # ── G7b: Privacy layer tests ───────────────────────────────────────────────────
 
+@pytest.mark.privacy_critical
 class TestPrivacyFilter:
     """Component A: privacy_level tagging + filter_facts_for_requester.
 
@@ -5042,6 +5047,7 @@ class TestPrivacyFilter:
 
 # ── Phase 3A.4 canary — query_knowledge_for privacy-filtered retrieval ────────
 
+@pytest.mark.privacy_critical
 class TestBrainDBQueryKnowledgeFor:
     """P3.3/3A.4: BrainDB.query_knowledge_for applies _visibility_clause at
     the SELECT. These tests insert rows directly (bypassing the legacy 2-tier
@@ -5241,6 +5247,7 @@ class TestBrainDBQueryKnowledgeFor:
 
 # ── Phase 3A.8 (Session 109) — privacy isolation end-to-end ─────────────────
 
+@pytest.mark.privacy_critical
 class TestPrivacyIsolationE2E:
     """VISION_ROADMAP Phase 3A.8 — combined regression coverage on the
     privacy invariants Sessions 96-108 established. Zero production

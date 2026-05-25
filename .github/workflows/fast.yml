@@ -69,12 +69,40 @@ jobs:
         # a multi-day spec on its own.
         run: mypy core/ --ignore-missing-imports --no-strict-optional || true
 
-      - name: Pytest — fast subset
+      - name: Pytest — fast subset (excludes privacy_critical)
         env:
           PYTHONIOENCODING: utf-8
           PYTHONUNBUFFERED: "1"
         run: |
           pytest tests/ \
-            -m "not slow and not network and not models" \
+            -m "not slow and not network and not models and not privacy_critical" \
             --maxfail=5 \
             -q
+
+      - name: Pytest — privacy_critical (strict, fail-on-skip)
+        # P0.S7 D3 — dedicated CI step for cross-person privacy regression.
+        # `--strict-markers` rejects unknown markers (catches typos like
+        # `privacy_crit`). `-W error::pytest.PytestUnknownMarkWarning`
+        # promotes the related warning class to errors. `-rs` reports
+        # SKIPPED tests in the short summary; the post-pytest grep + exit 1
+        # treats any skipped privacy_critical test as a FAILURE (skip
+        # silently dropping a privacy test is the exact drift class P0.S7
+        # is meant to prevent).
+        # Spec: tests/p0_s7_privacy_critical_plan_v1.md §2.
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set -e
+          pytest tests/ \
+            -m privacy_critical \
+            --strict-markers \
+            -W error::pytest.PytestUnknownMarkWarning \
+            -rs \
+            --tb=short \
+            | tee /tmp/privacy_critical_output.txt
+          if grep -q "^SKIPPED" /tmp/privacy_critical_output.txt; then
+            echo "::error::Privacy-critical test was SKIPPED — this is a P0.S7 invariant violation"
+            grep "^SKIPPED" /tmp/privacy_critical_output.txt
+            exit 1
+          fi

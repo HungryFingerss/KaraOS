@@ -76,6 +76,7 @@ from core.config import (
     TOOL_TIMEOUT_SECS, TOOL_TIMEOUT_OVERRIDES,
 )
 from core.log_utils import _now_log_ts
+from core.sanitize import wrap_user_input
 
 if not CHAT_API_KEY:
     print("[Brain] WARNING: CHAT_API_KEY is not set — cloud LLM will be disabled")
@@ -1061,11 +1062,15 @@ async def _classify_intent(
             _role = msg.get("role", "?").upper()
             _content = (msg.get("content") or "")[:200]
             _ctx_lines.append(f"{_role}: {_content}")
+    # P0.S5 D1 (Plan v2 P4 + Plan v3 §3): current-utterance wrap via canonical
+    # helper. Byte-identical to legacy `<user_said>{_snip}</user_said>` for clean
+    # ASCII input. History-prefix above (lines 1058-1063) is OUT-OF-SCOPE per
+    # Plan v3 §2 narrow-scope disposition (deferred to P0.S5.X).
     _user_prompt = (
         "Recent conversation:\n" + "\n".join(_ctx_lines) + "\n\n"
         if _ctx_lines else ""
     ) + (
-        f"Classify this utterance: <user_said>{_snip}</user_said>"
+        "Classify this utterance: " + wrap_user_input(_snip)
     )
     try:
         resp = await asyncio.wait_for(
@@ -1789,7 +1794,10 @@ async def ask_offline(
     # Keep last 10 turns for minimal context (no full history injection)
     recent = list(conversation_history or [])[-10:] if conversation_history else []
     if message.strip():
-        recent.append({"role": "user", "content": message.strip()})
+        # P0.S5 D1: wrap current-turn user_text before LLM dispatch. History
+        # items in `recent` are NOT wrapped per Plan v3 §2 narrow-scope
+        # disposition (deferred to P0.S5.X).
+        recent.append({"role": "user", "content": wrap_user_input(message.strip())})
 
     sys_prompt = _OLLAMA_OFFLINE_PROMPT.format(name=person_name or "there", system_name=system_name)
     if system_note:
@@ -1989,7 +1997,12 @@ def _build_context(
     while messages and _estimate_tokens(messages) > TOKEN_HARD_LIMIT:
         messages.pop(0)
 
-    user_msg = message.strip()
+    # P0.S5 D1: wrap current-turn user_text before LLM dispatch. Web-context
+    # augmentation (downstream `if web_context:`) is system-constructed and
+    # concatenates AROUND the already-wrapped user_msg, so the structural
+    # wrap survives augmentation. History items in `messages` are NOT
+    # wrapped per Plan v3 §2 narrow-scope disposition (deferred to P0.S5.X).
+    user_msg = wrap_user_input(message.strip())
 
     if web_context:
         user_msg = (

@@ -28,8 +28,13 @@ DLL-safe: AST scan; no pipeline import.
 
 SCOPE LIMIT: This test checks the methods listed in PAIRED_WRITE_METHODS.
 prune_old_strangers_async uses a delegation pattern (calls
-prune_old_strangers_sql_only + rebuild_faiss_async) and is tested via
-the slow-tier crash tests instead.
+prune_old_strangers_sql_only + rebuild_faiss_async). Its end-to-end
+crash recovery + DB write-through correctness is covered by:
+  - tests/test_faiss_sql_atomicity.py::test_prune_async_then_restart_recognizes_known_person
+  - tests/test_faiss_sql_atomicity.py::test_prune_async_crash_mid_db_update_recovers_via_sentinel
+(P0.B2 D5 closure 2026-05-21 — landed after the prior comment claimed
+slow-tier coverage that did not exist; documentation-vs-reality drift
+explicitly named here so it doesn't recur.)
 """
 import ast
 from pathlib import Path
@@ -203,14 +208,60 @@ _FAISS_CALL_MARKERS = (
     "self._rebuild_faiss(",
 )
 
+# P0.S9 D3 — extend inverse-check scan surface from `core/db.py` only to
+# `core/*.py` top-level (not recursive). Vendored subdirs excluded:
+# `core/_minifasnet/` (MiniFASNet upstream vendor) + `core/event_log/`
+# (event-log producer package; no FAISS surface).
+_SCAN_EXCLUDE = frozenset({
+    "core/_minifasnet",
+    "core/event_log",
+})
+
+
+def _scan_paths() -> list[Path]:
+    """P0.S9 D3 — return `core/*.py` top-level files; skip vendored subdirs.
+
+    Top-level glob (NOT recursive `**/*.py`) by design — vendored subdirs
+    (`core/_minifasnet/` MiniFASNet upstream, `core/event_log/` producer
+    package) don't have FAISS surface and shouldn't be scanned. Path
+    comparison uses POSIX-style slashes for cross-platform consistency
+    with `_SCAN_EXCLUDE` entries.
+    """
+    core_dir = REPO_ROOT / "core"
+    paths = []
+    for p in core_dir.glob("*.py"):
+        rel = p.relative_to(REPO_ROOT).as_posix()
+        if not any(rel.startswith(exc) for exc in _SCAN_EXCLUDE):
+            paths.append(p)
+    return paths
+
 
 def _find_faiss_writing_methods(source: str) -> list[str]:
-    """Return names of FaceDB methods that contain a FAISS write call,
-    excluding internal helpers listed in _INVERSE_SCAN_EXCLUDE."""
+    """Return names of methods (across any class + module-level functions)
+    that contain a FAISS write call, excluding internal helpers listed in
+    _INVERSE_SCAN_EXCLUDE.
+
+    P0.S9 D3: widened from FaceDB-class-only to ANY class + module-level
+    functions across the scanned source. The original P0.5 invariant tracked
+    FaceDB methods; D3 widens the surface so a future FAISS-writing method
+    landed outside FaceDB (e.g. a helper function in `core/audit.py` or a
+    different class) gets caught by the inverse check.
+    """
     tree = ast.parse(source)
     hits = []
+    # Module-level function definitions
+    for child in tree.body:
+        if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        name = child.name
+        if name in _INVERSE_SCAN_EXCLUDE:
+            continue
+        src = ast.unparse(child)
+        if any(marker in src for marker in _FAISS_CALL_MARKERS):
+            hits.append(name)
+    # All class methods (FaceDB + any other class containing FAISS calls)
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.ClassDef) and node.name == "FaceDB"):
+        if not isinstance(node, ast.ClassDef):
             continue
         for child in node.body:
             if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -225,22 +276,37 @@ def _find_faiss_writing_methods(source: str) -> list[str]:
 
 
 def test_all_paired_write_sites_are_in_tuple():
-    """Every FaceDB method that calls a FAISS write op must be in PAIRED_WRITE_METHODS.
+    """Every method/function across `core/*.py` that calls a FAISS write op
+    must be in PAIRED_WRITE_METHODS.
 
     This is the inverse of test_paired_write_method_follows_p05_pattern: that
     test verifies listed methods are correctly structured; this test verifies
     no FAISS-writing method was silently omitted from the list.
 
-    Without this check, adding a new FAISS-writing method (e.g. prune_zero_value_stranger)
-    would bypass the P0.5 structural invariant entirely — the pattern test would
-    never scan it.
+    Without this check, adding a new FAISS-writing method (e.g. prune_zero_value_stranger,
+    or a helper function in `core/audit.py`) would bypass the P0.5 structural
+    invariant entirely — the pattern test would never scan it.
+
+    P0.S9 D3: scan surface widened from `core/db.py` only to `core/*.py`
+    top-level glob (excluding vendored subdirs `core/_minifasnet/` and
+    `core/event_log/` via `_SCAN_EXCLUDE`). The original `core.audit.repair_gallery`
+    paired-write violation (deleted at P0.S9 D1 consolidation) would have been
+    surfaced by this widened scan IF its FAISS calls had used `self.*` markers;
+    historical violation used `db.*` external-reference shape which the markers
+    don't catch by design (markers anchor on `self.` to scope to in-class state).
+    The widened scan structurally protects against future violations that
+    follow the in-class FaceDB-like pattern but land in another core/ file.
     """
-    source = _read_source(DB_PATH)
-    faiss_writers = _find_faiss_writing_methods(source)
-    unlisted = [m for m in faiss_writers if m not in PAIRED_WRITE_METHODS]
-    assert not unlisted, (
-        f"FAISS-writing FaceDB methods not in PAIRED_WRITE_METHODS:\n"
-        + "\n".join(f"  - {m}" for m in unlisted)
+    unlisted_total: list[tuple[Path, str]] = []
+    for path in _scan_paths():
+        source = path.read_text(encoding="utf-8")
+        faiss_writers = _find_faiss_writing_methods(source)
+        unlisted = [m for m in faiss_writers if m not in PAIRED_WRITE_METHODS]
+        for m in unlisted:
+            unlisted_total.append((path, m))
+    assert not unlisted_total, (
+        f"FAISS-writing methods across core/*.py not in PAIRED_WRITE_METHODS:\n"
+        + "\n".join(f"  - {p.relative_to(REPO_ROOT).as_posix()}::{m}" for p, m in unlisted_total)
         + "\n\nAdd them to PAIRED_WRITE_METHODS so the P0.5 structural pattern "
         "test covers them, OR add them to _INVERSE_SCAN_EXCLUDE with a comment "
         "explaining why they are exempt."

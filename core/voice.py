@@ -12,12 +12,15 @@ Minimum reliable utterance length: ~1.5 seconds of actual speech.
 
 Mirrors vision.py structure: lazy singleton load, thin wrapper, numpy I/O.
 """
+import asyncio
 import time
 import logging as _logging
 import warnings as _warnings
 import numpy as np
 import torch
-from concurrent.futures import ThreadPoolExecutor
+# P0.R6.Z D3.a RETIREMENT: from concurrent.futures import ThreadPoolExecutor
+# was used exclusively by the retired _voice_diarize_executor pattern;
+# subprocess isolation via core.heavy_worker replaces it.
 
 from core.config import (
     MIC_SAMPLE_RATE, VOICE_EMBEDDING_DIM,
@@ -36,48 +39,16 @@ _warnings.filterwarnings("ignore", category=FutureWarning, module="speechbrain")
 _warnings.filterwarnings("ignore", category=UserWarning,   module="speechbrain")
 _warnings.filterwarnings("ignore", message=".*unauthenticated.*")
 
-import torchaudio as _ta
-if not hasattr(_ta, "list_audio_backends"):
-    # torchaudio 2.6+ removed list_audio_backends; SpeechBrain 1.x still calls it.
-    # Session 89 fix: originally this returned ``[]`` on the theory that
-    # SpeechBrain would skip file-backend setup. That broke pyannote.audio
-    # (Session 88 Phase 2): pyannote's ``io.py:214`` does
-    # ``backends[0]`` when "soundfile" isn't present → IndexError on an
-    # empty list. Return ``['sox_io']`` instead — matches the sentinel our
-    # file-level ``tests/patch_pyannote_io.py`` uses. SpeechBrain treats
-    # any non-empty backend list as "something is available, proceed"
-    # (only actually uses it when loading audio FROM FILES, which ECAPA-
-    # TDNN in our pipeline never does — we pass in-memory tensors).
-    _ta.list_audio_backends = lambda: ["sox_io"]
-
 _embedder = None   # SpeechBrain EncoderClassifier — lazy singleton
 
-# Wave 3 Item 13: dedicated single-threaded executor for diarization.
-# Isolates 100-500ms pyannote budget from the default executor where TTS,
-# embedder, FAISS, and SQLite all share 12 worker threads.
-# max_workers=1: pyannote isn't safe for concurrent calls (one Pipeline
-# instance, GPU contention). Lazy singleton — not created at import so
-# test environments without pyannote don't pay construction cost.
-_voice_diarize_executor: "ThreadPoolExecutor | None" = None
-
-
-def get_diarize_executor() -> ThreadPoolExecutor:
-    """Return the dedicated diarization executor, creating it on first call."""
-    global _voice_diarize_executor
-    if _voice_diarize_executor is None:
-        _voice_diarize_executor = ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix="voice-diarize",
-        )
-    return _voice_diarize_executor
-
-
-def shutdown_diarize_executor() -> None:
-    """Shut down the dedicated diarization executor. Call from pipeline shutdown."""
-    global _voice_diarize_executor
-    if _voice_diarize_executor is not None:
-        _voice_diarize_executor.shutdown(wait=False)
-        _voice_diarize_executor = None
+# P0.R6.Z D3.a RETIREMENT (2026-05-24): the dedicated diarization
+# ThreadPoolExecutor pattern (_voice_diarize_executor + get_diarize_executor +
+# shutdown_diarize_executor) was the Wave 3 Item 13 isolation mechanism for
+# pyannote's sync C-extension call. Post-P0.R6.Z, pyannote inference runs in
+# a ProcessPoolExecutor subprocess via `hw.run_heavy("pyannote_diarize", ...)`
+# — the executor isolation moved one layer down into subprocess isolation.
+# All 3 symbols hard-deleted per Q1 (a) lock. Pool shutdown is now handled
+# by `hw.shutdown_all_pools(wait=True)` at process exit.
 
 
 def load_speaker_embedder(device: str = "cuda") -> None:
@@ -86,14 +57,6 @@ def load_speaker_embedder(device: str = "cuda") -> None:
     if _embedder is not None:
         return
     try:
-        # torchaudio 2.6+ removed list_audio_backends; SpeechBrain 1.x still calls it.
-        # (Also patched at module scope above, but guard here in case voice.py is
-        # imported after some other module already triggered a SpeechBrain import.)
-        # Session 89: must return ``['sox_io']`` — see module-level comment above
-        # for the Phase 2 / pyannote interaction that forced this.
-        if not hasattr(_ta, "list_audio_backends"):
-            _ta.list_audio_backends = lambda: ["sox_io"]
-
         # huggingface_hub 1.0+ has two breaking changes vs SpeechBrain 1.x:
         # 1. use_auth_token kwarg removed — strip it transparently.
         # 2. 404s now raise RemoteEntryNotFoundError instead of FileNotFoundError —
@@ -140,38 +103,40 @@ def load_speaker_embedder(device: str = "cuda") -> None:
         _embedder = None
 
 
-def embed(audio: np.ndarray, sample_rate: int = MIC_SAMPLE_RATE) -> np.ndarray | None:
+async def embed(audio: np.ndarray, sample_rate: int = MIC_SAMPLE_RATE) -> np.ndarray | None:
     """Extract L2-normalized 192-dim speaker embedding from a mono float32 audio array.
 
-    Returns None if the embedder is unavailable or the utterance is too short.
-    Minimum reliable length: 1.5 seconds (~24 000 samples at 16 kHz).
+    P0.R6.Y migration: inference offloaded to ProcessPoolExecutor subprocess
+    via ``hw.run_heavy("ecapa_embed", ...)``. The subprocess holds the
+    persistent SpeechBrain EncoderClassifier singleton (loaded once on first
+    call); the asyncio loop is not blocked during the ~50-200ms inference.
+    Worker performs the L2-normalization subprocess-side per Q4 (b) lock;
+    main process body just deserializes + detaches buffer for downstream
+    mutation safety.
+
+    Returns None if the utterance is too short OR the worker returns None
+    (model load failure, inference crash). Minimum reliable length: 1.5
+    seconds (~24 000 samples at 16 kHz) — gated subprocess-side.
     """
-    if _embedder is None:
+    if len(audio) == 0:
         return None
-    if len(audio) < sample_rate * 1.5:
+    import core.heavy_worker as hw  # noqa: PLC0415
+
+    emb_bytes = await hw.run_heavy(
+        "ecapa_embed",
+        hw.ecapa_embed_worker,
+        audio.tobytes(),
+        audio.shape,
+        audio.dtype.name,
+        sample_rate,
+    )
+    if emb_bytes is None:
         return None
-
-    # Resample to 16 kHz if the mic sample rate differs
-    if sample_rate != 16000:
-        import torchaudio
-        audio_t = torch.from_numpy(audio.astype(np.float32))
-        audio   = torchaudio.functional.resample(audio_t, sample_rate, 16000).numpy()
-
-    signal = torch.from_numpy(audio.astype(np.float32)).unsqueeze(0)  # [1, T]
-    try:
-        with torch.no_grad():
-            emb = _embedder.encode_batch(signal)   # [1, 1, 192]
-        emb  = emb.squeeze().cpu().numpy()          # [192]
-        norm = np.linalg.norm(emb)
-        if norm > 0:
-            emb = emb / norm
-        return emb.astype(np.float32)
-    except Exception as e:
-        print(f"[Voice] Embedding failed: {e}")
-        return None
+    emb = np.frombuffer(emb_bytes, dtype=np.float32)
+    return emb.copy()  # detach from buffer (mutable downstream)
 
 
-def _diarize_ecapa_valley(
+async def _diarize_ecapa_valley(
     audio:         np.ndarray,
     voice_gallery: dict[str, np.ndarray],
     threshold:     float = VOICE_RECOGNITION_THRESHOLD,
@@ -201,8 +166,6 @@ def _diarize_ecapa_valley(
     pipeline-local SPEAKER_XX labels; the dispatch in ``diarize`` fills
     ``speaker_label=None`` on fallback-path returns for uniform shape.
     """
-    if _embedder is None:
-        return []
     if len(audio) < int(DIARIZE_MIN_SECS * sample_rate):
         return []
 
@@ -210,11 +173,15 @@ def _diarize_ecapa_valley(
     hop_samples    = int(DIARIZE_HOP_SECS    * sample_rate)
 
     # ── Compute per-window embeddings ────────────────────────────────────────
+    # P0.R6.Y D3 cascade: embed() is now async + dispatches to subprocess
+    # via hw.run_heavy. Worker-side _get_subprocess_ecapa() returns None on
+    # load failure (P0.R1 D1 contract preserved) — no main-process embedder
+    # singleton check needed; embed() returns None on any failure path.
     embeddings:    list[np.ndarray] = []
     window_starts: list[int]        = []
     pos = 0
     while pos + window_samples <= len(audio):
-        emb = embed(audio[pos : pos + window_samples], sample_rate)
+        emb = await embed(audio[pos : pos + window_samples], sample_rate)
         if emb is not None:
             embeddings.append(emb)
             window_starts.append(pos)
@@ -244,7 +211,7 @@ def _diarize_ecapa_valley(
     segments = []
     for start_s, end_s in [(0, boundary), (boundary, len(audio))]:
         seg_audio            = audio[start_s:end_s]
-        pid, score           = identify(seg_audio, voice_gallery, threshold, sample_rate)
+        pid, score           = await identify(seg_audio, voice_gallery, threshold, sample_rate)
         segments.append({
             "start_sample":  start_s,
             "end_sample":    end_s,
@@ -256,12 +223,13 @@ def _diarize_ecapa_valley(
 
 
 # ── VISION_ROADMAP Phase 2 — pyannote-backed diarization ────────────────────
-# Module-level singleton (matches load_speaker_embedder / MiniFASNet / Whisper
-# lazy-loading pattern used everywhere else in core/*). First diarize() call
-# with backend="pyannote" triggers load; subsequent calls reuse the cached
-# pipeline. NOT loaded at module import — saves ~2-3s + ~500 MB of GPU
-# allocation when pyannote isn't actually invoked.
-_pyannote_pipeline = None
+# P0.R6.Z D3.a RETIREMENT (2026-05-24): the main-process `_pyannote_pipeline`
+# singleton + `_load_pyannote_pipeline()` lazy loader retired in favor of
+# subprocess-side singleton at `core/heavy_worker.py::_get_subprocess_pyannote()`.
+# The pyannote Pipeline now lives entirely in the ProcessPoolExecutor worker
+# subprocess; main process never imports `pyannote.audio` post-P0.R6.Z.
+# `_diarize_pyannote()` body below dispatches to `hw.run_heavy("pyannote_diarize",
+# ...)` which routes through the worker subprocess.
 
 # Fallback counter — bumped every time a pyannote invocation degrades to
 # _diarize_ecapa_valley (either because the pipeline failed to load, or
@@ -278,60 +246,7 @@ def get_diarize_stats() -> dict:
     return {"fallback_count": _diarize_fallback_count}
 
 
-def _load_pyannote_pipeline():
-    """Lazy loader for pyannote's speaker-diarization-3.1 pipeline.
-
-    First call: imports pyannote.audio, loads the pipeline (downloads
-    ~500 MB on first-ever run via HF_TOKEN, cached thereafter), transfers
-    to CUDA if available. Subsequent calls return the cached singleton.
-
-    Returns the Pipeline instance on success, or None on failure (missing
-    HF_TOKEN, gated-repo access denied, or import error). Failure is
-    logged; callers should treat None as "pyannote unavailable — fall back
-    to ``_diarize_ecapa_valley``".
-
-    Requires the torchaudio compat patches in
-    ``tests/patch_pyannote_io.py`` to be applied before any pyannote
-    import. The patches cover torchaudio 2.9+ API removals + torch 2.6+
-    ``weights_only`` default change — see the patch file docstring and
-    Session 88 CLAUDE.md entry."""
-    global _pyannote_pipeline
-    if _pyannote_pipeline is not None:
-        return _pyannote_pipeline
-    import os
-    hf_token = os.getenv("HF_TOKEN")
-    if not hf_token:
-        print("[Voice] HF_TOKEN missing — pyannote pipeline cannot load "
-              "(gated-model auth). Falling back to ECAPA-valley backend.")
-        return None
-    print("[Voice] Loading pyannote speaker-diarization-3.1...")
-    t0 = time.time()
-    try:
-        from pyannote.audio import Pipeline
-        _pyannote_pipeline = Pipeline.from_pretrained(
-            "pyannote/speaker-diarization-3.1",
-            use_auth_token=hf_token,
-        )
-    except Exception as e:
-        # Session 89 fix: the original lazy loader logged only the exception
-        # name + message, which made the in-pipeline "IndexError: list index
-        # out of range" un-diagnosable. Log the full traceback so operators
-        # can see which pyannote / torchaudio / speechbrain call actually
-        # raised. Still returns None so the fallback chain in
-        # _diarize_pyannote handles gracefully — logging, not raising.
-        import traceback as _tb
-        print(f"[Voice] pyannote load failed: {type(e).__name__}: {e}")
-        print(f"[Voice] TRACEBACK:\n{_tb.format_exc()}")
-        print(f"[Voice] Tip: run ``python tests/patch_pyannote_io.py`` if you "
-              f"just reinstalled pyannote.audio.")
-        return None
-    if torch.cuda.is_available():
-        _pyannote_pipeline.to(torch.device("cuda"))
-    print(f"[Voice] pyannote ready — {time.time() - t0:.1f}s")
-    return _pyannote_pipeline
-
-
-def _diarize_pyannote(
+async def _diarize_pyannote(
     audio:         np.ndarray,
     voice_gallery: dict[str, np.ndarray],
     threshold:     float = VOICE_RECOGNITION_THRESHOLD,
@@ -359,46 +274,60 @@ def _diarize_pyannote(
     identity comes from ``speaker_id`` (ECAPA gallery match), never from
     ``speaker_label``."""
     global _diarize_fallback_count
-    pipeline = _load_pyannote_pipeline()
-    if pipeline is None:
-        if DIARIZATION_FALLBACK_ON_ERROR:
-            _diarize_fallback_count += 1
-            print(f"[Voice] WARN diarize fallback (load-fail) — "
-                  f"pyannote unavailable, using ecapa_valley "
-                  f"(fallback #{_diarize_fallback_count})")
-            return _diarize_ecapa_valley(audio, voice_gallery, threshold, sample_rate)
-        return []
     if len(audio) == 0:
         return []
 
-    # Pyannote accepts an in-memory waveform dict. Avoids torchcodec /
-    # FFmpeg entirely — the exact path documented as supported when
-    # torchcodec's built-in audio decoding fails.
-    waveform = torch.from_numpy(audio.astype(np.float32)).unsqueeze(0)
-    if torch.cuda.is_available():
-        waveform = waveform.to(torch.device("cuda"))
+    # P0.R6.Z D3.b body migration: pyannote inference dispatches to the
+    # heavy-worker ProcessPoolExecutor pool via `hw.run_heavy(
+    # "pyannote_diarize", ...)`. Worker subprocess holds the persistent
+    # Pipeline singleton (loaded once per subprocess lifetime via
+    # `_get_subprocess_pyannote()`) AND serializes Annotation →
+    # list[tuple[float, float, str]] BEFORE returning per Q2 (a) lock.
+    # Main process iterates simple tuples; no pyannote imports in main.
+    # Q9 (a) lock: BrokenProcessPool from subprocess crash lands in the
+    # outer except Exception below; pool auto-restarts on next call.
+    import core.heavy_worker as hw  # noqa: PLC0415
 
     try:
-        annotation = pipeline({"waveform": waveform, "sample_rate": sample_rate})
+        segments_raw = await hw.run_heavy(
+            "pyannote_diarize",
+            hw.pyannote_diarize_worker,
+            audio.tobytes(),
+            audio.shape,
+            audio.dtype.name,
+            sample_rate,
+        )
     except Exception as e:
         print(f"[Voice] pyannote diarize runtime error: {type(e).__name__}: {e}")
         if DIARIZATION_FALLBACK_ON_ERROR:
             _diarize_fallback_count += 1
             print(f"[Voice] WARN diarize fallback (runtime) — ecapa_valley "
                   f"for this call (fallback #{_diarize_fallback_count})")
-            return _diarize_ecapa_valley(audio, voice_gallery, threshold, sample_rate)
+            return await _diarize_ecapa_valley(audio, voice_gallery, threshold, sample_rate)
+        return []
+
+    if segments_raw is None:
+        # Worker returned None — pyannote pipeline load failure in
+        # subprocess (cold HF cache fail OR vendored fork import broken).
+        # Preserves P0.R1 D1 None-return fallback contract.
+        if DIARIZATION_FALLBACK_ON_ERROR:
+            _diarize_fallback_count += 1
+            print(f"[Voice] WARN diarize fallback (load-fail) — "
+                  f"pyannote unavailable, using ecapa_valley "
+                  f"(fallback #{_diarize_fallback_count})")
+            return await _diarize_ecapa_valley(audio, voice_gallery, threshold, sample_rate)
         return []
 
     segments: list[dict] = []
-    for segment, _, label in annotation.itertracks(yield_label=True):
-        dur = segment.end - segment.start
+    for start_secs, end_secs, label in segments_raw:
+        dur = end_secs - start_secs
         if dur < DIARIZE_MIN_SEGMENT_SECS:
             # Below the ECAPA-noise floor — pyannote's own confidence is
             # usually already low here, and our downstream needs ≥0.5s to
             # produce any useful signal. Drop.
             continue
-        start_s = int(segment.start * sample_rate)
-        end_s   = min(int(segment.end * sample_rate), len(audio))
+        start_s = int(start_secs * sample_rate)
+        end_s   = min(int(end_secs * sample_rate), len(audio))
         if dur < DIARIZE_MIN_EMBED_SECS:
             # Pyannote saw a valid segment but it's too short for a
             # reliable ECAPA embedding. Keep the segment (the calling
@@ -414,7 +343,7 @@ def _diarize_pyannote(
             })
             continue
         seg_audio  = audio[start_s:end_s]
-        pid, score = identify(seg_audio, voice_gallery, threshold, sample_rate)
+        pid, score = await identify(seg_audio, voice_gallery, threshold, sample_rate)
         segments.append({
             "start_sample":  start_s,
             "end_sample":    end_s,
@@ -425,7 +354,7 @@ def _diarize_pyannote(
     return segments
 
 
-def diarize(
+async def diarize(
     audio:         np.ndarray,
     voice_gallery: dict[str, np.ndarray],
     threshold:     float = VOICE_RECOGNITION_THRESHOLD,
@@ -457,15 +386,15 @@ def diarize(
     pipeline loads on first invocation (~2-3s + 500 MB one-time download).
     Subsequent calls reuse the cached singleton."""
     if DIARIZATION_BACKEND == "pyannote":
-        segments = _diarize_pyannote(audio, voice_gallery, threshold, sample_rate)
+        segments = await _diarize_pyannote(audio, voice_gallery, threshold, sample_rate)
         _backend_used = "pyannote"
     elif DIARIZATION_BACKEND == "ecapa_valley":
-        segments = _diarize_ecapa_valley(audio, voice_gallery, threshold, sample_rate)
+        segments = await _diarize_ecapa_valley(audio, voice_gallery, threshold, sample_rate)
         _backend_used = "ecapa_valley"
     else:
         print(f"[Voice] Unknown DIARIZATION_BACKEND {DIARIZATION_BACKEND!r} — "
               f"falling back to ecapa_valley")
-        segments = _diarize_ecapa_valley(audio, voice_gallery, threshold, sample_rate)
+        segments = await _diarize_ecapa_valley(audio, voice_gallery, threshold, sample_rate)
         _backend_used = "ecapa_valley(unknown-backend-fallback)"
     # Normalize shape: fallback/legacy paths don't produce ``speaker_label``,
     # but callers should see a uniform dict regardless of which backend ran.
@@ -478,7 +407,7 @@ def diarize(
     return segments
 
 
-def identify(
+async def identify(
     audio:         np.ndarray,
     voice_gallery: dict[str, np.ndarray],
     threshold:     float,
@@ -486,10 +415,13 @@ def identify(
 ) -> tuple[str | None, float]:
     """1:N speaker identification against the in-memory voice gallery.
 
+    P0.R6.Y D3 cascade: embed() is now async (offloads to ProcessPoolExecutor
+    subprocess); identify() becomes async to await it.
+
     Returns (person_id, cosine_score) if the best match exceeds `threshold`,
     otherwise (None, best_score).
     """
-    emb = embed(audio, sample_rate)
+    emb = await embed(audio, sample_rate)
     if emb is None or not voice_gallery:
         return None, 0.0
 
