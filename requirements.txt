@@ -17,7 +17,9 @@ silero-vad>=5.0           # Voice activity detection
 kokoro-onnx>=0.4.0        # Local English TTS
 sounddevice>=0.4.6        # Mic input + speaker output
 piper-tts>=1.2.0          # Offline English TTS (Kokoro fallback)
-silent-face-anti-spoofing>=0.0.1  # MiniFASNet liveness — gates enrollment + recognition
+# silent-face-anti-spoofing REMOVED 2026-05-28: PyPI versions all require Python<3.13.
+# MiniFASNet liveness is now vendored at core/_minifasnet/model.py + models/antispoof_weights/
+# per Session 52 (2026-04-19). The PyPI package is no longer a runtime dependency.
 
 # Torch — RTX 50-series (Blackwell sm_120) requires cu128
 # pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
