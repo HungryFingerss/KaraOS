@@ -9,7 +9,7 @@ onnxruntime-gpu>=1.24.3   # AdaFace ONNX inference on GPU
 
 # Voice recognition (P0.R5 — vendored forks)
 speechbrain @ git+https://github.com/HungryFingerss/speechbrain.git@a9b05847aca696b7eb28dd47c6276afcb2bc14d4  # ECAPA-TDNN + 1 P0.R5 patch (torch_audio_backend list_audio_backends rewrite)
-pyannote.audio @ git+https://github.com/HungryFingerss/pyannote-audio.git@2cee8f3e2216b899ff9d3813e63b21e34d5d31d0  # 3.3.2 + 6 P0.R5 patches (torchaudio 2.9+ compat + huggingface_hub kwarg + weights_only)
+pyannote.audio @ git+https://github.com/HungryFingerss/pyannote-audio.git@863aeb1449fc3028e2fb9a4cb04151b8c1e09957  # 3.3.2 + 7 patches (P0.R5 6 + Pre-P1 Bundle 1 pkg_resources → pkgutil.extend_path for setuptools>=81 compat)
 
 # STT / TTS
 faster-whisper>=1.0.0     # GPU-accelerated Whisper (CTranslate2 backend)
