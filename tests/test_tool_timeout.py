@@ -20,6 +20,7 @@ actual transaction wrapper chain, not stub mocks.
 from __future__ import annotations
 
 import asyncio
+import os
 import sqlite3
 import time
 from unittest.mock import MagicMock, patch
@@ -297,22 +298,22 @@ class TestSearchWebTimeoutWrap:
     and returns a structured timeout dict so callers route the LLM through
     the same hint-to-training-knowledge path as other search errors."""
 
+    @pytest.mark.skipif(
+        not os.getenv("TAVILY_API_KEY"),
+        reason="requires TAVILY_API_KEY — _web_search short-circuits to None on no-key, "
+               "bypassing the wait_for path this test is meant to exercise. The timeout-"
+               "tolerance contract requires a real Tavily client to monkeypatch.",
+    )
     async def test_tavily_hang_returns_timeout_dict_within_budget(self, monkeypatch):
         """Monkeypatch the Tavily HTTP client to hang; _web_search must
         return a {error, hint} dict within budget+1s rather than block."""
         import core.brain as _brain_mod
 
-        # CI without TAVILY_API_KEY leaves _tavily_http as None — _web_search
-        # short-circuits before reaching the wait_for guard, so this test's
-        # contract is unreachable. Skip when the client isn't initialized.
-        # This test validates the timeout-tolerance contract; the no-key path
-        # is a separate concern covered elsewhere.
+        # Defense-in-depth: if for any reason _tavily_http is still None
+        # despite TAVILY_API_KEY being set (e.g., httpx import failed),
+        # skip rather than fail the assertion.
         if _brain_mod._tavily_http is None:
-            import pytest as _pytest
-            _pytest.skip(
-                "Tavily HTTP client not initialized (no TAVILY_API_KEY) — "
-                "timeout-wrap test requires a real client to monkeypatch"
-            )
+            pytest.skip("Tavily client unexpectedly None despite TAVILY_API_KEY set")
 
         async def _hang_post(*_a, **_kw):
             await asyncio.sleep(60.0)
