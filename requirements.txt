@@ -42,3 +42,4 @@ rapidfuzz>=3.0.0          # fast string similarity — schema normalization pre-
 jellyfish>=1.0.0          # Double Metaphone phonetic matching — _name_heard_in (Session 41 G4 phonetic gate)
 pytest>=7.0.0             # test runner (dev)
 pytest-asyncio>=0.23.0    # async test support (dev)
+hypothesis>=6.152.7       # property-based testing — P0.12 brain JSON parser hardening (dev)
