@@ -302,6 +302,18 @@ class TestSearchWebTimeoutWrap:
         return a {error, hint} dict within budget+1s rather than block."""
         import core.brain as _brain_mod
 
+        # CI without TAVILY_API_KEY leaves _tavily_http as None — _web_search
+        # short-circuits before reaching the wait_for guard, so this test's
+        # contract is unreachable. Skip when the client isn't initialized.
+        # This test validates the timeout-tolerance contract; the no-key path
+        # is a separate concern covered elsewhere.
+        if _brain_mod._tavily_http is None:
+            import pytest as _pytest
+            _pytest.skip(
+                "Tavily HTTP client not initialized (no TAVILY_API_KEY) — "
+                "timeout-wrap test requires a real client to monkeypatch"
+            )
+
         async def _hang_post(*_a, **_kw):
             await asyncio.sleep(60.0)
 
