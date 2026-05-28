@@ -2062,4 +2062,45 @@ def wipe_all() -> None:
     except Exception as e:
         print(f"[Reset] Could not delete sim_session_state.json: {e}")
 
+    # P0.S11 D2 — Post-wipe summary so callers (CLI, dashboard, pipeline IPC)
+    # see a clear log of what was deleted vs preserved. Without this, wipe_all
+    # is silent on success — the 2026-05-27 canary surfaced exactly this
+    # diagnostic gap (Jagan thought factory reset had run; no log proved it).
+    # Probe Path.exists() post-call (NOT pre-call enumeration) so the count
+    # reflects ACTUAL deletions — files that failed to delete (per-line WARN
+    # logged above) will show up as "still present" in the summary.
+    _DELETED_PROBE_TARGETS = (
+        (str(DB_PATH), "faces.db"),
+        (str(DB_PATH) + "-shm", "faces.db-shm"),
+        (str(DB_PATH) + "-wal", "faces.db-wal"),
+        (str(FAISS_INDEX_PATH), "faiss.index"),
+        (str(BRAIN_DB_PATH), "brain.db"),
+        (str(BRAIN_DB_PATH) + "-shm", "brain.db-shm"),
+        (str(BRAIN_DB_PATH) + "-wal", "brain.db-wal"),
+        (str(GRAPH_DB_PATH), "brain_graph"),
+        (str(FACES_DIR.parent / "sim_session_state.json"), "sim_session_state.json"),
+    )
+    _PRESERVED_PROBE_TARGETS = (
+        (str(FACES_DIR / ".dashboard_token"), ".dashboard_token"),
+        (str(FACES_DIR / ".dashboard_auth_url"), ".dashboard_auth_url"),
+    )
+    _deleted_count = sum(1 for path, _ in _DELETED_PROBE_TARGETS if not Path(path).exists())
+    _total_targets = len(_DELETED_PROBE_TARGETS)
+    _photos_remaining = sum(1 for _ in FACES_DIR.glob("*.jpg"))
+    _preserved_count = sum(1 for path, _ in _PRESERVED_PROBE_TARGETS if Path(path).exists())
+    print(
+        f"[Reset] Summary: deleted {_deleted_count}/{_total_targets} target(s) + "
+        f"{_photos_remaining} photo(s) remaining (expected 0); "
+        f"preserved {_preserved_count}/{len(_PRESERVED_PROBE_TARGETS)} (P0.S2 invariant)"
+    )
+    # Verbose enumeration for diagnostic clarity
+    print("[Reset] Deleted targets:")
+    for path, name in _DELETED_PROBE_TARGETS:
+        status = "  \u2713 gone" if not Path(path).exists() else "  \u2717 STILL PRESENT (delete failed)"
+        print(f"  {status}: {name}")
+    print("[Reset] Preserved targets (per P0.S2 invariant):")
+    for path, name in _PRESERVED_PROBE_TARGETS:
+        status = "  \u2713 kept" if Path(path).exists() else "  \u00b7 absent (not present at start)"
+        print(f"  {status}: {name}")
+
     print("[Reset] All data files deleted.")

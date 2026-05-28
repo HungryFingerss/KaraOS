@@ -78,14 +78,14 @@ def _archive_terminal_output(log_path: _pathlib.Path = _LOG_PATH) -> "_pathlib.P
     return candidate
 
 
-_archived_log = _archive_terminal_output()
-
-_LOG_FILE = open(
-    _LOG_PATH,
-    # P1.5: fresh per session now — prior session's content is preserved in
-    # the timestamped archive returned by _archive_terminal_output above.
-    "w", encoding="utf-8", buffering=1,
-)
+# P0.S12 D2 — Module-level placeholders so subprocess re-imports of pipeline.py
+# get None-valued names rather than NameError on attribute access. The
+# _log_drain function (defined below) references _LOG_FILE at CALL time
+# (not def time), so the None value here is invisible — _log_drain is only
+# ever invoked from the daemon thread which is only started in main.
+# Real values assigned in the `if __name__ == "__main__":` guard below.
+_archived_log: "_pathlib.Path | None" = None
+_LOG_FILE: "Any" = None  # opened by D1 main-only block; None in subprocess
 
 
 def _check_terminal_output_size_cap(log_path: _pathlib.Path = _LOG_PATH) -> bool:
@@ -179,9 +179,6 @@ def _log_drain() -> None:
         except Exception:
             pass  # OPTIONAL: raising kills the daemon and silences all subsequent logging
 
-_log_drain_thread = _log_thread_mod.Thread(target=_log_drain, daemon=True, name="log-writer")
-_log_drain_thread.start()
-
 class _Tee:
     def __init__(self, stream):
         self._s = stream
@@ -194,14 +191,59 @@ class _Tee:
     def __getattr__(self, name):
         return getattr(self._s, name)
 
-sys.stdout = _Tee(sys.stdout)
-sys.stderr = _Tee(sys.stderr)
 
-# P1.5: announce the archive AFTER the tee is wired so the message lands in
-# both terminal AND the new log file (harvest script can correlate archives
-# to session boundaries).
-if _archived_log is not None:
-    print(f"[Pipeline] Prior session log archived → {_archived_log.name}")
+# ─────────────────────────────────────────────────────────────────────────────
+# P0.S12 — Module-level side-effect guard (Windows-spawn-mode safe boot block)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Canary 2026-05-27 (terminal_output_2026-05-27_115642.md lines 37/42/47/60/120)
+# surfaced repeated `PermissionError 13` from _archive_terminal_output() firing
+# in heavy-worker subprocess re-imports of this module.
+#
+# Root cause (P0.S12 Phase 0 §3.1, grep-verified): on Windows, multiprocessing
+# uses `spawn` start-method which RE-IMPORTS the main module in every child
+# process. Without this guard, module-level side-effects (archive rename, log
+# file open, daemon thread start, Tee install, success-log print) fire in
+# every child — corrupting the parent's terminal_output.md handle and emitting
+# PermissionError noise on every spawn.
+#
+# This guard gates 5 Tier 1 sites (subprocess-harmful) behind `__main__`:
+#   - _archive_terminal_output() call (the original PermissionError surface)
+#   - _LOG_FILE = open(_LOG_PATH, "w", ...) (truncating-mode handle competition)
+#   - _log_drain_thread.start() (orphan daemon in subprocess)
+#   - sys.stdout = _Tee(sys.stdout) + sys.stderr = _Tee(sys.stderr) (subprocess-local Tee)
+#   - "Prior session log archived" success print (subprocess-duplicate)
+#
+# Tier 2 side-effects (sys.stdout/stderr.reconfigure, warnings filter) stay
+# UNGUARDED at module top — they're idempotent and subprocess inheritance
+# benefits from them. Tier 3 (_log_q SimpleQueue) stays unguarded — subprocess
+# gets its own empty queue, harmless.
+#
+# DO NOT move any Tier 2 / Tier 3 site inside this guard without rationale.
+# DO NOT move any Tier 1 site outside this guard without re-evaluating
+# subprocess re-import behavior on Windows. See test_p0_s12_*.py D4 anchors.
+# ─────────────────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    _archived_log = _archive_terminal_output()
+
+    _LOG_FILE = open(
+        _LOG_PATH,
+        # P1.5: fresh per session now — prior session's content is preserved in
+        # the timestamped archive returned by _archive_terminal_output above.
+        "w", encoding="utf-8", buffering=1,
+    )
+
+    _log_drain_thread = _log_thread_mod.Thread(target=_log_drain, daemon=True, name="log-writer")
+    _log_drain_thread.start()
+
+    sys.stdout = _Tee(sys.stdout)
+    sys.stderr = _Tee(sys.stderr)
+
+    # P1.5: announce the archive AFTER the tee is wired so the message lands in
+    # both terminal AND the new log file (harvest script can correlate archives
+    # to session boundaries).
+    if _archived_log is not None:
+        print(f"[Pipeline] Prior session log archived → {_archived_log.name}")
 
 import time
 import uuid
@@ -812,6 +854,26 @@ def _intent_allows(
             return (
                 False,
                 f"tool arg {_proposed!r} not grounded (classifier extracted no value)",
+            )
+    # P0.S10 D3 — Identity-denial structural gate for report_identity_mismatch.
+    # The tool has arg_key=None (only arg is free-text `reason`), so neither
+    # extracted_value grounding nor arg_key cross-check fires above. This
+    # adds the missing third gate: user_text MUST contain an identity-claim-
+    # rejection phrase. Canary 2026-05-27 dual-gate failed because the brain
+    # fired this tool on "I don't have any job" (topic-denial, NOT identity-
+    # denial). LLM judgment + classifier judgment both wrong; this structural
+    # gate is the safety net. Patterns matched case-insensitively against
+    # NFKC-casefolded user_text (Plan v4 §2.2 6-pattern set, path A).
+    if tool_name == "report_identity_mismatch":
+        import re  # noqa: PLC0415 — local import; pattern matching is hot-path
+        from core.config import IDENTITY_DENIAL_PATTERNS  # noqa: PLC0415
+        _ut = _nfkc_lower(user_text)
+        if not any(re.search(p, _ut, re.IGNORECASE) for p in IDENTITY_DENIAL_PATTERNS):
+            return (
+                False,
+                "report_identity_mismatch requires explicit identity-rejection "
+                "phrase in user_text (P0.S10 D3 — topic-denial does not warrant "
+                "identity-mismatch tool firing)",
             )
     return (True, "intent match")
 

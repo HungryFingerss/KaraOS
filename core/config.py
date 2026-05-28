@@ -410,17 +410,50 @@ PERSON_NAME_ASSIGN_PATTERNS: tuple[str, ...] = (
     r"\bpeople\s+call\s+me\s+(\w+)",
     r"\bit(?:'s|\s+is)\s+me,?\s+(\w+)",                         # "it's me, Sarah"
 )
-# Bug G3 (2026-04-22 live run) — identity-denial patterns for
-# report_identity_mismatch. Unlike rename patterns, these don't need to
-# capture a specific name — the gate just needs a clear denial signal.
-# Jagan's legit question "who are you talking to?" triggered dispute in the
-# live run precisely because there was no gate on this tool.
+# P0.S10 D3 (2026-05-27 canary fix) — identity-denial patterns for
+# report_identity_mismatch. SUPERSEDES the original Bug G3 (2026-04-22 live
+# run) 6-pattern set. The canary 2026-05-27 surfaced that the original
+# pattern #1 (`\bi(?:'m|\s+am)\s+not\s+\w`) was TOO permissive — it matched
+# "I don't have a job"-class topic-denials too, letting them through the
+# D3 gate as if they were identity-denials.
+#
+# Plan v4 path (A) — pattern #1 tightened with 4 negative-lookahead categories
+# excluding topic-denial heads. "that" REMOVED from lookahead #4 (adverb
+# modifiers) per PI #3 absorption — "that" is predominantly determiner/pronoun
+# in English (e.g., "I'm not that person" = identity-denial), so grouping it
+# as adverb-modifier broke high-frequency identity-denials.
+#
+# Lookahead categories (all empirically verified at Plan v4 drafting via
+# Python REPL — SYMMETRIC verification: both reject + preserve classes
+# checked; Pass-2 grep part 3 applied):
+#
+#   - Spatial prepositions (16 entries, INCL. compound forms into/onto/upon)
+#   - Epistemic states (6 entries, INCL. interested per Plan v3 §2.2)
+#   - Progressive verbs (9 entries)
+#   - Adverb modifiers (9 entries — "that" REMOVED per PI #3; only
+#     unambiguous adverbs that don't double as determiners/pronouns)
+#
+# Patterns matched case-insensitively against NFKC-casefolded user_text.
+# Path A accepted leak: "I'm not that important" matches pattern #1 as a
+# false-positive; D1 ASSERTION-DOMAIN RULE + D2 tool description guidance
+# are the FIRST gates that reduce upstream LLM misroute probability.
 IDENTITY_DENIAL_PATTERNS: tuple[str, ...] = (
-    r"\bi(?:'m|\s+am)\s+not\s+\w",                              # "I'm not Jagan"
-    r"\bthat(?:'s|\s+is)\s+not\s+me\b",
-    r"\byou(?:'ve|\s+have)\s+got\s+the\s+wrong\s+person\b",
-    r"\byou(?:'re|\s+are)\s+confusing\s+me\s+(?:with|for)\s+\w",
+    # 1. "I'm not X" with negative lookahead for topic-denial heads.
+    r"\b(?:i'?m|i\s+am)\s+not\s+"
+    r"(?!(?:in|into|at|on|onto|from|with|under|over|against|near|around|for|of|to|upon)\b)"
+    r"(?!(?:sure|certain|positive|confident|aware|interested)\b)"
+    r"(?!(?:feeling|going|doing|having|getting|making|saying|trying|looking)\b)"
+    r"(?!(?:really|very|quite|extremely|just|already|even|too|so)\b)"
+    r"\w+",
+    # 2. That's-not-X family
+    r"\bthat(?:'s|\s+is)\s+not\s+(?:me|my\s+name|who\s+i\s+am)\b",
+    # 3. Wrong person
+    r"\bwrong\s+person\b",
+    # 4. Confused/confusing/mistaken
+    r"\b(?:confused|confusing|mistaken|mistook|mixed\s+up)\s+me\s+(?:with|for)\s+\w",
+    # 5. Not the person you think
     r"\bi(?:'m|\s+am)\s+not\s+(?:the\s+person\s+you\s+think|who\s+you\s+think)\b",
+    # 6. Stop calling me X
     r"\bstop\s+calling\s+me\s+\w",
 )
 

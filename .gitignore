@@ -124,10 +124,16 @@ terminal_output*.md
 # Committed (explicitly allowed below):
 #   - CLAUDE.md                      ← development memory, every session logged
 #   - README.md                      ← project intro
-#   - everything_about_system.md     ← canonical system documentation
+#   - everything_about_system.md     ← thin redirect (chapter split landed Pre-P1
+#                                       Bundle 1 2026-05-28); canonical docs are
+#                                       under docs/architecture/CHAPTER_NN_*.md
 #   - KARAOS_COMPLETE_GUIDE.md       ← layman-friendly system guide
 #   - KARAOS_KNOWLEDGE.md            ← technical knowledge dump
 #   - SETUP.md                       ← restore instructions for new laptop
+#
+# Note: `docs/architecture/*.md` files are in a subdirectory and are unaffected
+# by the leading-slash root-only `/*.md` rule below. They stay tracked normally
+# without an explicit whitelist entry.
 #
 # Ignored (everything else at root):
 #   - INTENT_AGENT_PLAN.md, MEMORY_ARCHITECTURE.md, PHASE5_SPEC.md,

@@ -46,34 +46,38 @@ _SCAN_TARGETS = [
 # re-grep at every closure refreshes the entries.
 _INDIRECT_BOUNDARIES_ALLOWLIST: dict[tuple[str, int], str] = {
     # ── core/brain.py (11 entries) ──────────────────────────────────────
-    ("core/brain.py", 521):
-        "ping_together health check — 'hi' literal, no user_text",
-    ("core/brain.py", 719):
-        "describe_frame vision — system-constructed describe-instruction; no user_text path",
-    ("core/brain.py", 1083):
-        "_classify_intent _user_prompt — UPSTREAM-WRAPPED at line 1073 via "
+    # P0.S10 LINE-REF-DRIFT ripple: D2 (topic-correction bullet in tool desc)
+    # shifted lines 521+ by +8; D1 (ASSERTION-DOMAIN RULE in classifier prompt)
+    # shifted lines 843+ by additional +21 (cumulative +29 for lines after 843).
+    # All entries below updated to post-P0.S10 line numbers.
+    ("core/brain.py", 529):
+        "ping_together health check — 'hi' literal, no user_text (line shifted +8 from 521 at P0.S10 D2)",
+    ("core/brain.py", 727):
+        "describe_frame vision — system-constructed describe-instruction; no user_text path (line shifted +8 from 719 at P0.S10 D2)",
+    ("core/brain.py", 1112):
+        "_classify_intent _user_prompt — UPSTREAM-WRAPPED via "
         "wrap_user_input(_snip); messages-list line consumes composite "
-        "(system context + history + wrapped user content) per Plan v2 P4",
-    ("core/brain.py", 1938):
-        "autocompact_history Together — history-injection deferred to P0.S5.X per Plan v3 §2",
-    ("core/brain.py", 1958):
-        "autocompact_history Ollama retry — same as line 1938",
-    ("core/brain.py", 1972):
+        "(system context + history + wrapped user content) per Plan v2 P4 (line shifted +29 from 1083 at P0.S10 D1+D2)",
+    ("core/brain.py", 1967):
+        "autocompact_history Together — history-injection deferred to P0.S5.X per Plan v3 §2 (line shifted +29 from 1938 at P0.S10 D1+D2)",
+    ("core/brain.py", 1987):
+        "autocompact_history Ollama retry — same as line 1967 (line shifted +29 from 1958 at P0.S10 D1+D2)",
+    ("core/brain.py", 2001):
         "autocompact synthetic-summary — system-constructed compacted prompt "
-        "wrapping LLM-generated summary; history-derived deferred to P0.S5.X",
-    ("core/brain.py", 2013):
-        "_build_context user_msg — UPSTREAM-WRAPPED at line 2007 via "
+        "wrapping LLM-generated summary; history-derived deferred to P0.S5.X (line shifted +29 from 1972 at P0.S10 D1+D2)",
+    ("core/brain.py", 2042):
+        "_build_context user_msg — UPSTREAM-WRAPPED via "
         "wrap_user_input(message.strip()); web-context augmentation "
-        "concatenates AROUND the wrapped user_msg so wrap survives",
-    ("core/brain.py", 2990):
+        "concatenates AROUND the wrapped user_msg so wrap survives (line shifted +29 from 2013 at P0.S10 D1+D2)",
+    ("core/brain.py", 3019):
         "web-search re-injection — concatenates web_context with "
-        "already-wrapped user_msg from upstream",
-    ("core/brain.py", 3187):
-        "greeting generation Together — system-constructed greeting prompt",
-    ("core/brain.py", 3211):
-        "greeting generation Ollama — system-constructed (parallel to 3187)",
-    ("core/brain.py", 3280):
-        "choose_greeting_order — structured names-list prompt, no raw user-text",
+        "already-wrapped user_msg from upstream (line shifted +29 from 2990 at P0.S10 D1+D2)",
+    ("core/brain.py", 3216):
+        "greeting generation Together — system-constructed greeting prompt (line shifted +29 from 3187 at P0.S10 D1+D2)",
+    ("core/brain.py", 3240):
+        "greeting generation Ollama — system-constructed (parallel to 3216) (line shifted +29 from 3211 at P0.S10 D1+D2)",
+    ("core/brain.py", 3309):
+        "choose_greeting_order — structured names-list prompt, no raw user-text (line shifted +29 from 3280 at P0.S10 D1+D2)",
     # ── core/brain_agent.py (6 entries) ─────────────────────────────────
     ("core/brain_agent.py", 459):
         "_ask_privacy_llm — entity/attribute/value triples (already-wrapped upstream extraction)",

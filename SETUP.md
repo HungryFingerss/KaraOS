@@ -68,7 +68,7 @@ python pipeline.py
 
 The first run will:
 - Auto-download Whisper, ECAPA-TDNN, RetinaFace (buffalo_l), pyannote, E5-large, j-hartmann-emotion, and a few other HuggingFace-hosted models on first import.
-- Apply the pyannote dependency patches (see `everything_about_system.md` Part XXXI for why).
+- Apply the pyannote dependency patches (see `docs/architecture/CHAPTER_13_observability_evolution_plans_pyannote.md` §194-§197 for why; pre-P0.R5 the patches were applied at runtime, post-P0.R5 they live in the vendored forks per CLAUDE.md "Pyannote vendoring" section).
 - Open the camera, mic, and dashboard ports.
 
 If everything is configured correctly: you'll see `[Pipeline] All systems ready. Watching...` and the system is ready to recognize you when you walk into frame.
@@ -82,7 +82,7 @@ After the restore steps above, you have:
 | | Restored? | How |
 |---|---|---|
 | All source code | Yes | from git |
-| Architecture docs (CLAUDE.md, everything_about_system.md, KARAOS guides) | Yes | from git |
+| Architecture docs (CLAUDE.md, docs/architecture/ chapter files + thin redirect at everything_about_system.md, KARAOS guides) | Yes | from git |
 | Model weights (AdaFace, Kokoro, SCRFD, smart-turn, antispoof) | Yes | from git-lfs |
 | Classifier scenarios DB (the 2,071 abstracted scenarios) | Yes | from git-lfs |
 | Faces DB + voice profiles + your enrolled photo | Yes | from git |
@@ -105,7 +105,7 @@ After the restore steps above, you have:
 
 **"pyannote ReproducibilityWarning: TF32 disabled"** — cosmetic. Ignore.
 
-**"pyannote returns 0 segments on multi-speaker audio."** Run `python tests/patch_pyannote_io.py` to reapply the file-level patches (see `everything_about_system.md` §195). These patches are mandatory after any `pip install pyannote.audio`.
+**"pyannote returns 0 segments on multi-speaker audio."** Run `python tests/patch_pyannote_io.py` to reapply the file-level patches (see `docs/architecture/CHAPTER_13_observability_evolution_plans_pyannote.md` §195). These patches are mandatory after any `pip install pyannote.audio`.
 
 **"`models/X.onnx` not found"** even after git lfs pull. Run `git lfs ls-files` to verify which files are LFS-tracked. Run `git lfs fetch --all` then `git lfs checkout` to force-restore.
 
