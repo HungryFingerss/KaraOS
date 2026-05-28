@@ -39,5 +39,6 @@ ultralytics>=8.3.0           # YOLO11 — auto-downloads model weights on first 
 # Utils
 python-dotenv>=1.0.0
 rapidfuzz>=3.0.0          # fast string similarity — schema normalization pre-filter
+jellyfish>=1.0.0          # Double Metaphone phonetic matching — _name_heard_in (Session 41 G4 phonetic gate)
 pytest>=7.0.0             # test runner (dev)
 pytest-asyncio>=0.23.0    # async test support (dev)
