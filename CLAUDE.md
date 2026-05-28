@@ -1479,19 +1479,19 @@ Both shapes are codified in `tests/test_layering_invariants.py::FORBIDDEN_LAYERI
 Pyannote 3.3.2 + speechbrain 1.0.3 ship as forked git repos under the `HungryFingerss` GitHub organization. The 7 patches that previously required runtime application via `tests/patch_pyannote_io.py` (deleted at P0.R5 closure) now live directly in the fork commits.
 
 **Forks:**
-- `github.com/HungryFingerss/pyannote-audio` @ `863aeb1449fc3028e2fb9a4cb04151b8c1e09957` (3.3.2 base + 7 patches: P0.R5 6 [torchaudio 2.9+ compat + huggingface_hub kwarg + weights_only] + Pre-P1 Bundle 1 pkg_resources → pkgutil.extend_path replacement for setuptools>=81 compat)
+- `github.com/HungryFingerss/pyannote-audio` @ `4978441ee45d1feaea6ce7db7ccf5e67f76a31f8` (3.3.2 base + 9 patches: P0.R5 6 [torchaudio 2.9+ compat + huggingface_hub kwarg + weights_only] + Pre-P1 Bundle 1 3 [pkg_resources→pkgutil.extend_path in pyannote/__init__.py + obsolete setuptools>=38.3 check removal in setup.py + pyscaffold setup_requires removal in setup.cfg; all for setuptools>=81 compat])
 - `github.com/HungryFingerss/speechbrain` @ `a9b05847aca696b7eb28dd47c6276afcb2bc14d4` (1.0.3 base + 1 patch: torch_audio_backend list_audio_backends rewrite)
 
 Both forks live on the `dog-ai/<version>-patches` branch off the corresponding upstream version tag. Branch lineage stays clean off the tag so upstream merges are mechanically rebaseable.
 
 **Dependency declarations** (in `requirements.txt`):
 
-    pyannote.audio @ git+https://github.com/HungryFingerss/pyannote-audio.git@863aeb1449fc3028e2fb9a4cb04151b8c1e09957
+    pyannote.audio @ git+https://github.com/HungryFingerss/pyannote-audio.git@4978441ee45d1feaea6ce7db7ccf5e67f76a31f8
     speechbrain @ git+https://github.com/HungryFingerss/speechbrain.git@a9b05847aca696b7eb28dd47c6276afcb2bc14d4
 
 Pip resolves both git URLs at install time and pins the exact SHA. No more post-install patch script required.
 
-**Patches carried by the pyannote fork (P0.R5 6 patches + Pre-P1 Bundle 1 2 patches = 8 distinct patches; P0.R5 6 were originally Patches 1+2+3+3-cont+5+6+7 in the deleted `tests/patch_pyannote_io.py`):**
+**Patches carried by the pyannote fork (P0.R5 6 patches + Pre-P1 Bundle 1 3 patches = 9 distinct patches; P0.R5 6 were originally Patches 1+2+3+3-cont+5+6+7 in the deleted `tests/patch_pyannote_io.py`):**
 
 | File | Patch | Reason |
 |---|---|---|
@@ -1505,6 +1505,7 @@ Pip resolves both git URLs at install time and pins the exact SHA. No more post-
 | `pyannote/audio/utils/protocol.py` | same `list_audio_backends()` fallback | same cause, different file |
 | `setup.py` (Pre-P1 Bundle 1, 2026-05-28) | DELETED `from pkg_resources import VersionConflict, require` import + DELETED obsolete `require("setuptools>=38.3")` check | setuptools >= 81 (2025-07-22) removed pkg_resources from auto-install; pip's isolated build env hits ModuleNotFoundError at setup.py line 5 → wheel build fails. The setuptools>=38.3 check itself is obsolete (released 2018, long pre-dates Python 3.9 minimum). Modern PEP 517 build envs handle build-system setuptools via pyproject.toml. |
 | `pyannote/__init__.py` (Pre-P1 Bundle 1, 2026-05-28) | `__import__("pkg_resources").declare_namespace(__name__)` → `from pkgutil import extend_path; __path__ = extend_path(__path__, __name__)` | Stdlib-only namespace package declaration; semantically equivalent. Required for RUNTIME compatibility with setuptools >= 81 venvs (where pkg_resources is no longer auto-available). |
+| `setup.cfg` (Pre-P1 Bundle 1 follow-up, 2026-05-28) | REMOVED `setup_requires = pyscaffold>=3.2a0,<3.3a0` declaration | pyscaffold imports pkg_resources via entry_points; when setuptools' egg_info command runs walk_revctrl() in modern build envs (setuptools >= 81), it enumerates all installed entry_points and tries to load pyscaffold's, which fails. pyscaffold is a project-template / maintenance tool for the pyannote authors — NOT required to build the wheel. setup() in setup.py uses setuptools.find_packages directly. |
 
 **Patch carried by the speechbrain fork (1):**
 
