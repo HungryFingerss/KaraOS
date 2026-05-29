@@ -6,6 +6,10 @@ Usage:
   python audit_person.py --id <person_id> --repair     # delete outliers + rebuild FAISS
   python audit_person.py --all                         # audit every enrolled person
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import argparse
 import json
 import sys

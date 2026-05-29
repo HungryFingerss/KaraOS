@@ -10,6 +10,10 @@ Each chapter file gets a one-line preamble identifying the source range; the res
 
 Re-runnable: deletes target chapter files before writing if --force is supplied (default-deny).
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import argparse

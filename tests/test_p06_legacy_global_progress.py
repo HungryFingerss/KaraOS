@@ -24,6 +24,10 @@ Each parametrize tuple activates AFTER its sub-PR migrates the global:
 
 At P0.6.7 all parametrize tuples are active and all caps are 0.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import pathlib

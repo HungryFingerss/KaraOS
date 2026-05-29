@@ -21,6 +21,10 @@ Contract (inherited from Store base):
   - peek_* methods are sync, no lock (single-thread asyncio safe).
   - reset() is sync — called by pytest autouse fixture outside the event loop.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 from typing import Any, Optional

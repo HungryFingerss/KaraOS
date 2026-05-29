@@ -34,6 +34,10 @@ Exit codes:
 
 Spec: tests/p0_s11_factory_reset_cli_plan_v1.md
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import argparse
@@ -60,6 +64,7 @@ def _is_pipeline_live() -> bool:
     try:
         data = json.loads(state_path.read_text(encoding="utf-8"))
         updated_at = float(data.get("updated_at", 0))
+        # WALLCLOCK: cross-process IPC (state.json updated_at)
         return (time.time() - updated_at) < 10.0
     except (json.JSONDecodeError, OSError, ValueError):
         return False

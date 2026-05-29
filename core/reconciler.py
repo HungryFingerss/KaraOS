@@ -26,6 +26,10 @@ Design reference: RECONCILER_DESIGN.md.
 Mapping reference: DRAFT_RECONCILER_MAPPING.md (22-row cascade with
                    code-line citations to the legacy function).
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import dataclasses
@@ -89,6 +93,7 @@ def _build_routing_inputs(
     now: float,
     voice_reasoning: str = "",
     voice_raw_segment_scores: tuple = (),
+    v_score_is_no_signal: bool = False,
 ) -> tuple["IdentityClaim", "PresenceState", SessionState]:
     """Assemble (IdentityClaim, PresenceState, SessionState) from pipeline state.
 
@@ -112,6 +117,7 @@ def _build_routing_inputs(
         utterance_duration=utterance_duration,
         reasoning=voice_reasoning,
         raw_segment_scores=voice_raw_segment_scores,
+        confidence_is_no_signal=v_score_is_no_signal,
     )
 
     visible_pids = tuple(
@@ -607,12 +613,16 @@ def _p4_pyannote_vouched_stranger(
     n_active_sessions distinguishes from rule _p4_multi_segment_mismatch's
     multi-known case.
 
-    confidence <= 0.0 (not == 0.0): ECAPA cosine similarity between two
-    very different speakers' L2-normalized embeddings is often NEGATIVE
-    (anti-correlated vectors). voice.identify() returns the actual best cosine
-    score even on gallery miss — it only returns exactly 0.0 when the embedding
-    computation itself failed. Checking == 0.0 missed the common negative-score
-    case (e.g., Lexi at -0.05 vs Jagan's gallery), causing degenerate state.
+    `confidence_is_no_signal or confidence < 0.0` (Pre-P1 Bundle 5 MF7 — was
+    `confidence <= 0.0`): ECAPA cosine similarity between two very different
+    speakers' L2-normalized embeddings is often NEGATIVE (anti-correlated
+    vectors). voice.identify() returns the actual best cosine score even on
+    gallery miss — it sets `confidence_is_no_signal=True` (score forced to 0.0)
+    ONLY when the embedding computation itself failed or the gallery was empty.
+    The `or confidence < 0.0` half catches the common negative-score case
+    (e.g., Lexi at -0.05 vs Jagan's gallery) that a bare no-signal flag would
+    miss; dropping it regresses to the degenerate state. The flag half replaces
+    the old `== 0.0` exact-convention coupling.
 
     Reference reproduction: tests/fixtures/canary_2026-04-29_lexi_misattribution.md
     line 564. Without this rule, falls through to _p4_voice_ambiguous_no_candidates
@@ -621,7 +631,7 @@ def _p4_pyannote_vouched_stranger(
     MUST FIRE BEFORE _p4_voice_ambiguous_no_candidates — that ordering IS the bug fix.
     """
     if (claim.pid is None
-            and claim.confidence <= 0.0
+            and (claim.confidence_is_no_signal or claim.confidence < 0.0)
             and claim.n_diarize_segments >= 2
             and session.cur_pid is not None
             and session.n_active_sessions == 1):
@@ -653,7 +663,7 @@ def _p4_new_stranger_low_match(
     if (claim.pid is None
             and session.cur_pid is not None
             and claim.confidence < VOICE_RECOGNITION_THRESHOLD
-            and claim.confidence != 0.0):
+            and not claim.confidence_is_no_signal):
         return RoutingDecision(
             pid=None,
             action="new_stranger",
@@ -712,7 +722,7 @@ def _p4_voice_ambiguous_no_candidates(
     """
     if (claim.pid is None
             and session.cur_pid is not None
-            and claim.confidence == 0.0):
+            and claim.confidence_is_no_signal):
         scene_candidates = (
             sum(1 for p in presence.visible_pids if p != session.cur_pid)
             + len(presence.unrecognized_track_ids)
@@ -736,7 +746,7 @@ def _p4_voice_ambiguous_with_candidates(
     """
     if (claim.pid is None
             and session.cur_pid is not None
-            and claim.confidence == 0.0):
+            and claim.confidence_is_no_signal):
         scene_candidates = (
             sum(1 for p in presence.visible_pids if p != session.cur_pid)
             + len(presence.unrecognized_track_ids)
@@ -769,7 +779,7 @@ def _p5_no_session_new_stranger(
     """
     if (claim.pid is None
             and session.cur_pid is None
-            and (claim.confidence != 0.0  # any real cosine signal (positive or negative)
+            and (not claim.confidence_is_no_signal  # any real cosine signal (positive or negative)
                  or len(presence.unrecognized_track_ids) > 0)):
         return RoutingDecision(
             pid=None,
@@ -791,7 +801,7 @@ def _p5_no_session_no_action(
     """
     if (claim.pid is None
             and session.cur_pid is None
-            and claim.confidence == 0.0
+            and claim.confidence_is_no_signal
             and len(presence.unrecognized_track_ids) == 0):
         return RoutingDecision(
             pid=None,

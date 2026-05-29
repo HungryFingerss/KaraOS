@@ -12,6 +12,10 @@ Minimum reliable utterance length: ~1.5 seconds of actual speech.
 
 Mirrors vision.py structure: lazy singleton load, thin wrapper, numpy I/O.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import asyncio
 import time
 import logging as _logging
@@ -211,7 +215,8 @@ async def _diarize_ecapa_valley(
     segments = []
     for start_s, end_s in [(0, boundary), (boundary, len(audio))]:
         seg_audio            = audio[start_s:end_s]
-        pid, score           = await identify(seg_audio, voice_gallery, threshold, sample_rate)
+        # Pre-P1 Bundle 5 MF7: identify() now returns 3-tuple; diarize only needs pid+score.
+        pid, score, _        = await identify(seg_audio, voice_gallery, threshold, sample_rate)
         segments.append({
             "start_sample":  start_s,
             "end_sample":    end_s,
@@ -343,7 +348,8 @@ async def _diarize_pyannote(
             })
             continue
         seg_audio  = audio[start_s:end_s]
-        pid, score = await identify(seg_audio, voice_gallery, threshold, sample_rate)
+        # Pre-P1 Bundle 5 MF7: identify() now returns 3-tuple; diarize only needs pid+score.
+        pid, score, _ = await identify(seg_audio, voice_gallery, threshold, sample_rate)
         segments.append({
             "start_sample":  start_s,
             "end_sample":    end_s,
@@ -412,18 +418,20 @@ async def identify(
     voice_gallery: dict[str, np.ndarray],
     threshold:     float,
     sample_rate:   int = MIC_SAMPLE_RATE,
-) -> tuple[str | None, float]:
+) -> tuple[str | None, float, bool]:
     """1:N speaker identification against the in-memory voice gallery.
 
     P0.R6.Y D3 cascade: embed() is now async (offloads to ProcessPoolExecutor
     subprocess); identify() becomes async to await it.
 
-    Returns (person_id, cosine_score) if the best match exceeds `threshold`,
-    otherwise (None, best_score).
+    Returns `(person_id, cosine_score, is_no_signal)`. `is_no_signal=True`
+    ONLY when the embedding failed or the gallery was empty (score forced to
+    0.0); `False` for both real matches and gallery-misses (score is a genuine
+    cosine, possibly negative).
     """
     emb = await embed(audio, sample_rate)
     if emb is None or not voice_gallery:
-        return None, 0.0
+        return None, 0.0, True
 
     best_id, best_score = None, -1.0
     for person_id, profile_emb in voice_gallery.items():
@@ -433,5 +441,5 @@ async def identify(
             best_id    = person_id
 
     if best_score >= threshold:
-        return best_id, best_score
-    return None, best_score
+        return best_id, best_score, False
+    return None, best_score, False

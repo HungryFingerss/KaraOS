@@ -1,4 +1,8 @@
 """Unit tests for core/presence_store.py — P0.6.2."""
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import asyncio

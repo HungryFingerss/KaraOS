@@ -96,3 +96,9 @@ The system asks your name then captures your face for 5 seconds.
 
 - **Now:** Laptop (development + testing)
 - **Later:** Jetson AGX Orin 32GB (drop-in, same code, zero changes)
+
+## License & Governance
+
+KaraOS is licensed under the **Apache License 2.0** (see [LICENSE](LICENSE) and [NOTICE](NOTICE)).
+
+Governance model documented in [GOVERNANCE.md](GOVERNANCE.md). Contributor onboarding in [CONTRIBUTING.md](CONTRIBUTING.md). Community standards in [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).

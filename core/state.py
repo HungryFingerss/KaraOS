@@ -2,6 +2,10 @@
 core/state.py — Shared state between pipeline and dashboard
 Pipeline writes → dashboard reads via /api/status
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import json
 import os
 import tempfile
@@ -48,6 +52,12 @@ def write(
     message: str = ""
 ):
     """Write current pipeline state to state file."""
+    # P0.B4 D4 (Bundle 4 observability+concurrency) — extends P0.B5 D4 writer-side
+    # lock to the read-side spread for GIL-free Python 3.13+ --disable-gil forward-
+    # compat. Lock held ONLY for shallow dict() copy; released BEFORE the file I/O
+    # to avoid contention with concurrent set_persistent writers.
+    with _persistent_lock:
+        _persistent_snapshot = dict(_persistent)
     state = {
         "status":            status,
         "current_person":    current_person,
@@ -55,9 +65,10 @@ def write(
         "visible_people":    visible_people or [],
         "mode":              mode,
         "message":           message,
+        # WALLCLOCK: cross-process IPC
         "updated_at":        time.time(),
         "online":            True,
-        **_persistent,
+        **_persistent_snapshot,
     }
     # M8: atomic write — write to a sibling temp file then rename so the
     # dashboard never reads a half-written JSON if the pipeline crashes mid-write.
@@ -101,6 +112,7 @@ def read() -> dict:
         if STATE_FILE.exists():
             data = json.loads(STATE_FILE.read_text())
             # If pipeline hasn't written in 10 seconds, mark offline
+            # WALLCLOCK: cross-process IPC
             if time.time() - data.get("updated_at", 0) > 10:
                 data["online"] = False
             return data

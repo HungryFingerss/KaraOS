@@ -5,6 +5,10 @@ classifier shape, no-LLM invariants, abstention, Wilson confidence,
 abstraction, correction loop, outcome supervision, mode routing,
 latency budget.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import asyncio

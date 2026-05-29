@@ -28,6 +28,9 @@ Wire-in gate (P1.6 -> P1.7-P1.11):
       thresholds — anti-cheat against synthetic-engineered false green-light
 """
 
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import asyncio

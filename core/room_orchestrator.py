@@ -30,6 +30,10 @@ shims + migrates the 130 test sites; same trigger as P0.S7.D-C Stage 2
 ``None`` at construction time so the conftest autouse fixture can re-init
 the class with whatever subset of deps the test context provides.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import time
@@ -251,6 +255,15 @@ class RoomOrchestrator:
         # AND read the gating flag (so tests that patch
         # pipeline.SHARED_CONTEXT_BLOCK_ENABLED see the patch).
         import pipeline as _pl
+
+        # Layer 3 None-handling (Pre-P1 Bundle 3 §3 D3 BUG-9 hybrid disposition):
+        # test fixtures may pass `db=None` per the conftest autouse pattern.
+        # Degrade gracefully; production callers route through `_init_room_orchestrator`
+        # which raises RuntimeError if `_face_db_ref` is None.
+        if db is None:
+            _pl._last_shared_context_row_count = 0
+            print("[SharedContext] gate=db_none → skip (test-context None tolerance)")
+            return None
 
         # 1. flag gate.
         if not _pl.SHARED_CONTEXT_BLOCK_ENABLED:

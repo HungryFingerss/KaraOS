@@ -170,3 +170,8 @@ migrate_p*_globals.py
 # =============================================================================
 .DS_Store
 Thumbs.db
+
+# Governance docs (Pre-P1 Bundle 2 2026-05-28) — whitelist past the /*.md rule.
+!/GOVERNANCE.md
+!/CODE_OF_CONDUCT.md
+!/CONTRIBUTING.md

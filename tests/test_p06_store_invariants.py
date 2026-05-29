@@ -8,6 +8,10 @@ At P0.6.1: only the Store base class exists. Tests that scan core/*_store.py
 for subclasses currently collect zero concrete Stores — they pass trivially.
 Each subsequent sub-PR adds a Store file; these tests auto-pick them up.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast

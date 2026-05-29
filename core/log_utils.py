@@ -7,6 +7,10 @@ log path; no ad-hoc ``datetime.now().strftime()`` anywhere else.
 
 Depends only on core.config so it can't introduce circular imports.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import datetime as _dt

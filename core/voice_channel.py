@@ -37,6 +37,10 @@ Phase 1 scope: extract the function + run in shadow mode alongside the
 current coupled routing. No production change. After 1-2 weeks of
 divergence-log review, graduate to Phase 2 (vision channel extraction).
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import asyncio
@@ -68,6 +72,13 @@ class IdentityClaim:
         raw_segment_scores: per-segment (pid, score) tuples. Useful for
             multi-segment turns where the top-level pid + confidence is
             just the best across segments.
+        confidence_is_no_signal: True iff the voice-ID backend reported NO
+            usable signal (embedding computation failed OR empty gallery —
+            `core/voice.py::identify` returns exactly 0.0 only in these
+            cases). Distinct from a negative `confidence` (anti-correlated
+            real signal) or a sub-threshold positive (gallery miss with real
+            signal). Decouples reconciler rule predicates from the ECAPA
+            exact-0.0 convention.
     """
     pid:                  Optional[str]
     confidence:           float
@@ -75,13 +86,14 @@ class IdentityClaim:
     utterance_duration:   float
     reasoning:            str
     raw_segment_scores:   tuple[tuple[Optional[str], float], ...] = ()
+    confidence_is_no_signal: bool = False
 
 
 # Type alias for the injectable diarize / identify functions. Tests can
 # replace these with synchronous fakes; production passes the real
 # `core.voice.diarize` and `core.voice.identify`.
 _DiarizeFn = Callable[..., list[dict]]
-_IdentifyFn = Callable[..., tuple[Optional[str], float]]
+_IdentifyFn = Callable[..., tuple[Optional[str], float, bool]]
 
 
 async def _maybe_run_in_executor(fn: Callable, *args, **kwargs):
@@ -159,6 +171,7 @@ async def identify_speaker(
             pid=None, confidence=0.0,
             n_diarize_segments=0, utterance_duration=float(utterance_duration),
             reasoning="audio_buf is None",
+            confidence_is_no_signal=True,
         )
 
     if not voice_gallery:
@@ -168,6 +181,7 @@ async def identify_speaker(
             pid=None, confidence=0.0,
             n_diarize_segments=0, utterance_duration=float(utterance_duration),
             reasoning="voice_gallery is empty",
+            confidence_is_no_signal=True,
         )
 
     # ── 1. Diarize: pyannote returns 1 / 2+ segments ───────────────────
@@ -180,6 +194,7 @@ async def identify_speaker(
             pid=None, confidence=0.0,
             n_diarize_segments=0, utterance_duration=float(utterance_duration),
             reasoning=f"diarize failed: {type(e).__name__}: {e!r}",
+            confidence_is_no_signal=True,
         )
     n_segments = len(segments) if segments else 0
     raw_scores: list[tuple[Optional[str], float]] = [
@@ -189,7 +204,7 @@ async def identify_speaker(
 
     # ── 2. ECAPA top-level identify on the whole buffer ────────────────
     try:
-        pid, score = await _maybe_run_in_executor(
+        pid, score, is_no_signal = await _maybe_run_in_executor(
             identify_fn, audio_buf, voice_gallery, threshold, sample_rate
         )
     except Exception as e:
@@ -199,6 +214,7 @@ async def identify_speaker(
             utterance_duration=float(utterance_duration),
             reasoning=f"identify failed: {type(e).__name__}: {e!r}",
             raw_segment_scores=tuple(raw_scores),
+            confidence_is_no_signal=True,
         )
 
     # ── 3. Build the claim ─────────────────────────────────────────────
@@ -217,6 +233,7 @@ async def identify_speaker(
         utterance_duration=float(utterance_duration),
         reasoning=reason,
         raw_segment_scores=tuple(raw_scores),
+        confidence_is_no_signal=is_no_signal,
     )
     # P0.0.7 H3 — emit identity_claim on the success path via
     # safe_emit_sync (single P0.4-annotated except lives in helper).

@@ -37,6 +37,10 @@ Anchor-to-deliberate-regression mapping (per Plan v1 §2.8):
 - (h) Reverse startup ordering — spawn BEFORE vision_watchdog → A8
 - (i) Delete the 3 new config constants → A9
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast

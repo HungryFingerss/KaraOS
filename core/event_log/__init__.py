@@ -8,6 +8,10 @@ producer writer-task internals) stay private to `producer.py`.
 Plan: tests/p0_07_plan_v2.md.
 Phase 0 audit: tests/p0_07_event_boundary_audit.md.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 from core.event_log.producer import (

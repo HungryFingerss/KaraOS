@@ -35,6 +35,10 @@ Test split per Plan v2 §6.3 canonical numbering:
     7a. test_multispeaker_turn_appends_each_speaker_to_own_history[N=2]
     7b. test_multispeaker_turn_appends_each_speaker_to_own_history[N=3]
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast

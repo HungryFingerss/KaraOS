@@ -19,6 +19,9 @@ Reserved for future invariants:
     SESSION_REQUIRED_FIELDS          (P0.7 schema invariant)
 """
 
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 # P0.13 — repeat-tool-guard.
 REPEAT_GUARD_FIELDS: frozenset[str] = frozenset({
     "_tool_repeat_last",

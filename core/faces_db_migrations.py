@@ -23,6 +23,10 @@ room_session_id/audience_ids backfill, S107 P3A.6) has a stronger
 verify_post than verify_present, per Item 1's split semantic — see the
 docstrings on _m_0008_*.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import json as _json
@@ -73,8 +77,8 @@ def _m_0002_persons_last_seen_apply(conn: sqlite3.Connection) -> None:
 
 
 def _m_0002_persons_last_seen_verify_post(conn: sqlite3.Connection) -> None:
-    assert "last_seen" in _columns(conn, "persons"), \
-        "persons.last_seen not present after apply"
+    if not ('last_seen' in _columns(conn, 'persons')):
+        raise RuntimeError('persons.last_seen not present after apply')
 
 
 def _m_0002_persons_last_seen_verify_present(conn: sqlite3.Connection) -> bool:
@@ -93,7 +97,8 @@ def _m_0003_persons_preferred_language_apply(conn: sqlite3.Connection) -> None:
 
 
 def _m_0003_persons_preferred_language_verify_post(conn: sqlite3.Connection) -> None:
-    assert "preferred_language" in _columns(conn, "persons")
+    if not ('preferred_language' in _columns(conn, 'persons')):
+        raise RuntimeError("assertion failed: 'preferred_language' in _columns(conn, 'persons')")
 
 
 def _m_0003_persons_preferred_language_verify_present(conn: sqlite3.Connection) -> bool:
@@ -110,7 +115,8 @@ def _m_0004_embeddings_vector_apply(conn: sqlite3.Connection) -> None:
 
 
 def _m_0004_embeddings_vector_verify_post(conn: sqlite3.Connection) -> None:
-    assert "vector" in _columns(conn, "embeddings")
+    if not ('vector' in _columns(conn, 'embeddings')):
+        raise RuntimeError("assertion failed: 'vector' in _columns(conn, 'embeddings')")
 
 
 def _m_0004_embeddings_vector_verify_present(conn: sqlite3.Connection) -> bool:
@@ -129,7 +135,8 @@ def _m_0005_persons_person_type_apply(conn: sqlite3.Connection) -> None:
 
 
 def _m_0005_persons_person_type_verify_post(conn: sqlite3.Connection) -> None:
-    assert "person_type" in _columns(conn, "persons")
+    if not ('person_type' in _columns(conn, 'persons')):
+        raise RuntimeError("assertion failed: 'person_type' in _columns(conn, 'persons')")
 
 
 def _m_0005_persons_person_type_verify_present(conn: sqlite3.Connection) -> bool:
@@ -155,8 +162,10 @@ def _m_0006_provenance_columns_apply(conn: sqlite3.Connection) -> None:
 def _m_0006_provenance_columns_verify_post(conn: sqlite3.Connection) -> None:
     for tbl in ("embeddings", "voice_embeddings"):
         cols = _columns(conn, tbl)
-        assert "source" in cols, f"{tbl}.source missing"
-        assert "confidence_at_write" in cols, f"{tbl}.confidence_at_write missing"
+        if not ('source' in cols):
+            raise RuntimeError(f'{tbl}.source missing')
+        if not ('confidence_at_write' in cols):
+            raise RuntimeError(f'{tbl}.confidence_at_write missing')
 
 
 def _m_0006_provenance_columns_verify_present(conn: sqlite3.Connection) -> bool:
@@ -183,8 +192,10 @@ def _m_0007_conversation_log_room_cols_apply(conn: sqlite3.Connection) -> None:
 
 def _m_0007_conversation_log_room_cols_verify_post(conn: sqlite3.Connection) -> None:
     cols = _columns(conn, "conversation_log")
-    assert "room_session_id" in cols
-    assert "audience_ids" in cols
+    if not ('room_session_id' in cols):
+        raise RuntimeError("assertion failed: 'room_session_id' in cols")
+    if not ('audience_ids' in cols):
+        raise RuntimeError("assertion failed: 'audience_ids' in cols")
 
 
 def _m_0007_conversation_log_room_cols_verify_present(conn: sqlite3.Connection) -> bool:
@@ -206,7 +217,8 @@ def _m_0008_idx_conv_log_room_apply(conn: sqlite3.Connection) -> None:
 
 
 def _m_0008_idx_conv_log_room_verify_post(conn: sqlite3.Connection) -> None:
-    assert _index_exists(conn, "idx_conv_log_room"), "idx_conv_log_room missing"
+    if not (_index_exists(conn, 'idx_conv_log_room')):
+        raise RuntimeError('idx_conv_log_room missing')
 
 
 def _m_0008_idx_conv_log_room_verify_present(conn: sqlite3.Connection) -> bool:
@@ -265,10 +277,8 @@ def _m_0009_conversation_log_backfill_verify_post(conn: sqlite3.Connection) -> N
     null_rows = conn.execute(
         "SELECT COUNT(*) FROM conversation_log WHERE room_session_id IS NULL"
     ).fetchone()[0]
-    assert null_rows == 0, (
-        f"conversation_log backfill incomplete: {null_rows} row(s) still "
-        "have NULL room_session_id"
-    )
+    if not (null_rows == 0):
+        raise RuntimeError(f'conversation_log backfill incomplete: {null_rows} row(s) still have NULL room_session_id')
 
 
 def _m_0009_conversation_log_backfill_verify_present(conn: sqlite3.Connection) -> bool:
@@ -297,8 +307,8 @@ def _m_0010_drop_conversation_memory_apply(conn: sqlite3.Connection) -> None:
 
 
 def _m_0010_drop_conversation_memory_verify_post(conn: sqlite3.Connection) -> None:
-    assert not _table_exists(conn, "conversation_memory"), \
-        "conversation_memory still present after drop"
+    if not (not _table_exists(conn, 'conversation_memory')):
+        raise RuntimeError('conversation_memory still present after drop')
 
 
 def _m_0010_drop_conversation_memory_verify_present(conn: sqlite3.Connection) -> bool:

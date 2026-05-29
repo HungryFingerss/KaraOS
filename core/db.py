@@ -2,6 +2,10 @@
 vision/db.py — SQLite + FAISS face database
 Stores person metadata in SQLite, embeddings in FAISS index.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import asyncio
 import contextlib
 import datetime
@@ -706,10 +710,8 @@ class FaceDB:
         upstream via `verify_live(...)` (or `_anti_spoof_ok`) and pass it
         through. Plan v2 §1 / §3.1.
         """
-        assert source in VALID_EMBEDDING_SOURCES, (
-            f"add_embedding called with unknown source={source!r}. "
-            f"Add it to VALID_EMBEDDING_SOURCES in db.py first."
-        )
+        if not (source in VALID_EMBEDDING_SOURCES):
+            raise RuntimeError(f'add_embedding called with unknown source={source!r}. Add it to VALID_EMBEDDING_SOURCES in db.py first.')
 
         # P0.S1 D1 catch-all — structural backstop for the per-call-site
         # upstream gates. Sites 1-4 already gate at their call point via

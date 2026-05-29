@@ -14,6 +14,10 @@ ALLOWED_LEGACY_READS contains (lineno, rationale) for each accepted keep.
 Adding a new entry here requires an explanation of why migration is not
 possible.  The cap test prevents the allowlist from silently growing.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast

@@ -14,6 +14,10 @@ Tests covered (per Plan v1 §2 D2):
   - D2 test §3.12 (NEW): double-click idempotency (ENOENT-tolerant unlink)
   - D6 test 24: failure does NOT delete .dashboard_auth_url (structural ordering)
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import re

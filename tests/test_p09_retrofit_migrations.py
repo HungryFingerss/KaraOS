@@ -19,6 +19,10 @@ stronger than verify_present, and the tests prove it.
 
 Grep target: "P0.9 invariants" (same as test_schema_migrations.py).
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import json
@@ -194,7 +198,7 @@ class TestFacesV9ConversationLogBackfill:
         row has been backfilled, not just that the column exists."""
         conn = self._conn_with_unbackfilled_rows()
         v9 = next(m for m in _fm.MIGRATIONS if m[0] == 9)
-        with pytest.raises(AssertionError, match="backfill incomplete"):
+        with pytest.raises(RuntimeError, match="backfill incomplete"):
             v9[3](conn)
 
     def test_apply_then_verify_post_and_present_both_pass(self):
@@ -283,7 +287,7 @@ class TestBrainV3KnowledgeValidAtBackfill:
         conn = self._legacy_conn()
         conn.execute("ALTER TABLE knowledge ADD COLUMN valid_at REAL")
         v3 = next(m for m in _bm.MIGRATIONS if m[0] == 3)
-        with pytest.raises(AssertionError, match="backfill incomplete"):
+        with pytest.raises(RuntimeError, match="backfill incomplete"):
             v3[3](conn)
 
     def test_apply_then_verify_post_succeeds_and_backfill_lands(self):
@@ -374,7 +378,7 @@ class TestBrainV10PrivacyLevelRemediation:
     def test_verify_post_fails_when_remediation_incomplete(self):
         conn = self._conn_with_legacy_rows()
         v10 = next(m for m in _bm.MIGRATIONS if m[0] == 10)
-        with pytest.raises(AssertionError, match="remediation incomplete"):
+        with pytest.raises(RuntimeError, match="remediation incomplete"):
             v10[3](conn)
 
     def test_apply_remediates_both_legacy_states(self):

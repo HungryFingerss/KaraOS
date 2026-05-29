@@ -13,6 +13,10 @@ Tests:
   - D5 test 19: 0.0.0.0 without DASHBOARD_BIND_ALLOW_ANY → exit non-zero + stderr
   - D5 test 20: non-localhost bind → stderr WARNING block (≥3 of 6 lines)
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import os

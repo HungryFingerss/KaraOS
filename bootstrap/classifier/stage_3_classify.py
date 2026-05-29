@@ -13,6 +13,10 @@ Cost cap: $2.00 hard. Expected ~$1.05 over ~1700 samples.
 Idempotent: skips samples already classified (tracked by source_ref).
 Re-runs resume from where the previous run left off.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import asyncio

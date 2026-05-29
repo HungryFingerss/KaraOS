@@ -15,6 +15,10 @@ Permitted annotations (PERMITTED_ANNOTATIONS):
 DOES NOT IMPORT pipeline or any production module.
 Reads source files via ast.parse(). No Windows DLL side-effects.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import ast
 import textwrap
 from pathlib import Path

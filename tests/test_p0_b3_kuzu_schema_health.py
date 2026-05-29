@@ -16,6 +16,10 @@ docstring update narrating the post-D1 ordering (per Plan v1 §1.1).
 DLL-safe for D1 anchor 1 (AST scan; no pipeline import).
 D1 anchors 2+3 are slow-tier behavioral (use real BrainOrchestrator + tmp_path).
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import ast
 import asyncio
 import gc

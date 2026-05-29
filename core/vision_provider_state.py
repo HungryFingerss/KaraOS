@@ -16,6 +16,10 @@ Trigger semantics:
 
 Counter-OR-timer-restores-CUDA semantic (whichever fires first).
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import threading

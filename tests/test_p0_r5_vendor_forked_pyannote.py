@@ -10,6 +10,10 @@ hardware/credentials unavailable.
 Per Plan v1 §3 LOCK: 9 anchors at exact mid 9 inclusive ±15% band
 [7.65, 10.35].
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast
@@ -139,6 +143,11 @@ def test_p0_r5_d1_anchor_1_pyannote_imports_without_runtime_patch() -> None:
     deleted runtime patch script. Confirms the fork's in-tree patches are
     active.
     """
+    # Pre-P1 Bundle 5: skip (not fail) when the vendored fork isn't installed
+    # (e.g., Windows dev box). The fork is a git-URL install in requirements.txt;
+    # the PyPI build would wrongly fail the source-inspection below, so importorskip
+    # is the correct gate — validate fork-correctness when present, skip when absent.
+    pytest.importorskip("pyannote.audio")
     # If the patches weren't applied, importing this module would raise
     # AttributeError on AudioMetaData or list_audio_backends at module load.
     from pyannote.audio import Pipeline  # noqa: F401
@@ -163,6 +172,8 @@ def test_p0_r5_d2_anchor_1_speechbrain_imports_without_runtime_patch() -> None:
     """A5 — ``from speechbrain.utils.torch_audio_backend import ...``
     succeeds WITHOUT the deleted runtime patch script.
     """
+    # Pre-P1 Bundle 5: skip when the vendored fork isn't installed (see d1 rationale).
+    pytest.importorskip("speechbrain.utils.torch_audio_backend")
     from speechbrain.utils import torch_audio_backend  # noqa: F401
 
     src = inspect.getsource(torch_audio_backend)

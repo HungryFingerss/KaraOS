@@ -38,6 +38,9 @@ Design notes:
     and are merged at eval time by test_intent_structured.py (P1.6).
 """
 
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import json

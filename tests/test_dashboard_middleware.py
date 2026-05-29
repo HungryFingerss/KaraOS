@@ -16,6 +16,10 @@ Tests covered (per Plan v1 §2):
   - D4 test 15: no module-scope token cache — fs.readFileSync inside middleware body
   - D4 test 16: missing token file → 401 (logic flow)
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 from pathlib import Path

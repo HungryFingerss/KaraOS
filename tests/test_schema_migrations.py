@@ -18,6 +18,10 @@ Source-inspection (AST) tests enforce the Phase 1/2 structural invariants:
   - bootstrap walks MIGRATIONS and stamps pre-existing artifacts with
     is_initial=1 (P0.9.2 — required for legacy production DBs)
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast

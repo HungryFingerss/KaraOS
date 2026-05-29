@@ -14,6 +14,10 @@ and tests/test_faiss_sql_atomicity.py (slow-tier Tests 1+2).
 
 Plan v3 §1 locked 10 logical anchors total. This file owns 7 (D1+D2+D3+D4).
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import ast
 import inspect
 import textwrap

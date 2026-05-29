@@ -22,6 +22,10 @@ Usage:
 When there are no detections, pass np.empty((0,5)):
     tracks = tracker.update(np.empty((0, 5)))
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import numpy as np

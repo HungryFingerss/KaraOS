@@ -6,6 +6,10 @@ NOT read vision state, MUST NOT call _face_in_frame or any presence
 tracker. Each test reflects one boundary or behavioral contract from
 VOICE_VISION_INDEPENDENCE_PLAN.md.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import asyncio
@@ -49,10 +53,11 @@ def _fake_diarize_factory(segments: list[dict]):
     return _f
 
 
-def _fake_identify_factory(pid: Optional[str], score: float):
-    """Returns a sync function that returns the given (pid, score) regardless of args."""
+def _fake_identify_factory(pid: Optional[str], score: float, is_no_signal: bool = False):
+    """Returns a sync function that returns the given (pid, score, is_no_signal)
+    regardless of args. Pre-P1 Bundle 5 MF7: identify() is now a 3-tuple."""
     def _f(*_a, **_kw):
-        return (pid, score)
+        return (pid, score, is_no_signal)
     return _f
 
 
@@ -200,6 +205,8 @@ async def test_voice_channel_empty_gallery_returns_none():
     assert claim.confidence == 0.0
     assert claim.n_diarize_segments == 0
     assert "empty" in claim.reasoning.lower()
+    # Pre-P1 Bundle 5 MF7 — empty gallery is no-signal by construction.
+    assert claim.confidence_is_no_signal is True
 
 
 # ── 8. Multi-segment raw scores populated ─────────────────────────────────

@@ -10,6 +10,10 @@ Design rules:
 - asyncio_mode=auto (set in pytest.ini) — async tests run natively
 - p95 threshold = 200ms for the latency regression test
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import asyncio
 import time
 import pytest

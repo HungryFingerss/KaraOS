@@ -5,6 +5,10 @@ Per `tests/pre_p1_bundle1_docs_ci_plan_v2.md` §3.1 Q5 LOCK at 14 anchors.
 Tests use pure stdlib (`re`, `pathlib`) to keep collection clean on Windows dev
 machines that don't have pyannote/speechbrain installed.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import re

@@ -36,6 +36,10 @@ crash recovery + DB write-through correctness is covered by:
 slow-tier coverage that did not exist; documentation-vs-reality drift
 explicitly named here so it doesn't recur.)
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import ast
 from pathlib import Path
 

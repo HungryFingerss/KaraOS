@@ -20,6 +20,10 @@ _reset_session_state_between_tests (autouse=True)
     across tests. Also calls setup_pipeline_stubs() idempotently so
     test_session_store.py never needs to import pipeline directly.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import sys
 import types
 from unittest.mock import AsyncMock, MagicMock
@@ -50,7 +54,7 @@ def setup_pipeline_stubs() -> None:
         # at core/heavy_worker.py::_get_subprocess_pyannote(). _embedder
         # stays MagicMock (model object, not callable function).
         _voice_stub.load_speaker_embedder = MagicMock(return_value=None)
-        _voice_stub.identify = AsyncMock(return_value=(None, 0.0))
+        _voice_stub.identify = AsyncMock(return_value=(None, 0.0, True))
         _voice_stub.diarize = AsyncMock(return_value=[])
         _voice_stub.get_diarize_stats = MagicMock(return_value={})
         _voice_stub._embedder = MagicMock()

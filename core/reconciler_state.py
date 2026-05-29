@@ -6,6 +6,10 @@ The cascade in core/reconciler.py consumes these to make routing decisions.
 
 Design reference: RECONCILER_DESIGN.md, sections 3 + 4.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 from dataclasses import dataclass

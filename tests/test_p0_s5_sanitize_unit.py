@@ -16,6 +16,10 @@ D1 contract:
 Spec: tests/p0_s5_audit.md §2.D1 + tests/p0_s5_plan_v1.md §2 + Plan v2 P4
 byte-identical contract + Plan v3 §3 narrow-scope disposition.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import pytest

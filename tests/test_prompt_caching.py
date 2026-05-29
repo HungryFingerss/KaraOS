@@ -7,6 +7,10 @@ Verifies:
 3. Content-set (all blocks) is unchanged after the reorder
 4. _format_datetime_line() rounds to 5-minute boundaries
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import inspect
 from datetime import datetime
 from unittest.mock import patch

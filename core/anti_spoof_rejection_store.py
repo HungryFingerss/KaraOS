@@ -13,6 +13,10 @@ Single-thread-asyncio safety contract:
 Per-track scope (NOT per-pid) because at progressive_enroll gate time the pid
 may not exist yet — the SORT track_id is the only stable correlation key.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 from typing import Optional

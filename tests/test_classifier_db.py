@@ -5,6 +5,10 @@ schema, migration idempotency, seed import, dedup, k-NN query,
 quarantine exclusion, audit log, label evolution, factory-reset survival,
 and abstraction PERSON/LOC/time-preserving rules.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import base64

@@ -28,6 +28,10 @@ File retained (not deleted) to preserve grep-discoverability of the
 retirement event + as a single-source-of-truth pointer for future
 maintainers wondering where the warmup tests went.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import pytest
 
 import core.voice as voice_mod

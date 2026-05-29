@@ -16,6 +16,9 @@ All agents run async and are completely decoupled from the conversation pipeline
 The conversation never waits for the brain.
 """
 
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import asyncio
@@ -6149,6 +6152,7 @@ class ProactiveNudgeAgent:
         return row[0] if row else 0
 
     def _expires(self) -> float:
+        # WALLCLOCK: nudge expiry stored persistently in DB
         return time.time() + NUDGE_EXPIRY_HOURS * 3600
 
     # ── public interface ──────────────────────────────────────────────────────
@@ -6902,7 +6906,7 @@ class BrainOrchestrator:
                     # against the pre-bump baseline explicitly.
                     _rebuild_t0 = time.time()
                     self._graph_db.rebuild(knowledge_rows)
-                    _rebuild_secs = time.time() - _rebuild_t0
+                    _rebuild_secs = time.monotonic() - _rebuild_t0
                     _ent_count = self._graph_db.entity_count()
                     print(
                         f"[BrainAgent] Graph rebuilt from {len(knowledge_rows)} SQLite rows"
@@ -7416,6 +7420,7 @@ class BrainOrchestrator:
                 "turn_count":    turn_count,
                 "safety_flags":  safety_flags,  # Session 105 Bug N Part 3
             },
+            # WALLCLOCK: visitor alert expires_at stored persistently in DB
             expires_at=time.time() + 86400,
         )
         _safety_log = f", safety_flags={safety_flags}" if safety_flags else ""

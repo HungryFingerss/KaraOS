@@ -9,6 +9,10 @@ Verifies:
 5. report_identity_mismatch invalidates the affected session cache
 6. Stranger turn threshold crossing invalidates the cache
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import os
 
 import pytest

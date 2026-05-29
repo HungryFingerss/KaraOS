@@ -16,6 +16,10 @@ Hybrid Q8 (a) surface:
   gracefully without GPU OR when conftest MagicMock stub active)
 - A10: behavioral mocked (worker None-return propagation; CPU-only)
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast

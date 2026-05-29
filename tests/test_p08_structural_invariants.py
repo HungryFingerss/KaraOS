@@ -24,6 +24,10 @@ Same shape as P0.5's inverse-check, P0.6's Store-base ratchet, and
 P0.6.7v2's inverse writer enumeration — turning a coding discipline into
 a structurally enforced invariant.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast

@@ -18,6 +18,10 @@ Architecture:
 Graceful degradation: if transformers not installed or model unavailable,
 all methods return None and the pipeline continues without emotion context.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import time

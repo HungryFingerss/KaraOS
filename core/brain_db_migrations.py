@@ -12,6 +12,10 @@ The 1 data-backfill migration (v=10 — privacy_level NULL→personal +
 legacy 'private'→personal remediation, S95 P3A.4) has a stronger
 verify_post than verify_present — see the docstrings on _m_0010_*.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import sqlite3
@@ -48,7 +52,8 @@ def _m_0002_embedding_columns_apply(conn: sqlite3.Connection) -> None:
 
 def _m_0002_embedding_columns_verify_post(conn: sqlite3.Connection) -> None:
     for table in ("knowledge", "schema_catalog"):
-        assert "embedding" in _columns(conn, table), f"{table}.embedding missing"
+        if not ('embedding' in _columns(conn, table)):
+            raise RuntimeError(f'{table}.embedding missing')
 
 
 def _m_0002_embedding_columns_verify_present(conn: sqlite3.Connection) -> bool:
@@ -74,14 +79,14 @@ def _m_0003_knowledge_valid_at_apply(conn: sqlite3.Connection) -> None:
 
 
 def _m_0003_knowledge_valid_at_verify_post(conn: sqlite3.Connection) -> None:
-    assert "valid_at" in _columns(conn, "knowledge")
+    if not ('valid_at' in _columns(conn, 'knowledge')):
+        raise RuntimeError("assertion failed: 'valid_at' in _columns(conn, 'knowledge')")
     # Stronger post-condition: backfill must have landed on legacy rows.
     null_legacy = conn.execute(
         "SELECT COUNT(*) FROM knowledge WHERE valid_at IS NULL AND created_at IS NOT NULL"
     ).fetchone()[0]
-    assert null_legacy == 0, (
-        f"valid_at backfill incomplete: {null_legacy} legacy row(s) still NULL"
-    )
+    if not (null_legacy == 0):
+        raise RuntimeError(f'valid_at backfill incomplete: {null_legacy} legacy row(s) still NULL')
 
 
 def _m_0003_knowledge_valid_at_verify_present(conn: sqlite3.Connection) -> bool:
@@ -105,7 +110,8 @@ def _m_0004_knowledge_last_confirmed_at_apply(conn: sqlite3.Connection) -> None:
 
 
 def _m_0004_knowledge_last_confirmed_at_verify_post(conn: sqlite3.Connection) -> None:
-    assert "last_confirmed_at" in _columns(conn, "knowledge")
+    if not ('last_confirmed_at' in _columns(conn, 'knowledge')):
+        raise RuntimeError("assertion failed: 'last_confirmed_at' in _columns(conn, 'knowledge')")
 
 
 def _m_0004_knowledge_last_confirmed_at_verify_present(conn: sqlite3.Connection) -> bool:
@@ -124,7 +130,8 @@ def _m_0005_prompt_prefs_friction_count_apply(conn: sqlite3.Connection) -> None:
 
 
 def _m_0005_prompt_prefs_friction_count_verify_post(conn: sqlite3.Connection) -> None:
-    assert "friction_count" in _columns(conn, "prompt_prefs")
+    if not ('friction_count' in _columns(conn, 'prompt_prefs')):
+        raise RuntimeError("assertion failed: 'friction_count' in _columns(conn, 'prompt_prefs')")
 
 
 def _m_0005_prompt_prefs_friction_count_verify_present(conn: sqlite3.Connection) -> bool:
@@ -141,7 +148,8 @@ def _m_0006_prompt_prefs_embedding_apply(conn: sqlite3.Connection) -> None:
 
 
 def _m_0006_prompt_prefs_embedding_verify_post(conn: sqlite3.Connection) -> None:
-    assert "embedding" in _columns(conn, "prompt_prefs")
+    if not ('embedding' in _columns(conn, 'prompt_prefs')):
+        raise RuntimeError("assertion failed: 'embedding' in _columns(conn, 'prompt_prefs')")
 
 
 def _m_0006_prompt_prefs_embedding_verify_present(conn: sqlite3.Connection) -> bool:
@@ -161,7 +169,8 @@ def _m_0007_graph_schema_version_apply(conn: sqlite3.Connection) -> None:
 
 
 def _m_0007_graph_schema_version_verify_post(conn: sqlite3.Connection) -> None:
-    assert "graph_schema_version" in _columns(conn, "brain_state")
+    if not ('graph_schema_version' in _columns(conn, 'brain_state')):
+        raise RuntimeError("assertion failed: 'graph_schema_version' in _columns(conn, 'brain_state')")
 
 
 def _m_0007_graph_schema_version_verify_present(conn: sqlite3.Connection) -> bool:
@@ -180,7 +189,8 @@ def _m_0008_shadow_mention_count_apply(conn: sqlite3.Connection) -> None:
 
 
 def _m_0008_shadow_mention_count_verify_post(conn: sqlite3.Connection) -> None:
-    assert "mention_count" in _columns(conn, "shadow_persons")
+    if not ('mention_count' in _columns(conn, 'shadow_persons')):
+        raise RuntimeError("assertion failed: 'mention_count' in _columns(conn, 'shadow_persons')")
 
 
 def _m_0008_shadow_mention_count_verify_present(conn: sqlite3.Connection) -> bool:
@@ -205,8 +215,10 @@ def _m_0009_knowledge_privacy_level_apply(conn: sqlite3.Connection) -> None:
 
 
 def _m_0009_knowledge_privacy_level_verify_post(conn: sqlite3.Connection) -> None:
-    assert "privacy_level" in _columns(conn, "knowledge"), "privacy_level column missing"
-    assert _index_exists(conn, "idx_knowledge_privacy_person"), "idx_knowledge_privacy_person missing"
+    if not ('privacy_level' in _columns(conn, 'knowledge')):
+        raise RuntimeError('privacy_level column missing')
+    if not (_index_exists(conn, 'idx_knowledge_privacy_person')):
+        raise RuntimeError('idx_knowledge_privacy_person missing')
 
 
 def _m_0009_knowledge_privacy_level_verify_present(conn: sqlite3.Connection) -> bool:
@@ -252,13 +264,10 @@ def _m_0010_privacy_level_remediation_verify_post(conn: sqlite3.Connection) -> N
     legacy_private = conn.execute(
         "SELECT COUNT(*) FROM knowledge WHERE privacy_level = 'private'"
     ).fetchone()[0]
-    assert null_rows == 0, (
-        f"privacy_level remediation incomplete: {null_rows} NULL row(s) remain"
-    )
-    assert legacy_private == 0, (
-        f"privacy_level remediation incomplete: {legacy_private} legacy "
-        "'private' row(s) remain (must be migrated to 'personal')"
-    )
+    if not (null_rows == 0):
+        raise RuntimeError(f'privacy_level remediation incomplete: {null_rows} NULL row(s) remain')
+    if not (legacy_private == 0):
+        raise RuntimeError(f"privacy_level remediation incomplete: {legacy_private} legacy 'private' row(s) remain (must be migrated to 'personal')")
 
 
 def _m_0010_privacy_level_remediation_verify_present(conn: sqlite3.Connection) -> bool:
@@ -287,7 +296,8 @@ def _m_0011_intent_divergences_mode_apply(conn: sqlite3.Connection) -> None:
 
 
 def _m_0011_intent_divergences_mode_verify_post(conn: sqlite3.Connection) -> None:
-    assert "mode" in _columns(conn, "intent_divergences")
+    if not ('mode' in _columns(conn, 'intent_divergences')):
+        raise RuntimeError("assertion failed: 'mode' in _columns(conn, 'intent_divergences')")
 
 
 def _m_0011_intent_divergences_mode_verify_present(conn: sqlite3.Connection) -> bool:
@@ -329,17 +339,22 @@ def _m_0012_create_event_log_apply(conn: sqlite3.Connection) -> None:
 
 def _m_0012_create_event_log_verify_post(conn: sqlite3.Connection) -> None:
     """Assert event_log table + 3 indexes exist with expected columns."""
-    assert _table_exists(conn, "event_log"), "event_log table missing post-apply"
+    if not (_table_exists(conn, 'event_log')):
+        raise RuntimeError('event_log table missing post-apply')
     cols = _columns(conn, "event_log")
     expected = {
         "id", "ts", "session_id", "room_session_id", "event_type",
         "schema_version", "payload", "parent_event_id",
     }
     missing = expected - cols
-    assert not missing, f"event_log missing columns: {sorted(missing)}"
-    assert _index_exists(conn, "idx_event_log_ts"), "idx_event_log_ts missing"
-    assert _index_exists(conn, "idx_event_log_session"), "idx_event_log_session missing"
-    assert _index_exists(conn, "idx_event_log_room"), "idx_event_log_room missing"
+    if not (not missing):
+        raise RuntimeError(f'event_log missing columns: {sorted(missing)}')
+    if not (_index_exists(conn, 'idx_event_log_ts')):
+        raise RuntimeError('idx_event_log_ts missing')
+    if not (_index_exists(conn, 'idx_event_log_session')):
+        raise RuntimeError('idx_event_log_session missing')
+    if not (_index_exists(conn, 'idx_event_log_room')):
+        raise RuntimeError('idx_event_log_room missing')
 
 
 def _m_0012_create_event_log_verify_present(conn: sqlite3.Connection) -> bool:

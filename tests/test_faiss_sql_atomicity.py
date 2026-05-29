@@ -21,6 +21,10 @@ Proxy pattern for monkeypatching:
   intercepts only the targeted SQL. faiss.IndexFlatIP is similar;
   _IndexProxy wraps it and overrides specific methods.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import asyncio
 import sqlite3
 

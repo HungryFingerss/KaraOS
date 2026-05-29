@@ -6990,7 +6990,7 @@ class TestMemorySearchDisputeSkip:
         if "core.voice" not in sys.modules:
             _vs = types.ModuleType("core.voice")
             _vs.load_speaker_embedder = MagicMock(return_value=None)
-            _vs.identify = MagicMock(return_value=(None, 0.0))
+            _vs.identify = MagicMock(return_value=(None, 0.0, True))
             _vs.diarize = MagicMock(return_value=[])
             _vs.get_diarize_stats = MagicMock(return_value={})
             sys.modules["core.voice"] = _vs

@@ -17,6 +17,10 @@ bundled-queue canary that fires after D-A + D-C + D-B + D-D + D-E +
 γ all ship (per P0.S7.2 §11.10 re-canary discipline). This CI test
 asserts the bullet text lands as specified.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 

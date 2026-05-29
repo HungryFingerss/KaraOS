@@ -11,6 +11,10 @@ Coverage map:
 - A8: pipeline._dream_loop AST calls prune_old_crash_logs(CRASH_LOG_RETENTION_DAYS) (source)
 - A9: 3 config constants present (source)
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast

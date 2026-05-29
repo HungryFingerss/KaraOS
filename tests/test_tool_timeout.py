@@ -17,6 +17,10 @@ Each test uses a real ``PipelineStateStore`` / ``SessionStore`` /
 ``BrainDB`` (in-memory SQLite for speed) so the assertions exercise the
 actual transaction wrapper chain, not stub mocks.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import asyncio

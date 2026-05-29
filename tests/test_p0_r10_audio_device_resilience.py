@@ -18,6 +18,10 @@ Coverage map:
 - A8: D5 HealthSnapshot.audio_degraded field + format_health_line emit + format_health_alerts 5 substrings (BEHAVIORAL via health module which is NOT stubbed)
 - A9: D5 config constants present with sanity values (source)
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast

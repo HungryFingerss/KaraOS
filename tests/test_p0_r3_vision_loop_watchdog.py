@@ -12,6 +12,10 @@ Plan v1 §3 LOCK at 10 logical anchors:
 - A9 (D5 source-inspection, AST line-order): watchdog spawn AFTER vision spawn + watchdog cancel BEFORE vision cancel.
 - A10 (D2 source-inspection): config constants present.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast

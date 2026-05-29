@@ -3,6 +3,10 @@ enroll.py — Standalone enrollment script
 Called by: python enroll.py --name "Jagan"
 Also used by the dashboard /api/enroll endpoint.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import argparse
 import re
 import sys

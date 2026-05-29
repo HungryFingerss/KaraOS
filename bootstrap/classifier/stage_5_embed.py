@@ -15,6 +15,10 @@ Output JSONL row:
   {... existing fields ..., "embedding_b64": "<base64-encoded float32>",
    "embedding_model_id": "multilingual-e5-large-instruct-v1"}
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import asyncio

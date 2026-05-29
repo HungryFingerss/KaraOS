@@ -13,6 +13,10 @@ Plan v1 §3 LOCK at 4 logical anchors:
 Source-inspection anchors run on any environment. Behavioral anchors (3+4) require
 CUDA availability for `FaceEmbedder.__init__` to succeed — gated via skipif.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 from pathlib import Path

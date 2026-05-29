@@ -13,6 +13,10 @@ DOES import pipeline — stubs core.voice and core.audio inline to avoid the
 Windows torchaudio DLL crash (OSError 0xc0000139). Same pattern as
 tests/test_multispeaker_integration.py and tests/test_dispute_auto_clear.py.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import sys
 import types
 from unittest.mock import AsyncMock, MagicMock
@@ -25,7 +29,7 @@ import pytest
 if "core.voice" not in sys.modules:
     _voice_stub = types.ModuleType("core.voice")
     _voice_stub.load_speaker_embedder = MagicMock(return_value=None)
-    _voice_stub.identify = AsyncMock(return_value=(None, 0.0))
+    _voice_stub.identify = AsyncMock(return_value=(None, 0.0, True))
     _voice_stub.diarize = AsyncMock(return_value=[])
     _voice_stub.get_diarize_stats = MagicMock(return_value={})
     sys.modules["core.voice"] = _voice_stub

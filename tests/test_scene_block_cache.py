@@ -22,6 +22,10 @@ Four regression tests:
      The factory-reset "Clear all runtime state" block includes a
      _scene_block_cache.clear() call.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import pathlib
 import re
 

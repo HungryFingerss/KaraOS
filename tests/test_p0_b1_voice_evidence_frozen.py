@@ -23,6 +23,10 @@ Anchor map (Plan v2 §2.3):
   Anchor 6 — (LIVES ELSEWHERE — test_session_state_invariants.py:281)
   Anchor 7 — AST forward tripwire (production scope only)
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast

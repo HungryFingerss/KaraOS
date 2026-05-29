@@ -17,6 +17,10 @@ Spec: tests/p0_s7_1_spec.md (micro-PR, direct-to-developer per user call
      — AST scan asserts _last_shared_context_row_count is assigned on
        every code path in _build_shared_context_block.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast

@@ -22,6 +22,10 @@ Design contract (locked by spec at P0.6.7v2):
   "writes-after-a-hit" — wrong by construction for base-rate accuracy.  See
   the # OBSERVABILITY: annotations on the increment lines below.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import time
@@ -80,7 +84,7 @@ class CacheStore(Store):
             self._misses += 1  # OBSERVABILITY: counter, not part of cached state
             return default
         value, ts = entry
-        if self._ttl is not None and (time.time() - ts) >= self._ttl:
+        if self._ttl is not None and (time.monotonic() - ts) >= self._ttl:
             # TTL eviction on read is a write — but it removes ONE expired
             # entry that the caller just learned is stale.  Acceptable because
             # the alternative (return stale value or scan on every set) is
@@ -112,7 +116,13 @@ class CacheStore(Store):
 
     async def set(self, key: Any, value: Any) -> None:
         async with self._lock:
-            self._data[key] = (value, time.time())
+            # Pre-P1 Bundle 5 (Bundle 3 paired-writer fix): cached_at is consumed
+            # ONLY by duration math (peek() TTL `time.monotonic() - ts`) + relative
+            # eviction ordering — never displayed, persisted, or sent cross-process.
+            # Bundle 3 migrated the reader to time.monotonic() but left this paired
+            # writer on time.time(), so monotonic()-wallclock made entries never
+            # expire. Both clocks must match → store monotonic here too.
+            self._data[key] = (value, time.monotonic())
             if self._max_entries is not None and len(self._data) > self._max_entries:
                 # Oldest-by-cached-at eviction — purely write-driven.
                 # min() over the dict by stored timestamp finds the entry

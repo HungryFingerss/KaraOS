@@ -17,6 +17,10 @@ Adding a new event_type requires (per D3 + D7 invariants):
 
 Plan: tests/p0_07_plan_v2.md.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
@@ -124,6 +128,7 @@ def _identity_claim_from_dict(d: dict[str, Any]) -> IdentityClaim:
         utterance_duration=float(d["utterance_duration"]),
         reasoning=d.get("reasoning", ""),
         raw_segment_scores=raw_tuples,
+        confidence_is_no_signal=bool(d.get("confidence_is_no_signal", False)),
     )
 
 

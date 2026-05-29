@@ -23,6 +23,10 @@ Used by:
   - `bootstrap/classifier/stage_4_abstract` (offline path uses the same
     underlying spacy logic; this module is the production-time analogue)
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import re

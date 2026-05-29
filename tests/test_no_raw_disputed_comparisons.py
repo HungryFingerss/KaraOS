@@ -15,6 +15,10 @@ Allowlisted legitimate uses:
   - Lines marked with # disputed-row-status (non-person_type domain uses,
     e.g. knowledge-row status columns in core/brain_agent.py)
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import ast
 import re
 from pathlib import Path

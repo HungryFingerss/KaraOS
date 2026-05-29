@@ -18,6 +18,10 @@ placeholder; triage each site per the P0.4 spec:
   Bucket C — silent: add logging + re-raise
   Bucket D — unknown: treat as Bucket C
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import ast
 import sys
 from pathlib import Path

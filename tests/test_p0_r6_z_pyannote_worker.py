@@ -37,6 +37,10 @@ Anchor-to-deliberate-regression mapping (per Plan v1 §2.6):
 - (h) MagicMock-instead-of-AsyncMock for new async voice fn → A10
 - (i) `_voice_mod._diarize_pyannote(...)` direct call without await → A11
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast

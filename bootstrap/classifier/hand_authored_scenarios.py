@@ -27,6 +27,10 @@ Each scenario is consumed in stage_6 and written to the seed JSONL with:
 `abstract_text` already uses {P1}/{P2}/{SYSTEM}/{LOC1} placeholders.
 spacy NER is NOT applied to these -- they're already abstracted by hand.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 # Bump this when scenarios change. Used as source_version in the DB so
@@ -563,7 +567,9 @@ EXPECTED_DISTRIBUTION: dict[str, int] = {
     "correction_to_previous_response": 30,
 }
 
-assert _validate_distribution() == EXPECTED_DISTRIBUTION, (
-    f"hand-authored distribution drift: got {_validate_distribution()}"
-)
-assert len(HAND_AUTHORED_SCENARIOS) == 419, f"expected 419 scenarios, got {len(HAND_AUTHORED_SCENARIOS)}"
+if not (_validate_distribution() == EXPECTED_DISTRIBUTION):
+    raise RuntimeError(
+        f"hand-authored distribution drift: got {_validate_distribution()}"
+    )
+if not (len(HAND_AUTHORED_SCENARIOS) == 419):
+    raise RuntimeError(f"expected 419 scenarios, got {len(HAND_AUTHORED_SCENARIOS)}")

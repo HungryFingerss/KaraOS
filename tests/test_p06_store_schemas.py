@@ -17,6 +17,10 @@ Test shape differs per Store, matching its own invariants:
 Plus dataclass schemas (PresenceEntry/TrackEntry + their snapshots,
 CloudSnapshot) are pinned because they form the public read surface.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import dataclasses

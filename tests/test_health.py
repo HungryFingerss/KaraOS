@@ -1,6 +1,10 @@
 """
 Tests for core/health.py — Wave 5 / Item 19.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import time
 import types
 import pytest

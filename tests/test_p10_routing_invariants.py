@@ -20,6 +20,10 @@ Coverage:
 
 Reference: tests/p0_10_plan_v2.md (Block A + Block B + auditor R1/R2 refinements).
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast

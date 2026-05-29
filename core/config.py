@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -1478,6 +1481,12 @@ VRAM_POOL_PRIORITY = [
 AUDIO_DEVICE_WATCHDOG_INTERVAL_SECS = 10.0  # poll cadence
 AUDIO_DEVICE_BURST_THRESHOLD        = 3     # N failures in window → degraded
 AUDIO_DEVICE_BURST_WINDOW_SECS      = 60.0  # 1 minute rolling window
+
+# ── Log drain observability (P0.B4 / Bundle 4) ───────────────────────────────
+# HealthSnapshot.log_drain_alive trips when pipeline._log_drain_last_at hasn't
+# advanced within this many seconds. Steady-state drains every print() call, so
+# 60s of silence indicates the daemon thread is dead OR _log_q.get() is hung.
+LOG_DRAIN_STALENESS_SECS: float = 60.0
 
 # ── Crash diagnostic capture (P0.R11) ────────────────────────────────────────
 # persist_crash_diagnostic writes JSON-per-crash to faces/crash_logs/;

@@ -17,6 +17,10 @@ D3.b: `test_env_var_reads_centralized` — `os.environ` / `os.getenv` reads (AND
 
 Plus 2 hygiene tests for the .env.example cleanup and .gitignore N1 coverage.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast

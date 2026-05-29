@@ -22,6 +22,10 @@ Anchor-to-deliberate-regression mapping (per Plan v1 §2.5):
 - (d) Remove filter chain from ``transcribe()`` (Q2 (b) violation) → A5
 - (e) Drop ``hw.get_or_create_pool("whisper_transcribe")`` from startup → A6 + A7
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast

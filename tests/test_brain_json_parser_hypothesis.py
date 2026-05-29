@@ -42,6 +42,10 @@ Each test runs with `max_examples=1000` per the P0.12 spec.  Hypothesis's
 shrinker finds the minimal falsifying input automatically if any invariant
 breaks.  Total CI cost stays under ~30s on this machine.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import json

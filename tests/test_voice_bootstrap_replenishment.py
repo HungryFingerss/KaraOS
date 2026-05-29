@@ -28,6 +28,10 @@ Three regression tests:
      The replenishment block must NOT gate on person_type=='stranger' — that
      was the S94 design that broke on promotion. S120 replaced it with the flag.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import pathlib
 import re
 

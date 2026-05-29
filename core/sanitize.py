@@ -17,6 +17,10 @@ Tag adjudication: ``<user_said>`` (NOT ``<user_text>``) per the existing
 ``INJECTION DEFENSE`` clause at ``core/brain.py:910-942`` and the
 ``_classify_intent`` precedent at ``core/brain.py:1068``.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import re

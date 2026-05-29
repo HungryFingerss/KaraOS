@@ -3,6 +3,10 @@ Tests for Wave 7 Item 25 — concurrent DB access / WAL invariants.
 
 All tests use tmp_path for isolation; no production data is touched.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import sqlite3
 import threading
 import time

@@ -22,6 +22,10 @@ pair discipline:
 - Phase 3 (3 tests): AST invariants — no legacy body remains + method
   signatures match legacy + D-C flag-gate preserved in moved method.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast

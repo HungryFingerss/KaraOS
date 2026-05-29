@@ -37,6 +37,10 @@ Anchor-to-deliberate-regression mapping (per Plan v3 §5 item 3):
 - (h) Inject ``MagicMock`` patch for async voice fn in test file → A10
 - (i) Convert 1 of 9 Shape D direct calls back to non-await form → A11
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast

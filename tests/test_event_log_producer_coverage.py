@@ -14,6 +14,10 @@ exercising it with EVENT_LOG_TESTING=1.
 
 Plan: tests/p0_07_plan_v2.md.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import asyncio
@@ -153,7 +157,7 @@ def test_h3_identity_claim_emits_one_event(event_log_testing):
         {"start_sample": 0, "end_sample": 16000,
          "speaker_id": "jagan_001", "speaker_score": 0.85}
     ]
-    fake_identify = lambda audio, gallery, thresh, sr: ("jagan_001", 0.85)
+    fake_identify = lambda audio, gallery, thresh, sr: ("jagan_001", 0.85, False)
 
     audio = np.ones(16000, dtype=np.float32) * 0.1
     gallery = {"jagan_001": np.ones(192, dtype=np.float32) / np.sqrt(192)}

@@ -5,6 +5,10 @@ These tests require a real FAISS index (faiss-cpu) but mock out slow or
 error-prone parts of the rebuild pipeline so the suite stays fast and
 deterministic.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import asyncio
 import time
 import threading

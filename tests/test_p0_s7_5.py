@@ -51,6 +51,10 @@ Test split per Plan v2 §7.2:
     15. D2 widening end-to-end on owner-returns-alone scenario
     16. update_person_name on known session returns handled_noop (no canonical ack)
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast

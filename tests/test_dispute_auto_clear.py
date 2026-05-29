@@ -11,6 +11,10 @@ s.prior_person_type = s.person_type at the moment of dispute flip.
 BEFORE fix (P0.2): setdefault("prior_person_type", ... "known") → test FAILS
 AFTER fix:  transition_to_disputed captures actual person_type → test PASSES
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import asyncio
 import sys
 import types
@@ -22,7 +26,7 @@ from unittest.mock import AsyncMock, MagicMock
 if "core.voice" not in sys.modules:
     _voice_stub = types.ModuleType("core.voice")
     _voice_stub.load_speaker_embedder = MagicMock(return_value=None)
-    _voice_stub.identify = AsyncMock(return_value=(None, 0.0))
+    _voice_stub.identify = AsyncMock(return_value=(None, 0.0, True))
     _voice_stub.diarize = AsyncMock(return_value=[])
     _voice_stub.get_diarize_stats = MagicMock(return_value={})
     sys.modules["core.voice"] = _voice_stub

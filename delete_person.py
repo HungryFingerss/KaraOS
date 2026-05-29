@@ -11,6 +11,10 @@ per P0.S9 D4 safety contract (highest blast radius script in repo).
 Uses person_lifecycle.delete_person_everywhere() as the single authoritative
 deletion path + compute_delete_preview() for the dry-run preview path.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import argparse
 import sys
 from pathlib import Path

@@ -19,6 +19,10 @@ Usage:
 Pure observability tool. Does not modify production code, schemas,
 or behavior.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import argparse

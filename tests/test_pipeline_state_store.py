@@ -1,4 +1,8 @@
 """Behavioural unit tests for core/pipeline_state_store.py — P0.6.6."""
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import asyncio
 import time
 

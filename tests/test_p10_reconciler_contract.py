@@ -10,6 +10,10 @@ when the production fail-safe is added at pipeline.py:7417-7419.
 Cross-references the audit at tests/p0_10_routing_audit.md deliverable 5.
 Each test names its contract id + source branch in the legacy router.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 from core.config import (
@@ -39,6 +43,7 @@ def _claim(
     confidence=0.0,
     utterance_duration=1.5,
     n_diarize_segments=1,
+    is_no_signal=False,
 ):
     return IdentityClaim(
         pid=pid,
@@ -46,6 +51,7 @@ def _claim(
         n_diarize_segments=n_diarize_segments,
         utterance_duration=utterance_duration,
         reasoning="",
+        confidence_is_no_signal=is_no_signal,
     )
 
 
@@ -287,7 +293,7 @@ def test_c17_voice_ambiguous_no_candidates_holds():
     """C17 (P4d): v_pid is None + v_score == 0 + no scene candidates
     → current."""
     claim = _claim(pid=None, confidence=0.0, utterance_duration=2.0,
-                   n_diarize_segments=1)
+                   n_diarize_segments=1, is_no_signal=True)
     session = _session()
     decision = reconcile(claim, _presence(), session)
     assert decision.action == "current"
@@ -298,7 +304,7 @@ def test_c18_voice_ambiguous_with_candidates_is_ambiguous():
     """C18 (P4e): v_pid is None + v_score == 0 + scene_candidates >= 1
     → ambiguous."""
     claim = _claim(pid=None, confidence=0.0, utterance_duration=2.0,
-                   n_diarize_segments=1)
+                   n_diarize_segments=1, is_no_signal=True)
     session = _session()
     presence = _presence(visible_pids=("other_002",))
     decision = reconcile(claim, presence, session)
@@ -320,7 +326,7 @@ def test_c20_no_session_no_signal_returns_no_action():
     """C20 (P5b): cur_pid is None + v_score == 0 + no unrec tracks
     → no_action."""
     claim = _claim(pid=None, confidence=0.0, utterance_duration=2.0,
-                   n_diarize_segments=1)
+                   n_diarize_segments=1, is_no_signal=True)
     session = _session(cur_pid=None, cur_person_type="", n_active_sessions=0,
                        voice_gallery_sizes={}, cur_holder_voice_n=0)
     decision = reconcile(claim, _presence(), session)

@@ -5,6 +5,10 @@ Both skip on POSIX. Patches use string-form per Plan v2 Q5-C:
 `monkeypatch.setattr('subprocess.run', spy)` survives the function-scope
 `import subprocess` inside `_apply_windows_acl`.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import getpass

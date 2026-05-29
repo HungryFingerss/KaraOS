@@ -11,6 +11,10 @@ For each scenario (a)-(h):
 Prints a one-line summary per scenario; non-zero exit if any scenario didn't
 fail-on-mutation or didn't restore cleanly.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import subprocess

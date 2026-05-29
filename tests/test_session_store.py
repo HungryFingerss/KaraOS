@@ -3,6 +3,10 @@ Behavioral unit tests for SessionStore — P0.7.1
 
 Fast tier except Category D (concurrent stress, marked slow).
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import asyncio
 import dataclasses
 import time
@@ -253,7 +257,7 @@ class TestSessionStoreFaceVoice:
         await store.append_voice_conf("p1", conf=0.9)
         await store.append_voice_conf("p1", conf=0.85)
         snap = await store.get_snapshot("p1")
-        assert snap.recent_voice_confs == [0.9, 0.85]
+        assert snap.recent_voice_confs == (0.9, 0.85)
 
 
 class TestSessionStoreDispute:
@@ -396,7 +400,7 @@ class TestSessionStoreTurnAccounting:
         await store.record_attribution("p1", "face")
         await store.record_attribution("p1", "voice")
         snap = await store.get_snapshot("p1")
-        assert snap.recent_attributions == ["face", "voice"]
+        assert snap.recent_attributions == ("face", "voice")
 
     @pytest.mark.asyncio
     async def test_update_tool_repeat(self):
@@ -428,7 +432,8 @@ class TestSessionStoreCacheWrites:
         mem = [{"attr": "lives_in", "value": "Bangalore"}]
         await store.set_core_memory("p1", mem)
         snap = await store.get_snapshot("p1")
-        assert snap.core_memory == mem
+        # Pre-P1 Bundle 5 MF8 — snapshot field is now an immutable tuple copy.
+        assert snap.core_memory == tuple(mem)
 
     @pytest.mark.asyncio
     async def test_mark_enrolled(self):
@@ -525,7 +530,7 @@ class TestSessionStoreSnapshotSemantics:
         # Now add another conf to the session
         await store.append_voice_conf("p1", conf=0.5)
         # snap1 must still see only [0.9]
-        assert snap1.recent_voice_confs == [0.9], "Snapshot leaked session list reference"
+        assert snap1.recent_voice_confs == (0.9,), "Snapshot leaked session list reference"
 
     @pytest.mark.asyncio
     async def test_snapshot_reflects_latest_state(self):

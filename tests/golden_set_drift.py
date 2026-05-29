@@ -14,6 +14,10 @@ Usage:
   python tests/golden_set_drift.py --mode export
   python tests/golden_set_drift.py --mode compare --filled tests/golden_set_drift_YYYY-MM-DD.md
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import argparse

@@ -13,6 +13,10 @@ Usage from CLI:
 
 The `abstract_text()` helper is also exported for reuse from tests.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import json

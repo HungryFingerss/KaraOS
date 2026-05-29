@@ -13,6 +13,10 @@ Plan v2 absorbs Plan v1 PI #1 by:
   - A9 EXPANDED to cover all 4 secret-class env vars (was 2: TOGETHER_API_KEY
     + HF_TOKEN; now 4: + GROQ_API_KEY + TAVILY_API_KEY)
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import configparser

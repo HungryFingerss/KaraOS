@@ -2,6 +2,10 @@
 core/audio.py — STT (faster-whisper) + TTS (Kokoro primary, Piper English fallback)
 VAD: Silero | Playback: sounddevice only | English only
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import asyncio
 import os
 import sys

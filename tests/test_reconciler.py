@@ -14,6 +14,10 @@ This file contains:
 
 Reference docs: RECONCILER_DESIGN.md (sections 1, 5).
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast
@@ -357,6 +361,7 @@ def test_p5_no_session_returns_no_action():
     claim = IdentityClaim(
         pid=None, confidence=0.0, n_diarize_segments=1,
         utterance_duration=1.5, reasoning="test",
+        confidence_is_no_signal=True,
     )
     presence = PresenceState(visible_pids=(), unrecognized_track_ids=())
     session = SessionState(
@@ -413,6 +418,7 @@ def test_p4_pyannote_vouched_stranger_opens_session():
         n_diarize_segments=2,
         utterance_duration=2.0,  # ≈ 69 speech chunks × 32ms (line 557); any value ≥ 1.0 clears P0
         reasoning="ECAPA: no enrolled match",
+        confidence_is_no_signal=True,
     )
 
     # PresenceState: line 558 [Vision] Jagan, no unrecognized tracks
@@ -1197,6 +1203,7 @@ def test_p4_voice_ambiguous_no_candidates_holds_current():
     claim = IdentityClaim(
         pid=None, confidence=0.0, n_diarize_segments=1,
         utterance_duration=2.0, reasoning="test",
+        confidence_is_no_signal=True,
     )
     presence = PresenceState(
         visible_pids=("jagan_abc",),  # only cur_pid; no other candidates
@@ -1229,6 +1236,7 @@ def test_p4_voice_ambiguous_with_candidates_returns_ambiguous():
     claim = IdentityClaim(
         pid=None, confidence=0.0, n_diarize_segments=1,
         utterance_duration=2.0, reasoning="test",
+        confidence_is_no_signal=True,
     )
     # Force scene_candidates > 0 via an unrecognized track (simpler than
     # adding non-cur visible_pids while keeping n_active_sessions=1)
@@ -1345,6 +1353,7 @@ def test_cascade_walks_all_22_rules_only_rule_21_matches_empty_state():
     claim = IdentityClaim(
         pid=None, confidence=0.0, n_diarize_segments=1,
         utterance_duration=1.5, reasoning="empty",
+        confidence_is_no_signal=True,
     )
     presence = PresenceState(visible_pids=(), unrecognized_track_ids=())
     session = SessionState(

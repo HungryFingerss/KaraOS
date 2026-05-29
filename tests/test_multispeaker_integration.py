@@ -23,6 +23,10 @@ Pattern used here:
 This file replicates this technique so future Wave-style tests can use it as
 a reference.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import sys
 import time
 import types
@@ -32,7 +36,7 @@ from unittest.mock import AsyncMock, MagicMock
 # P0.R6.Y D3 cascade: identify + diarize are async; stubs use AsyncMock.
 _voice_stub = types.ModuleType("core.voice")
 _voice_stub.load_speaker_embedder = MagicMock(return_value=None)
-_voice_stub.identify = AsyncMock(return_value=(None, 0.0))
+_voice_stub.identify = AsyncMock(return_value=(None, 0.0, True))
 _voice_stub.diarize = AsyncMock(return_value=[])
 _voice_stub.get_diarize_stats = MagicMock(return_value={})
 

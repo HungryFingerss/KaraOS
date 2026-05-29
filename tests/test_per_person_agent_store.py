@@ -1,4 +1,8 @@
 """Unit tests for core/per_person_agent_store.py — P0.6.4."""
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import asyncio

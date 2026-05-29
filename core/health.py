@@ -2,6 +2,10 @@
 System health snapshot and log formatting.
 Wave 5 / Item 19 — observability for production operations.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -103,6 +107,16 @@ class HealthSnapshot:
     # `audio_degraded=mic,speaker` and `format_health_alerts` emits an
     # operator-actionable alert.
     audio_degraded: "dict[str, bool]" = field(default_factory=dict)
+    # P0.B4 D2 (Bundle 4 observability) — log drain liveness observability.
+    # `log_drain_alive` trips False iff pipeline._log_drain_thread is dead OR
+    # _log_drain_last_at hasn't advanced within LOG_DRAIN_STALENESS_SECS.
+    # `log_drain_count` / `log_drain_error_count` mirror the pipeline.py module-
+    # level counters so the dashboard can surface throughput + error rate.
+    # Boot-time race tolerance: never-spawned thread + never-drained timestamp
+    # both treated as alive (avoid false alerts before _log_drain spawns).
+    log_drain_alive: bool = True
+    log_drain_count: int = 0
+    log_drain_error_count: int = 0
 
 
 def gather_health_snapshot(
@@ -300,6 +314,30 @@ def gather_health_snapshot(
         # OPTIONAL: audio module unavailable OR config not yet loaded.
         audio_degraded = {}
 
+    # P0.B4 D2 — log drain liveness observability.
+    # Late `import pipeline` to avoid circular import at module load. Boot-time
+    # race tolerance: not-yet-spawned thread + never-drained timestamp both
+    # treated as alive (avoids false alerts before pipeline.run() spawns the
+    # daemon). Once drained at least once, staleness check fires.
+    log_drain_alive = True
+    log_drain_count = 0
+    log_drain_error_count = 0
+    try:
+        import pipeline as _pipeline_health  # noqa: PLC0415
+        from core.config import LOG_DRAIN_STALENESS_SECS as _LOG_STALENESS  # noqa: PLC0415
+        _thread = getattr(_pipeline_health, "_log_drain_thread", None)
+        _last_at = getattr(_pipeline_health, "_log_drain_last_at", 0.0)
+        log_drain_count = getattr(_pipeline_health, "_log_drain_count", 0)
+        log_drain_error_count = getattr(_pipeline_health, "_log_drain_error_count", 0)
+        _thread_alive = _thread.is_alive() if _thread is not None else True
+        # WALLCLOCK: observability staleness check
+        _fresh = (time.time() - _last_at) < _LOG_STALENESS if _last_at > 0 else True
+        log_drain_alive = _thread_alive and _fresh
+    except Exception:
+        # OPTIONAL: pipeline not yet importable OR config unavailable. Boot-time
+        # race tolerance: default alive so the health line stays clean.
+        log_drain_alive = True
+
     return HealthSnapshot(
         timestamp=now,
         active_sessions=len(active_sessions),
@@ -324,6 +362,9 @@ def gather_health_snapshot(
         recent_crash_logs=recent_crash_logs,
         vram_budget=vram_budget,
         audio_degraded=audio_degraded,
+        log_drain_alive=log_drain_alive,
+        log_drain_count=log_drain_count,
+        log_drain_error_count=log_drain_error_count,
     )
 
 
@@ -439,6 +480,16 @@ def format_health_line(s: HealthSnapshot) -> str:
         audio_parts.append(f"audio_degraded={','.join(_degraded_channels)}")
     audio_str = (" | " + " ".join(audio_parts)) if audio_parts else ""
 
+    # P0.B4 D2 — surface log_drain=DEAD only when liveness check trips OR
+    # log_drain_errors=N only when outer-except handler has fired. Same
+    # conditional-emit pattern as audio_degraded; clean steady-state line.
+    log_drain_parts: list[str] = []
+    if not s.log_drain_alive:
+        log_drain_parts.append("log_drain=DEAD")
+    if s.log_drain_error_count > 0:
+        log_drain_parts.append(f"log_drain_errors={s.log_drain_error_count}")
+    log_drain_str = (" | " + " ".join(log_drain_parts)) if log_drain_parts else ""
+
     return (
         f"[Health] {time_str} | sessions={sess_str} | "
         f"faces={s.persons_count}({s.total_face_embeddings}emb) | "
@@ -455,6 +506,7 @@ def format_health_line(s: HealthSnapshot) -> str:
         f"{crash_logs_str}"
         f"{vram_str}"
         f"{audio_str}"
+        f"{log_drain_str}"
     )
 
 
@@ -631,6 +683,21 @@ def format_health_alerts(s: HealthSnapshot, brain_orchestrator: Any) -> "list[st
             f"{', '.join(_degraded_audio_channels)}. Check USB/audio device "
             f"connection + driver + permissions. Clears when failure rate "
             f"drops below AUDIO_DEVICE_BURST_THRESHOLD."
+        )
+
+    # P0.B4 D2 — log drain liveness actionable alert.
+    # Verbatim substrings per Plan v1 §2 D2 substring lock (5 substrings):
+    #   "Log drain thread degraded" + "check pipeline restart" +
+    #   "messages drained:" + "errors:" + "LOG_DRAIN_STALENESS_SECS"
+    # Fires when log_drain_alive trips False — either the daemon thread died
+    # OR _log_drain_last_at hasn't advanced within LOG_DRAIN_STALENESS_SECS.
+    if not s.log_drain_alive:
+        from core.config import LOG_DRAIN_STALENESS_SECS
+        alerts.append(
+            f"[Health-Alert] Log drain thread degraded — check pipeline restart "
+            f"(messages drained: {s.log_drain_count}, "
+            f"errors: {s.log_drain_error_count}, "
+            f"LOG_DRAIN_STALENESS_SECS={LOG_DRAIN_STALENESS_SECS})"
         )
 
     return alerts

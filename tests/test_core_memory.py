@@ -11,6 +11,10 @@ Verifies:
 7. get_core_memory_for filters out facts below CORE_MEMORY_MIN_CONFIDENCE
 8. render_session_stable_prefix injects <<<CORE MEMORY>>> block when facts supplied
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import sqlite3
 import tempfile
 import os

@@ -11,6 +11,10 @@ Coverage map:
 - A8: D6 HealthSnapshot.vram_budget field + format_health_line vram_refused=N + 5 verbatim substrings in alerts
 - A9: Non-CUDA skip enforcement — BEHAVIORAL (torch.cuda.is_available False)
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast

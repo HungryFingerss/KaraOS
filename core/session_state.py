@@ -8,6 +8,10 @@ Design invariants:
 - peek_snapshot() is sync-safe under single-threaded asyncio + no-sync-mutators
   + frozen-snapshot assumptions.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import asyncio
@@ -103,12 +107,12 @@ class SessionSnapshot:
     dispute_set_at:         Optional[float]
     disputed_block_count:   int
     disputed_block_alerted: bool
-    recent_voice_confs:     list           # new list copy (not same reference as Session)
+    recent_voice_confs:     tuple          # Pre-P1 Bundle 5 MF8 — immutable tuple copy (frozen snapshot)
     cached_prefix:          Optional[str]
-    core_memory:            list           # new list copy
+    core_memory:            tuple          # Pre-P1 Bundle 5 MF8 — immutable tuple copy
     tool_repeat_last:       Optional[str]
     tool_repeat_count:      int
-    recent_attributions:    list           # new list copy
+    recent_attributions:    tuple          # Pre-P1 Bundle 5 MF8 — immutable tuple copy
 
 
 def _to_snapshot(s: Session) -> SessionSnapshot:
@@ -137,12 +141,12 @@ def _to_snapshot(s: Session) -> SessionSnapshot:
         dispute_set_at=s.dispute_set_at,
         disputed_block_count=s.disputed_block_count,
         disputed_block_alerted=s.disputed_block_alerted,
-        recent_voice_confs=list(s.recent_voice_confs),
+        recent_voice_confs=tuple(s.recent_voice_confs),
         cached_prefix=s.cached_prefix,
-        core_memory=list(s.core_memory),
+        core_memory=tuple(s.core_memory),
         tool_repeat_last=s.tool_repeat_last,
         tool_repeat_count=s.tool_repeat_count,
-        recent_attributions=list(s.recent_attributions),
+        recent_attributions=tuple(s.recent_attributions),
     )
 
 

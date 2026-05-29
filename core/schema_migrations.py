@@ -37,6 +37,10 @@ Phase 1 ships the infrastructure with EMPTY `MIGRATIONS` lists per DB.
 Phase 2 populates the lists with the retroactive migrations
 enumerated by the P0.9 inventory.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import datetime

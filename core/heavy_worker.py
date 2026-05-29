@@ -22,6 +22,10 @@ Subprocess model lifecycle:
 - ``shutdown_all_pools(wait=True)`` cancels every pool cleanly at process exit
   (D5 shutdown wiring).
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import asyncio

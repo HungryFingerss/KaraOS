@@ -3,6 +3,10 @@
 Failing-test-first discipline: these tests were written before
 core/store_base.py was implemented.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import asyncio

@@ -17,6 +17,10 @@ Mock-based tests: DOES NOT IMPORT pipeline. Does not open real Kuzu or SQLite fi
 Integration test (test_drop_schema_on_fresh_db_does_not_raise): opens a real Kuzu DB
 in a tmp_path to validate that IF EXISTS is a genuine no-op on missing tables.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from pathlib import Path
 from unittest.mock import MagicMock
 

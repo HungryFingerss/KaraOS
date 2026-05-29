@@ -10,6 +10,10 @@ Plan v2 §8 Phase 2 = 5 new tests (10-14):
 
 Plan v2 §6 / §8.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import pathlib

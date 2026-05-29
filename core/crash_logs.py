@@ -3,6 +3,10 @@ history with persistent JSON-per-crash forensic data for post-mortem
 analysis. Used by core.heavy_worker.run_heavy's BrokenProcessPool catch
 block; designed for broader unhandled-exception capture in follow-up cycle.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import json

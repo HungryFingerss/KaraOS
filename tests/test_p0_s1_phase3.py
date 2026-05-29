@@ -8,6 +8,10 @@ Plan v2 §10 Phase 3 = 9 tests:
 8. per-track scope (track_A burst does NOT affect track_B count).
 9. cleanup (close_session AND stale-prune pop from rejection store).
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import asyncio

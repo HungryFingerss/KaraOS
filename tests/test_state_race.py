@@ -34,6 +34,10 @@ Test inventory:
   #4  AST       — every `_persistent = ...` rebind in core/state.py
                   declares `global _persistent`
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast

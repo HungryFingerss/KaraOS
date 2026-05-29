@@ -15,6 +15,10 @@ speaking time no longer counts as "silence."
   2. fires_after_threshold_from_tts_end — TTS old enough → KAIROS fires
   3. threshold_constant_is_configurable_float — config shape (rename + bump)
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import pathlib

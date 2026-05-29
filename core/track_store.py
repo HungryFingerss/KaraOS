@@ -4,6 +4,10 @@ Unifies _unrecognized_tracks, _unrecognized_embeddings,
 _stranger_track_map, and _track_identity into a single TrackEntry
 per SORT track_id.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import asyncio

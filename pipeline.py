@@ -2,6 +2,10 @@
 pipeline.py — Main loop
 See face → identify → greet → listen → respond → repeat
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import asyncio
 import concurrent.futures
 import dataclasses
@@ -164,20 +168,47 @@ def _prune_old_terminal_archives(
 # This prevents terminal I/O from ever stalling the asyncio event loop.
 _log_q: "_log_queue_mod.SimpleQueue[tuple[object, str]]" = _log_queue_mod.SimpleQueue()
 
+# P0.B4 D1 (Bundle 4 observability) — observability counters for log drain liveness.
+_log_drain_count: int = 0  # observability counter — successful drains
+_log_drain_last_at: float = 0.0  # WALLCLOCK: observability — last successful drain timestamp
+_log_drain_error_count: int = 0  # observability counter — exception count
+
 def _log_drain() -> None:
-    """Daemon thread — writes queued log messages to terminal + log file."""
+    """Daemon thread — writes queued log messages to terminal + log file.
+
+    P0.B4 D1 (Bundle 4 observability) — outer-loop try/except catches:
+      - _log_q.get() failures (the load-bearing silent-death failure mode per Skeptic-1 BUG-3)
+      - _log_drain_count / _log_drain_last_at counter update failures (exotic)
+      - any unforeseen exception sites
+    Inner try/except blocks (stream.write + _LOG_FILE.write) preserved per P0.4 discipline.
+    """
+    global _log_drain_count, _log_drain_last_at, _log_drain_error_count
     while True:
-        stream, data = _log_q.get()
         try:
-            stream.write(data)
-            stream.flush()
-        except Exception:
-            pass  # OPTIONAL: raising kills the daemon and silences all subsequent logging
-        try:
-            _LOG_FILE.write(data)
-            _LOG_FILE.flush()
-        except Exception:
-            pass  # OPTIONAL: raising kills the daemon and silences all subsequent logging
+            stream, data = _log_q.get()
+            try:
+                stream.write(data)
+                stream.flush()
+            except Exception:
+                pass  # OPTIONAL: raising kills the daemon and silences all subsequent logging
+            try:
+                _LOG_FILE.write(data)
+                _LOG_FILE.flush()
+            except Exception:
+                pass  # OPTIONAL: raising kills the daemon and silences all subsequent logging
+            _log_drain_count += 1
+            _log_drain_last_at = time.time()  # WALLCLOCK: observability timestamp
+        except Exception as e:
+            # P0.B4 D1 outer-loop wrap: DO NOT swallow silently. Emit to stderr directly
+            # (bypassing _Tee which routes through _log_q — would create an infinite loop).
+            _log_drain_error_count += 1
+            import sys as _sys
+            try:
+                _sys.__stderr__.write(f"[Log] _log_drain exception: {type(e).__name__}: {e}\n")
+                _sys.__stderr__.flush()
+            except Exception:
+                pass  # OPTIONAL: stderr unavailable; nothing more we can do
+            # Continue the loop — drain thread stays alive
 
 class _Tee:
     def __init__(self, stream):
@@ -541,7 +572,7 @@ def _has_recent_face_evidence(person_id: str) -> bool:
     if source == "voice":
         return False
     last_seen = _presence_store.peek_last_seen(person_id, 0.0)
-    return (time.time() - last_seen) < SCENE_STALE_SECS
+    return (time.monotonic() - last_seen) < SCENE_STALE_SECS
 
 
 def _tool_allowed(tool_name: str, caller_type: str) -> bool:
@@ -594,6 +625,11 @@ def _is_enrollment_mishear_candidate(
     promotion-chain rename; it is not itself a security gate.
     """
     started_at = float(session.started_at if session is not None else 0.0)
+    # Pre-P1 Bundle 5 fix — Bundle 3 mis-classified this reader as DEADLINE-MATH
+    # and migrated it to monotonic, subtracting a wall-clock timestamp from a
+    # monotonic clock so a stale session read as "fresh".
+    # WALLCLOCK: session.started_at is stored as wall-clock at open_session
+    # (_open_session sets now=time.time()); the age check must use the same clock.
     if started_at <= 0 or time.time() - started_at > ENROLLMENT_RENAME_GRACE_SECS:
         return False
     if db is None:
@@ -956,11 +992,11 @@ def _infer_zone(bbox: tuple, frame_w: int, frame_h: int) -> str:
 
 
 def _maybe_record_silent_obs(emb, bbox: tuple, frame_w: int, frame_h: int, db) -> None:
-    if time.time() - _pipeline_state_store.peek_last_silent_update() < 5.0:
+    if time.monotonic() - _pipeline_state_store.peek_last_silent_update() < 5.0:
         return
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(_pipeline_state_store.set_last_silent_update(time.time()))
+        loop.create_task(_pipeline_state_store.set_last_silent_update(time.monotonic()))
     except RuntimeError:
         pass  # OPTIONAL: no running loop in sync test contexts
     zone = _infer_zone(bbox, frame_w, frame_h)
@@ -1739,10 +1775,8 @@ def _open_session(
     so the profile can grow on early turns before face/voice witnesses are
     strong enough. Each successful accumulation decrements the budget.
     """
-    assert person_type in VALID_PERSON_TYPES, (
-        f"_open_session called with invalid person_type={person_type!r}; "
-        f"must be one of {sorted(VALID_PERSON_TYPES)}"
-    )
+    if not (person_type in VALID_PERSON_TYPES):
+        raise RuntimeError(f'_open_session called with invalid person_type={person_type!r}; must be one of {sorted(VALID_PERSON_TYPES)}')
     now = time.time()
     existing = _session_store.peek_snapshot(person_id)
     if existing is not None:
@@ -2002,32 +2036,34 @@ def _init_room_orchestrator() -> None:
 
     Called from ``run()`` AFTER all 6 dependencies are populated
     (FaceDB, BrainOrchestrator, stores, emotion agents). Layer 1
-    defensive guard: asserts all 6 deps non-None at production boot
-    so a startup-order regression fails loudly instead of silently
-    producing a half-initialized class.
+    defensive guard: ``face_db`` / ``brain_orchestrator`` (and the 3
+    Store deps) MUST be non-None at production boot per the runtime
+    ``raise RuntimeError`` checks below (Pre-P1 Bundle 3 MF5 migration
+    2026-05-28: replaced 5 ``assert`` statements with explicit
+    ``if not ...: raise RuntimeError(...)`` so the checks survive
+    ``python -O`` invocation which strips asserts).
 
-    Tests use a separate init path: the conftest.py autouse fixture
-    re-creates ``_room_orchestrator`` with whatever subset of deps
-    the test context provides (face_db / brain_orchestrator may be
-    None). Layer 3 None-checks in the 3 dep-using methods handle
-    those gaps gracefully.
+    In test fixtures (per ``tests/conftest.py`` autouse fixture), None
+    args are tolerated — the ``RoomOrchestrator`` class stores deps
+    without asserting; per-method None checks on the 3 dep-requiring
+    methods (``build_shared_context_block``, ``fetch_recent_room_context``,
+    ``on_room_end``) handle test-context None gracefully.
+
+    The runtime raise below + docstring contract + Layer 3 None-handling
+    together form defense-in-depth per the P0.S1 §1.4 layered-defense
+    precedent.
     """
     global _room_orchestrator
-    assert _session_store is not None, (
-        "_init_room_orchestrator: _session_store must be initialized"
-    )
-    assert _pipeline_state_store is not None, (
-        "_init_room_orchestrator: _pipeline_state_store must be initialized"
-    )
-    assert _face_db_ref is not None, (
-        "_init_room_orchestrator: _face_db_ref must be set in run()"
-    )
-    assert _brain_orchestrator is not None, (
-        "_init_room_orchestrator: _brain_orchestrator must be set in run()"
-    )
-    assert _conversation_store is not None, (
-        "_init_room_orchestrator: _conversation_store must be initialized"
-    )
+    if not (_session_store is not None):
+        raise RuntimeError('_init_room_orchestrator: _session_store must be initialized')
+    if not (_pipeline_state_store is not None):
+        raise RuntimeError('_init_room_orchestrator: _pipeline_state_store must be initialized')
+    if not (_face_db_ref is not None):
+        raise RuntimeError('_init_room_orchestrator: _face_db_ref must be set in run()')
+    if not (_brain_orchestrator is not None):
+        raise RuntimeError('_init_room_orchestrator: _brain_orchestrator must be set in run()')
+    if not (_conversation_store is not None):
+        raise RuntimeError('_init_room_orchestrator: _conversation_store must be initialized')
     _room_orchestrator = RoomOrchestrator(
         session_store=_session_store,
         pipeline_state_store=_pipeline_state_store,
@@ -2405,7 +2441,7 @@ async def _accumulate_voice(
             )
         return
 
-    v_pid, v_score = await voice_mod.identify(
+    v_pid, v_score, _ = await voice_mod.identify(
         audio, _voice_gallery_store.peek_all_gallery(), VOICE_RECOGNITION_THRESHOLD
     )
     # Track the latest voice self-match in evidence regardless of accumulation outcome.
@@ -2766,8 +2802,8 @@ async def _restart_vision_task() -> None:
         return
 
     # Wait for heartbeat advance (Q4 (c) heartbeat-timeout criterion).
-    _deadline = time.time() + VISION_WATCHDOG_RESTART_TIMEOUT_SECS
-    while time.time() < _deadline:
+    _deadline = time.monotonic() + VISION_WATCHDOG_RESTART_TIMEOUT_SECS
+    while time.monotonic() < _deadline:
         await asyncio.sleep(1.0)
         if _pipeline_state_store.peek_vision_heartbeat_at() > _prev_heartbeat:
             # Restart succeeded. Clear degraded if previously set.
@@ -2806,7 +2842,7 @@ async def _background_vision_loop(
         # P0.R3 D1 — heartbeat update at iteration start (BEFORE camera.read).
         # Fire-and-forget via loop.create_task per existing sync-mutator pattern.
         # Race-safe: write fires from main loop, never from executor thread.
-        loop.create_task(_pipeline_state_store.set_vision_heartbeat(time.time()))
+        loop.create_task(_pipeline_state_store.set_vision_heartbeat(time.monotonic()))
 
         frame = await loop.run_in_executor(None, camera.read)
         if frame is None:
@@ -2826,9 +2862,9 @@ async def _background_vision_loop(
             # we can't filter by active person here.
             if not _session_store.peek_all_snapshots():
                 try:
-                    asyncio.get_running_loop().create_task(_pipeline_state_store.set_last_face_seen(time.time()))
+                    asyncio.get_running_loop().create_task(_pipeline_state_store.set_last_face_seen(time.monotonic()))
                 except RuntimeError:
-                    asyncio.run(_pipeline_state_store.set_last_face_seen(time.time()))
+                    asyncio.run(_pipeline_state_store.set_last_face_seen(time.monotonic()))
             # Keep bbox current and calibrate lip tracker.
             # Calibration runs during SPEAKING — the person is quiet and still,
             # making it the ideal resting-motion baseline window.
@@ -2908,7 +2944,7 @@ async def _background_vision_loop(
                     _thresh += 0.05
                 _pid, _pname, _conf = await loop.run_in_executor(None, db.recognize, _emb, _thresh)
                 if (_pid
-                        and time.time() - _conversation_store.peek_last_greeted(_pid) >= GREET_COOLDOWN
+                        and time.monotonic() - _conversation_store.peek_last_greeted(_pid) >= GREET_COOLDOWN
                         and not _per_person_agent_store.is_ambient_wake_pending(_pid)):
                     # Reuse the verdict captured above — same frame, same bbox.
                     if _as_live is not True:
@@ -3306,7 +3342,7 @@ async def _cloud_retry_loop() -> None:
                 _brain_orchestrator.report_api_recovered()
         elif _pipeline_state_store.peek_cloud_failed_at() and _brain_orchestrator:
             _brain_orchestrator.report_api_failure(
-                time.time() - _pipeline_state_store.peek_cloud_failed_at()
+                time.monotonic() - _pipeline_state_store.peek_cloud_failed_at()
             )
 
 
@@ -3389,7 +3425,7 @@ async def _kairos_tick(person_id: str, person_name: str, db: "FaceDB", memory_se
     _kairos_snap     = _session_store.peek_snapshot(person_id) if person_id else None
     _kairos_rec_conf = _presence_store.peek_conf(person_id, 0.0) if person_id else 0.0
     kairos_vision_state = {
-        "face_in_frame":          time.time() - _pipeline_state_store.peek_last_face_seen() < 2.0,
+        "face_in_frame":          time.monotonic() - _pipeline_state_store.peek_last_face_seen() < 2.0,
         "person_name":            person_name,
         "person_id":              person_id,
         "recognition_conf":       _kairos_rec_conf,
@@ -3485,9 +3521,9 @@ async def _kairos_tick(person_id: str, person_name: str, db: "FaceDB", memory_se
         if not response or response.upper() == "SILENT":
             print(f"[KAIROS] Brain chose silence")
             try:
-                asyncio.get_running_loop().create_task(_pipeline_state_store.set_last_kairos_at(time.time()))
+                asyncio.get_running_loop().create_task(_pipeline_state_store.set_last_kairos_at(time.monotonic()))
             except RuntimeError:
-                asyncio.run(_pipeline_state_store.set_last_kairos_at(time.time()))
+                asyncio.run(_pipeline_state_store.set_last_kairos_at(time.monotonic()))
             _set_state(PipelineState.LISTENING, person_name)
             return False
 
@@ -3529,9 +3565,9 @@ async def _kairos_tick(person_id: str, person_name: str, db: "FaceDB", memory_se
     if pending_q:
         _brain_orchestrator.mark_question_asked(pending_q["id"])
     try:
-        asyncio.get_running_loop().create_task(_pipeline_state_store.set_last_kairos_at(time.time()))
+        asyncio.get_running_loop().create_task(_pipeline_state_store.set_last_kairos_at(time.monotonic()))
     except RuntimeError:
-        asyncio.run(_pipeline_state_store.set_last_kairos_at(time.time()))
+        asyncio.run(_pipeline_state_store.set_last_kairos_at(time.monotonic()))
 
     _set_state(PipelineState.LISTENING, person_name)
     return True
@@ -5629,7 +5665,7 @@ async def conversation_turn(
     object_context = None
     if VISION_YOLO_ENABLED and _brain_orchestrator and not is_stranger:
         object_context = _brain_orchestrator.get_object_context(text)
-        if time.time() - _yolo_last_ran < 30.0:
+        if time.monotonic() - _yolo_last_ran < 30.0:
             live_items = [d["class"] for d in _latest_yolo_detections if d["class"] != "person"]
             if live_items:
                 live_str = "What I can see in the camera right now: " + ", ".join(live_items)
@@ -5751,7 +5787,7 @@ async def conversation_turn(
             print("[Cloud] State: SICK → ONLINE (recovered mid-conversation)")
             print("[Pipeline] Together.ai recovered (detected mid-conversation)")
         except Exception:
-            elapsed = time.time() - _pipeline_state_store.peek_cloud_failed_at()
+            elapsed = time.monotonic() - _pipeline_state_store.peek_cloud_failed_at()
             if elapsed >= CLOUD_OFFLINE_TIMEOUT:
                 print(f"[Cloud] State: SICK → OFFLINE (timeout={elapsed:.0f}s >= {CLOUD_OFFLINE_TIMEOUT}s)")
                 asyncio.create_task(_pipeline_state_store.transition_to_offline())
@@ -6608,11 +6644,8 @@ async def run():
     from core.brain import TOOLS as _BRAIN_TOOLS
     _tool_names = {t["function"]["name"] for t in _BRAIN_TOOLS}
     _missing = _tool_names - set(TOOL_PRIVILEGES)
-    assert not _missing, (
-        f"TOOL_PRIVILEGES missing entries for: {sorted(_missing)}. "
-        f"Every tool in brain.TOOLS must have a privilege row in core/config.py — "
-        f"add them before launch."
-    )
+    if not (not _missing):
+        raise RuntimeError(f'TOOL_PRIVILEGES missing entries for: {sorted(_missing)}. Every tool in brain.TOOLS must have a privilege row in core/config.py — add them before launch.')
 
     # ── Intent-gate registry integrity check (P0.S6 D2) ───────────────────────
     # ORDERING INVARIANT: this assertion MUST run AFTER the TOOL_PRIVILEGES
@@ -6632,17 +6665,10 @@ async def run():
     _intent_known = set(config.TOOL_INTENT_MAP) | set(config.INTENT_OPTIONAL_TOOLS)
     _intent_missing = _tool_names - _intent_known
     _intent_orphans = _intent_known - _tool_names
-    assert not _intent_missing, (
-        f"Tools missing from TOOL_INTENT_MAP ∪ INTENT_OPTIONAL_TOOLS: "
-        f"{sorted(_intent_missing)}. Add to TOOL_INTENT_MAP if it needs "
-        f"classifier-gate verification, OR to INTENT_OPTIONAL_TOOLS if "
-        f"intentionally exempt (see core/config.py rationale block)."
-    )
-    assert not _intent_orphans, (
-        f"Tools in intent registry but not in brain.TOOLS: "
-        f"{sorted(_intent_orphans)}. Remove the registry entry OR re-add to "
-        f"brain.TOOLS."
-    )
+    if not (not _intent_missing):
+        raise RuntimeError(f'Tools missing from TOOL_INTENT_MAP ∪ INTENT_OPTIONAL_TOOLS: {sorted(_intent_missing)}. Add to TOOL_INTENT_MAP if it needs classifier-gate verification, OR to INTENT_OPTIONAL_TOOLS if intentionally exempt (see core/config.py rationale block).')
+    if not (not _intent_orphans):
+        raise RuntimeError(f'Tools in intent registry but not in brain.TOOLS: {sorted(_intent_orphans)}. Remove the registry entry OR re-add to brain.TOOLS.')
 
     # ── Fallback registry integrity check (P0.S6 D3) ──────────────────────────
     # ORDERING INVARIANT: this assertion MUST run AFTER the intent-gate check
@@ -6658,22 +6684,12 @@ async def run():
     _fb_missing = _tool_names - set(_TOOL_FALLBACKS)
     _fb_orphans = set(_TOOL_FALLBACKS) - _tool_names
     _fb_degenerate = {k for k, v in _TOOL_FALLBACKS.items() if not v.strip()}
-    assert not _fb_missing, (
-        f"_TOOL_FALLBACKS missing entries for: {sorted(_fb_missing)}. "
-        f"Every tool in brain.TOOLS must have a fallback string in "
-        f"pipeline.py:376 to prevent silent turns when the LLM emits zero "
-        f"content alongside the tool call."
-    )
-    assert not _fb_orphans, (
-        f"_TOOL_FALLBACKS has entries for tools not in brain.TOOLS: "
-        f"{sorted(_fb_orphans)}. Remove the registry entry OR re-add to "
-        f"brain.TOOLS."
-    )
-    assert not _fb_degenerate, (
-        f"_TOOL_FALLBACKS has empty/whitespace-only fallback strings for: "
-        f"{sorted(_fb_degenerate)}. Fallbacks MUST be non-empty after "
-        f"str.strip() to actually surface a spoken response."
-    )
+    if not (not _fb_missing):
+        raise RuntimeError(f'_TOOL_FALLBACKS missing entries for: {sorted(_fb_missing)}. Every tool in brain.TOOLS must have a fallback string in pipeline.py:376 to prevent silent turns when the LLM emits zero content alongside the tool call.')
+    if not (not _fb_orphans):
+        raise RuntimeError(f'_TOOL_FALLBACKS has entries for tools not in brain.TOOLS: {sorted(_fb_orphans)}. Remove the registry entry OR re-add to brain.TOOLS.')
+    if not (not _fb_degenerate):
+        raise RuntimeError(f'_TOOL_FALLBACKS has empty/whitespace-only fallback strings for: {sorted(_fb_degenerate)}. Fallbacks MUST be non-empty after str.strip() to actually surface a spoken response.')
 
     # ── Handler registry integrity check (P0.S6 D4) ───────────────────────────
     # ORDERING INVARIANT: this assertion MUST run AFTER the fallback check
@@ -6689,17 +6705,10 @@ async def run():
     _handler_known = set(_TOOL_HANDLERS) | set(config.INLINE_DISPATCHED_TOOLS)
     _handler_missing = _tool_names - _handler_known
     _handler_orphans = set(_TOOL_HANDLERS) - _tool_names
-    assert not _handler_missing, (
-        f"Tools missing from _TOOL_HANDLERS ∪ INLINE_DISPATCHED_TOOLS: "
-        f"{sorted(_handler_missing)}. Add to _TOOL_HANDLERS if dispatched "
-        f"through _execute_tool, OR to INLINE_DISPATCHED_TOOLS if consumed "
-        f"via inline ask_stream callbacks (see core/config.py rationale block)."
-    )
-    assert not _handler_orphans, (
-        f"_TOOL_HANDLERS has entries for tools not in brain.TOOLS: "
-        f"{sorted(_handler_orphans)}. Remove the handler entry OR re-add "
-        f"to brain.TOOLS."
-    )
+    if not (not _handler_missing):
+        raise RuntimeError(f'Tools missing from _TOOL_HANDLERS ∪ INLINE_DISPATCHED_TOOLS: {sorted(_handler_missing)}. Add to _TOOL_HANDLERS if dispatched through _execute_tool, OR to INLINE_DISPATCHED_TOOLS if consumed via inline ask_stream callbacks (see core/config.py rationale block).')
+    if not (not _handler_orphans):
+        raise RuntimeError(f'_TOOL_HANDLERS has entries for tools not in brain.TOOLS: {sorted(_handler_orphans)}. Remove the handler entry OR re-add to brain.TOOLS.')
 
     # ── Shutdown event (must be created inside the running loop) ──────────────
     _shutdown_event = asyncio.Event()
@@ -6708,8 +6717,8 @@ async def run():
     # ── KAIROS silence/cooldown clocks — initialize to now so Kairos doesn't fire
     # immediately at startup before the user has said anything. Without this,
     # _last_user_speech_at=0.0 makes the silence gate pass on the very first tick.
-    await _pipeline_state_store.set_last_user_speech_at(time.time())
-    await _pipeline_state_store.set_last_kairos_at(time.time())
+    await _pipeline_state_store.set_last_user_speech_at(time.monotonic())
+    await _pipeline_state_store.set_last_kairos_at(time.monotonic())
 
     _sigint_count = 0
 
@@ -7223,7 +7232,7 @@ async def run():
                     # since a poisoned frame can lock in permanently via gallery drift.
                     if directly_recognized and quality >= FACE_QUALITY_SELF_UPDATE:
                         last = _conversation_store.peek_last_self_update(person_id)
-                        if time.time() - last >= SELF_UPDATE_COOLDOWN and conf >= SELF_UPDATE_THRESHOLD:
+                        if time.monotonic() - last >= SELF_UPDATE_COOLDOWN and conf >= SELF_UPDATE_THRESHOLD:
                             _anti_spoof_ok = (
                                 _anti_spoof_checker is not None
                                 and getattr(_anti_spoof_checker, "available", False)
@@ -7252,7 +7261,7 @@ async def run():
                         # live (e.g., returned to WATCHING after "no speech"). In that
                         # case never re-greet even if the cooldown has technically expired
                         # during a long conversation — the session never actually ended.
-                        if (time.time() - last_greeted >= GREET_COOLDOWN
+                        if (time.monotonic() - last_greeted >= GREET_COOLDOWN
                                 and _session_store.peek_snapshot(person_id) is None):
                             # Consume the ambient wake signal unconditionally — whether
                             # anti-spoof blocks or passes, background loop must not re-fire.
@@ -7383,7 +7392,7 @@ async def run():
                                     person_type == "best_friend"
                                     and _brain_orchestrator
                                     and last_seen_ts
-                                    and (time.time() - last_seen_ts) >= BRIEFING_MIN_ABSENCE
+                                    and (time.monotonic() - last_seen_ts) >= BRIEFING_MIN_ABSENCE
                                 ):
                                     _briefing_task = asyncio.create_task(
                                         _brain_orchestrator.get_briefing(person_id, last_seen_ts)
@@ -7447,11 +7456,11 @@ async def run():
             # ── Unknown face — silent sighting (no greeting) ──────────────────
             # Strangers are not greeted on sight. They engage by addressing
             # the system by name. Only log the sighting once per cooldown.
-            grace_expired = time.time() - _pipeline_state_store.peek_last_face_seen() > FACE_LOSS_GRACE
+            grace_expired = time.monotonic() - _pipeline_state_store.peek_last_face_seen() > FACE_LOSS_GRACE
             if _pipeline_state_store.peek_pipeline_state() == PipelineState.WATCHING and detections and not _session_store.peek_all_snapshots() and grace_expired:
                 unknown_key = "unknown"
                 last_sighted = _conversation_store.peek_last_greeted(unknown_key)
-                if time.time() - last_sighted >= GREET_COOLDOWN:
+                if time.monotonic() - last_sighted >= GREET_COOLDOWN:
                     await _conversation_store.touch_greeted(unknown_key, time.time())
                     if not db.list_people():
                         # Empty DB — first time anyone has stood in front of this system
@@ -7468,7 +7477,7 @@ async def run():
 
             # ── Update face-seen timestamps for visible sessions ──────────────
             if detections:
-                _now_face = time.time()
+                _now_face = time.monotonic()
                 # Keep ambient timer current when no sessions are active.
                 if not _session_store.peek_all_snapshots():
                     try:
@@ -7532,7 +7541,7 @@ async def run():
                 if _ambient_text:
                     print(f"[Pipeline] Voice-first: heard speech — identifying speaker...")
                     # Voice ID
-                    v_pid, v_score = await voice_mod.identify(
+                    v_pid, v_score, _ = await voice_mod.identify(
                         _ambient_audio, _voice_gallery_store.peek_all_gallery(), VOICE_RECOGNITION_THRESHOLD
                     )
                     if v_pid:
@@ -7659,7 +7668,7 @@ async def run():
                 if _kcr_snap is not None and _kcr_snap.kairos_clock_reset:
                     try:
                         _loop = asyncio.get_running_loop()
-                        _loop.create_task(_pipeline_state_store.set_last_user_speech_at(time.time()))
+                        _loop.create_task(_pipeline_state_store.set_last_user_speech_at(time.monotonic()))
                         _loop.create_task(_session_store.consume_kairos_reset(_primary_pid_conv))
                     except RuntimeError:
                         pass  # OPTIONAL
@@ -7714,7 +7723,7 @@ async def run():
                         text, audio_buf = _ambient_text, _ambient_audio
                         _ambient_text  = ""
                         _ambient_audio = None
-                        await _pipeline_state_store.set_last_user_speech_at(time.time())
+                        await _pipeline_state_store.set_last_user_speech_at(time.monotonic())
                         # Ambient probe published its own speech duration when
                         # it ran; read the latest snapshot as the main-turn value.
                         _main_speech_secs = float(getattr(_audio_mod, "_last_speech_secs", 0.0))
@@ -7746,7 +7755,7 @@ async def run():
                         _fl_face_gone = (
                             _fl_snap is not None
                             and _fl_snap.session_type == "face"
-                            and time.time() - _fl_snap.last_face_seen > FACE_LOSS_GRACE
+                            and time.monotonic() - _fl_snap.last_face_seen > FACE_LOSS_GRACE
                         )
 
                     if not text:
@@ -7758,7 +7767,7 @@ async def run():
                         # can fire when silence threshold is reached.
                         continue
 
-                    await _pipeline_state_store.set_last_user_speech_at(time.time())
+                    await _pipeline_state_store.set_last_user_speech_at(time.monotonic())
 
                     # Addendum window: user may have paused mid-thought (Smart-Turn fired
                     # at 0.85s) but still has more to say. Re-listen for up to
@@ -7797,7 +7806,7 @@ async def run():
                     # Result tells brain exactly who spoke and whether it matches the
                     # active session person. Runs in executor (ECAPA-TDNN, 80-150ms).
                     _ev_loop = asyncio.get_running_loop()
-                    _v_pid, _v_score = await voice_mod.identify(
+                    _v_pid, _v_score, _v_is_no_signal = await voice_mod.identify(
                         audio_buf, _voice_gallery_store.peek_all_gallery(), VOICE_RECOGNITION_THRESHOLD
                     )
 
@@ -8069,6 +8078,7 @@ async def run():
                             n_active_sessions=len(_session_store.peek_all_snapshots()),
                             voice_gallery_sizes=_voice_gallery_store.peek_all_sizes(),
                             now=_rc_now,
+                            v_score_is_no_signal=_v_is_no_signal,
                         )
                         _rc_decision = _rc_reconcile(
                             _rc_claim, _rc_presence, _rc_session,
@@ -8412,7 +8422,7 @@ async def run():
                         # (voice_face_confirmed flag set on gate-pass turn).
                         _face_vis_acc = (
                             (_cur_pid in _presence_store
-                             and time.time() - _presence_store.peek_last_recognized_at(_cur_pid, 0.0)
+                             and time.monotonic() - _presence_store.peek_last_recognized_at(_cur_pid, 0.0)
                              < VOICE_ROUTING_FACE_STALE_SECS)
                             or (_ext_snap.voice_face_confirmed if _ext_snap is not None else False)
                         )
@@ -8450,7 +8460,7 @@ async def run():
                             except RuntimeError:
                                 pass  # OPTIONAL
                     _vision_state = {
-                        "face_in_frame":          time.time() - _pipeline_state_store.peek_last_face_seen() < 2.0,
+                        "face_in_frame":          time.monotonic() - _pipeline_state_store.peek_last_face_seen() < 2.0,
                         "person_name":            _cur_name,
                         "person_id":              _cur_pid,
                         "recognition_conf":       _cur_rec_conf,

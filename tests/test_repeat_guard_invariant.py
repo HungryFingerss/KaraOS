@@ -12,6 +12,10 @@ analysis with parent-walk, not text proximity heuristics.
 DOES NOT IMPORT pipeline. Reads pipeline.py as raw text and ast.parse()s it.
 Constants imported from core.pipeline_invariants (zero side effects).
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import ast
 from pathlib import Path
 

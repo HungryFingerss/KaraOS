@@ -5,6 +5,10 @@ Uses sqlite3.Connection.backup() — safe under concurrent WAL writes (raw file 
 The online backup API page-iterates with low pressure on writers; never use raw file copy
 for a WAL-mode DB because a mid-checkpoint copy produces silent corruption.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import re
 import sqlite3
 import logging

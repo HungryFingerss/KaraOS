@@ -23,6 +23,10 @@ Pre-fix failure fingerprints:
 
 DLL-safe: imports core.brain_agent; no pipeline import.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import asyncio
 import gc
 import time

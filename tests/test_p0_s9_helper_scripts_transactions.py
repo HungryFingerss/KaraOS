@@ -12,6 +12,10 @@ Plan v1 §3 LOCK at 7 logical anchors across 4 D-decisions:
 
 Source-inspection by design — DLL-safe, no pipeline import, runs in CI on every PR.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast

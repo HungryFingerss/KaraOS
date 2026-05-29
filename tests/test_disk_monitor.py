@@ -1,6 +1,10 @@
 """
 Tests for core/disk_monitor.py — Wave 5 / Item 20.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import os
 import pytest
 from unittest.mock import MagicMock, patch

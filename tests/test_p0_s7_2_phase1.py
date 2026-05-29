@@ -17,6 +17,10 @@ prompt-side discipline gets brain into the right behavioral mode but Phase 2
 (κ — multi-person assistant-turn extraction) creates the facts that make
 search_memory return useful results. Phase 3 integration test gates on BOTH.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import pathlib

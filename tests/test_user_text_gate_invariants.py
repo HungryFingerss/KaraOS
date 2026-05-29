@@ -10,6 +10,10 @@ Plus 2 behavioral detector self-tests (stub-before-import pattern):
   Self-test 1: discriminating non-contiguous case is rejected
   Self-test 2: legitimate multi-word case is accepted
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 import ast
 import sys
 import types
@@ -89,7 +93,7 @@ if "core.voice" not in sys.modules:
     from unittest.mock import AsyncMock as _AsyncMock  # noqa: PLC0415
     _voice_stub = types.ModuleType("core.voice")
     _voice_stub.load_speaker_embedder = MagicMock(return_value=None)
-    _voice_stub.identify = _AsyncMock(return_value=(None, 0.0))
+    _voice_stub.identify = _AsyncMock(return_value=(None, 0.0, True))
     _voice_stub.diarize = _AsyncMock(return_value=[])
     _voice_stub.get_diarize_stats = MagicMock(return_value={})
     sys.modules["core.voice"] = _voice_stub

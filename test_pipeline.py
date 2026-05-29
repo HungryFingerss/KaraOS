@@ -32,7 +32,7 @@ if "core.voice" not in sys.modules:
     # _voice_diarize_executor + get_diarize_executor +
     # shutdown_diarize_executor stubs retired — those production symbols
     # no longer exist; pyannote pipeline lives subprocess-side.
-    _vs.identify = AsyncMock(return_value=(None, 0.0))
+    _vs.identify = AsyncMock(return_value=(None, 0.0, True))
     _vs.diarize = AsyncMock(return_value=[])
     _vs.get_diarize_stats = MagicMock(return_value={})
     _vs._embedder = MagicMock()
@@ -6497,7 +6497,7 @@ async def test_diarize_returns_two_segments_on_speaker_change():
     with patch.object(_voice_mod, "_embedder", object()):
         with patch("core.voice.embed", new=AsyncMock(side_effect=_fake_embed)):
             # identify() calls embed() too — patch identify to avoid recursion
-            with patch("core.voice.identify", new=AsyncMock(return_value=(None, 0.0))):
+            with patch("core.voice.identify", new=AsyncMock(return_value=(None, 0.0, True))):
                 result = await _voice_mod._diarize_ecapa_valley(audio, voice_gallery={})
 
     assert len(result) == 2, f"Expected 2 segments, got {len(result)}"
@@ -6601,7 +6601,7 @@ async def test_diarize_drops_segments_below_min_segment_secs():
         (0.5, 2.0, "SPEAKER_01"),   # 1.5s — keep + attribute
     ]
     with patch("core.heavy_worker.run_heavy", new=AsyncMock(return_value=segments_raw)), \
-         patch("core.voice.identify", new=AsyncMock(return_value=(None, 0.0))):
+         patch("core.voice.identify", new=AsyncMock(return_value=(None, 0.0, True))):
         segs = await _voice_mod.diarize(audio, voice_gallery={})
     assert len(segs) == 1, f"expected 1 (0.3s dropped), got {len(segs)}: {segs}"
     assert segs[0]["speaker_label"] == "SPEAKER_01"
@@ -6637,7 +6637,7 @@ async def test_diarize_short_segment_drops_attribution_keeps_label():
         (0.0, 0.7, "SPEAKER_00"),   # 0.7s — keep, no attribute
     ]
     with patch("core.heavy_worker.run_heavy", new=AsyncMock(return_value=segments_raw)), \
-         patch("core.voice.identify", new=AsyncMock(return_value=("p1", 0.9))) as mock_identify:
+         patch("core.voice.identify", new=AsyncMock(return_value=("p1", 0.9, False))) as mock_identify:
         segs = await _voice_mod.diarize(audio, voice_gallery={"p1": np.ones(192) / (192**0.5)})
     assert len(segs) == 1
     assert segs[0]["speaker_id"] is None, (
@@ -6680,7 +6680,7 @@ async def test_diarize_three_speaker_returns_distinct_labels():
         (4.0, 6.0, "SPEAKER_02"),
     ]
     with patch("core.heavy_worker.run_heavy", new=AsyncMock(return_value=segments_raw)), \
-         patch("core.voice.identify", new=AsyncMock(return_value=(None, 0.0))):
+         patch("core.voice.identify", new=AsyncMock(return_value=(None, 0.0, True))):
         segs = await _voice_mod.diarize(audio, voice_gallery={})
     assert len(segs) == 3, f"expected 3 segments, got {len(segs)}"
     labels = {s["speaker_label"] for s in segs}
@@ -6719,7 +6719,7 @@ async def test_diarize_empty_gallery_segments_still_have_speaker_label():
         (2.0, 4.0, "SPEAKER_01"),
     ]
     with patch("core.heavy_worker.run_heavy", new=AsyncMock(return_value=segments_raw)), \
-         patch("core.voice.identify", new=AsyncMock(return_value=(None, 0.0))):
+         patch("core.voice.identify", new=AsyncMock(return_value=(None, 0.0, True))):
         segs = await _voice_mod.diarize(audio, voice_gallery={})
     assert len(segs) == 2
     assert all(s["speaker_id"] is None for s in segs)
@@ -6758,7 +6758,7 @@ async def test_diarize_speaker_id_attribution_via_ecapa_gallery():
         (1.5, 3.0, "SPEAKER_01"),
     ]
     # identify returns different tuples on successive calls.
-    identify_returns = iter([("jagan_abc", 0.85), ("wasim_def", 0.78)])
+    identify_returns = iter([("jagan_abc", 0.85, False), ("wasim_def", 0.78, False)])
     with patch("core.heavy_worker.run_heavy", new=AsyncMock(return_value=segments_raw)), \
          patch("core.voice.identify", new=AsyncMock(side_effect=lambda *a, **kw: next(identify_returns))):
         segs = await _voice_mod.diarize(audio, voice_gallery={"jagan_abc": np.ones(192)})
@@ -8135,7 +8135,7 @@ async def test_session_opens_with_recent_attributions_deque():
             await asyncio.sleep(0)
             snap = pipeline._session_store.peek_snapshot(pid)
             assert snap is not None
-            assert isinstance(snap.recent_attributions, list)
+            assert isinstance(snap.recent_attributions, tuple)
             pipeline._close_session(pid)
             await asyncio.sleep(0)
         finally:
@@ -8243,7 +8243,7 @@ async def test_accumulate_voice_replenishes_bootstrap_for_engaged_stranger():
     # For bootstrap path, v_pid doesn't need to match person_id.
     # P0.R6.Y D3: voice_mod.identify + embed are async; use AsyncMock.
     from unittest.mock import AsyncMock as _AsyncMock  # noqa: PLC0415
-    with patch("pipeline.voice_mod.identify", new=_AsyncMock(return_value=(None, 0.0))), \
+    with patch("pipeline.voice_mod.identify", new=_AsyncMock(return_value=(None, 0.0, True))), \
          patch("pipeline.voice_mod.embed",
                new=_AsyncMock(return_value=np.ones(192, dtype=np.float32) / (192**0.5))):
         await _pl._accumulate_voice("p1", audio, mock_db)
@@ -8292,7 +8292,7 @@ async def test_accumulate_voice_mature_profile_skipped_when_voice_weak():
     await _pl._session_store.update_voice_heard("p1", conf=0.60, ts=_t.time())
     mock_db = MagicMock()
     audio = np.zeros(16000, dtype=np.float32)
-    with patch("pipeline.voice_mod.identify", new=AsyncMock(return_value=(None, 0.0))):
+    with patch("pipeline.voice_mod.identify", new=AsyncMock(return_value=(None, 0.0, True))):
         await _pl._accumulate_voice("p1", audio, mock_db)
     mock_db.add_voice_embedding.assert_not_called()
 
@@ -9333,7 +9333,7 @@ def test_add_embedding_rejects_unknown_source(tmp_path):
     )
     db._conn.commit()
     emb = np.random.randn(512).astype(np.float32)
-    with pytest.raises(AssertionError, match="unknown source"):
+    with pytest.raises(RuntimeError, match="unknown source"):
         db.add_embedding("p1", emb, source="typo_source", anti_spoof_verdict=True)
     db._conn.close()
 
@@ -11670,7 +11670,7 @@ def test_open_session_requires_person_type():
 def test_open_session_rejects_invalid_person_type():
     """Invalid person_type → AssertionError — catches literal-string bugs at write time."""
     import pipeline, pytest as _pytest
-    with _pytest.raises(AssertionError):
+    with _pytest.raises(RuntimeError):
         pipeline._open_session("p1", "Jagan", "face", person_type="bogus")
 
 

@@ -12,6 +12,10 @@ D4 §5.4 — `test_no_unexpected_privacy_critical_marker_outside_anchor_lists`
 
 Spec: tests/p0_s7_privacy_critical_audit.md + _plan_v1.md + _plan_v2.md.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import ast

@@ -16,6 +16,10 @@ the 8 NEW anchors below cover D1 #2 + D2 #1+#2 + D3 #1 + D4 #1+#2+#3 + D5 #1).
 Behavioral anchors that require CUDA at FaceEmbedder/FaceDetector `__init__` are gated via
 `_require_cuda_or_skip()` run-time check (same pattern as `tests/test_p0_r1_onnx_session_wrap.py`).
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 from pathlib import Path

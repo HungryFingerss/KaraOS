@@ -8,6 +8,10 @@ Contract every subclass MUST honour:
 - peek_* methods                sync, no lock (single-thread asyncio safe)
 - all mutation methods          async, acquire self._lock
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import asyncio

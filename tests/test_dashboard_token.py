@@ -8,6 +8,10 @@ recovery) lives in `tests/test_dashboard_token_windows.py`.
 
 Test plan locked at `tests/p0_s2_plan_v1.md` §2 + Plan v2 §3.
 """
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import os
