@@ -16,6 +16,8 @@ Each test names its contract id + source branch in the legacy router.
 
 from __future__ import annotations
 
+import pytest
+
 from core.config import (
     N_INITIAL_VOICE,
     VOICE_ACCUM_MATURE_SAMPLE_COUNT,
@@ -32,7 +34,12 @@ from core.config import (
     VOICE_SWITCH_THRESHOLD_MATURE,
     VOICE_SWITCH_THRESHOLD_THIN,
 )
-from core.reconciler import reconcile
+from core.reconciler import (
+    reconcile,
+    _p4_new_stranger_low_match,
+    _p4_pyannote_vouched_stranger,
+    _p5_no_session_new_stranger,
+)
 from core.reconciler_state import SessionState, VALID_ACTIONS
 from core.voice_channel import IdentityClaim
 from core.vision_channel import PresenceState
@@ -442,6 +449,75 @@ def test_n4_multi_segment_low_score_never_opens_stranger():
         f"N4 violation: multi-segment low-score multi-known room "
         f"opened a stranger: {decision}"
     )
+
+
+# ── N4b (#128) — the pid-BEARING sibling of N2/N4 ───────────────────────────────
+#
+# N2 (gap-band sweep) + N4 (multi-segment) cover the pid=None axis: an UNIDENTIFIED
+# claim must not over-open a stranger. N4b is the Canary #4 Q3 complement on the
+# pid-BEARING axis: an IDENTIFIED claim (claim.pid set) must NEVER route to
+# new_stranger, so a known speaker's turn can't be mis-created as a phantom stranger
+# session (the Canary #3/#4 regression family). Runtime defense-in-depth complement to
+# D1's structural tripwire (test_p10_routing_invariants.py): D1 checks the
+# `claim.pid is None` guard is PRESENT; N4b checks it is EFFECTIVE (backstops the
+# present-but-ineffective case D1 can't see — see #128 §2 caveat 3).
+
+
+@pytest.mark.parametrize("rule_fn, claim_kwargs, session_kwargs", [
+    # _p4_pyannote_vouched_stranger: no_signal + 2 segments + cur_pid set + solo room
+    (_p4_pyannote_vouched_stranger,
+     dict(confidence=0.0, n_diarize_segments=2, is_no_signal=True),
+     dict(cur_pid="jagan_001", n_active_sessions=1)),
+    # _p4_new_stranger_low_match: low score below threshold + cur_pid set + real signal
+    (_p4_new_stranger_low_match,
+     dict(confidence=0.10, n_diarize_segments=1, is_no_signal=False),
+     dict(cur_pid="jagan_001")),
+    # _p5_no_session_new_stranger: no session + real cosine signal
+    (_p5_no_session_new_stranger,
+     dict(confidence=0.10, n_diarize_segments=1, is_no_signal=False),
+     dict(cur_pid=None, cur_person_type="", n_active_sessions=0, cur_holder_voice_n=0)),
+], ids=["pyannote_vouched", "new_stranger_low_match", "no_session_new_stranger"])
+def test_n4b_pid_bearing_claim_vetoed_by_each_new_stranger_rule(rule_fn, claim_kwargs, session_kwargs):
+    """N4b per-rule (#128 D2) — for each new_stranger-emitting rule, inputs that WOULD fire
+    it if pid were None (its other conditions satisfied), but with claim.pid set to an
+    identified speaker, MUST return None. Isolates the `claim.pid is None` guard's veto.
+    Pid-bearing sibling of N2/N4 (which cover the pid=None axis)."""
+    claim = _claim(pid="lexi_002", **claim_kwargs)
+    session = _session(**session_kwargs)
+    assert rule_fn(claim, _presence(), session) is None, (
+        f"N4b violation: {rule_fn.__name__} did NOT veto a pid-bearing claim "
+        f"(pid='lexi_002') — the `claim.pid is None` guard is ineffective, so an "
+        f"identified speaker could be mis-opened as a phantom stranger."
+    )
+
+
+def test_n4b_reconcile_never_opens_stranger_for_pid_bearing_claim():
+    """N4b reconcile-level sweep (#128 D2) — the N2 sweep mirrored on the pid-BEARING axis:
+    across confidence / segment / no-signal / session conditions, an IDENTIFIED claim
+    (claim.pid set) NEVER routes to new_stranger at reconcile() level. The Q3 invariant
+    end-to-end — a known speaker's turn cannot become a phantom stranger session."""
+    for utt in (0.45, 0.6, 1.5, 2.0):
+        for conf in (-0.2, 0.0, 0.10, 0.27, 0.95):
+            for n_seg in (0, 1, 2):
+                for no_sig in (False, True):
+                    for cur in ("jagan_001", None):
+                        claim = _claim(
+                            pid="lexi_002", confidence=conf,
+                            utterance_duration=utt, n_diarize_segments=n_seg,
+                            is_no_signal=no_sig,
+                        )
+                        session = _session(
+                            cur_pid=cur,
+                            cur_person_type="best_friend" if cur else "",
+                            n_active_sessions=2 if cur else 0,
+                            cur_holder_voice_n=20 if cur else 0,
+                        )
+                        decision = reconcile(claim, _presence(), session)
+                        assert decision.action != "new_stranger", (
+                            f"N4b violation: pid-bearing claim (pid='lexi_002') routed to "
+                            f"new_stranger — utt={utt} conf={conf} n_seg={n_seg} "
+                            f"no_sig={no_sig} cur_pid={cur!r} → rule={decision.rule_fired!r}"
+                        )
 
 
 def test_n5_single_segment_mismatch_does_not_drop_bootstrapping_holder():

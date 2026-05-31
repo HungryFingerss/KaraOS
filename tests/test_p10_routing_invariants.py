@@ -684,3 +684,136 @@ def test_n7_reconciler_exception_path_falls_through_to_warn():
         "N7 companion: try block has no except handler. The reconciler "
         "must not crash a turn — catching is mandatory."
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Follow-up #128 — D1: new_stranger `claim.pid is None` guard AST tripwire
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Canary #4 Q3 sibling: a `new_stranger` decision must NEVER fire for an
+# IDENTIFIED (pid-bearing) speaker — that drops a known speaker's identity
+# into a phantom stranger session (the Canary #3/#4 high-cost regression
+# family). The audit found the invariant already holds (all 3 new_stranger
+# rules gate on `claim.pid is None` first); #128 turns it into a CI tripwire.
+#
+# Scoping caveats (per the #123 D2b in-code-documentation precedent):
+#   1. LITERAL-ACTION scope — D1 keys off the literal "new_stranger". A future
+#      rule emitting the action via a variable (`action=some_var`) would be
+#      missed; matches the current/expected literal-action-string style.
+#   2. `is None` SHAPE — the guard detector targets the exact `claim.pid is None`
+#      compare. A guard written `not claim.pid` or via a helper would be missed;
+#      the rules use `is None` uniformly.
+#   3. PRESENT, not GATES (the D1/D2 division of labor) — D1 asserts the guard
+#      APPEARS in the rule body, NOT that it structurally gates the emission. A
+#      hypothetical future rule with `claim.pid is None` in some unrelated
+#      sub-expression that still emitted `new_stranger` unconditionally would PASS
+#      D1 yet be a real bug. That present-but-ineffective case is backstopped by
+#      D2/N4b's behavioral negative (a pid-bearing claim would reach the emission
+#      and fail the reconcile-level sweep). D1 (structural, fast-fail on "guard
+#      missing entirely") + D2 (behavioral, catches "present-but-ineffective") is
+#      the robust pair — do NOT assume D1 alone proves gating-correctness.
+
+_RECONCILER_PATH = Path(__file__).resolve().parent.parent / "core" / "reconciler.py"
+
+
+def _reconciler_src() -> str:
+    return _RECONCILER_PATH.read_text(encoding="utf-8")
+
+
+def _body_emits_new_stranger(fn: ast.FunctionDef) -> bool:
+    """True if the function body contains a literal `"new_stranger"` string constant
+    (the `action="new_stranger"` emission). The _CASCADE `ast.Name` entries and any
+    docstring/comment mentions are NOT bare `"new_stranger"` constants, so this hits
+    exactly the real emission sites (caveat 1)."""
+    for n in ast.walk(fn):
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value == "new_stranger":
+            return True
+    return False
+
+
+def _body_has_pid_none_guard(fn: ast.FunctionDef) -> bool:
+    """True if the body contains the exact `claim.pid is None` compare (caveat 2)."""
+    for n in ast.walk(fn):
+        if (isinstance(n, ast.Compare)
+                and isinstance(n.left, ast.Attribute)
+                and n.left.attr == "pid"
+                and isinstance(n.left.value, ast.Name)
+                and n.left.value.id == "claim"
+                and len(n.ops) == 1
+                and isinstance(n.ops[0], ast.Is)
+                and len(n.comparators) == 1
+                and isinstance(n.comparators[0], ast.Constant)
+                and n.comparators[0].value is None):
+            return True
+    return False
+
+
+def _new_stranger_rules_missing_guard(source: str) -> list[str]:
+    """#128 D1 + #123 PI-1 shared-helper — the ONE source-string decision that BOTH the
+    forward test (real core/reconciler.py) AND the self-tests route through, so a self-test
+    can never validate a different detector than the production scan (no vacuity, no
+    forward/self-test divergence — closes the Canary-#3 conftest-stub / #123 duplicated-
+    detector trap). Returns the names of FunctionDefs that emit `action="new_stranger"` but
+    do NOT contain a `claim.pid is None` guard. FORALL over emitters, never a hard-coded
+    count (Q3)."""
+    tree = ast.parse(source)
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if _body_emits_new_stranger(node) and not _body_has_pid_none_guard(node):
+            offenders.append(node.name)
+    return offenders
+
+
+def test_d1_every_new_stranger_rule_guards_on_pid_none():
+    """D1 forward (#128) — every rule in core/reconciler.py that emits
+    `action="new_stranger"` MUST contain a `claim.pid is None` guard, so a pid-bearing
+    (identified) claim can never mis-create a phantom stranger session for a known speaker
+    (the Canary #3/#4 regression family). FORALL, not 'exactly 3' (Q3): a future 4th
+    new_stranger rule inherits the requirement automatically; the run lists offenders."""
+    offenders = _new_stranger_rules_missing_guard(_reconciler_src())
+    assert offenders == [], (
+        f"new_stranger-emitting rules missing the `claim.pid is None` guard: {offenders}. "
+        "Every rule that can open a stranger session MUST first verify the claim is "
+        "unidentified — a pid-bearing claim routing to new_stranger drops a known speaker's "
+        "identity into a phantom session (Canary #3/#4 regression class)."
+    )
+
+
+def test_d1_self_test_guardless_emitter_flagged():
+    """D1 self-test (a) — a new_stranger emitter WITHOUT the guard is flagged. Routes
+    through the same _new_stranger_rules_missing_guard the forward test uses (#123 PI-1)."""
+    src = (
+        "def _fake_rule(claim, presence, session):\n"
+        "    if session.cur_pid is not None:\n"
+        "        return RoutingDecision(pid=None, action=\"new_stranger\", reasoning=\"x\")\n"
+        "    return None\n"
+    )
+    assert _new_stranger_rules_missing_guard(src) == ["_fake_rule"]
+
+
+def test_d1_self_test_guarded_emitter_clean():
+    """D1 self-test (b) — a new_stranger emitter WITH the `claim.pid is None` guard is
+    clean."""
+    src = (
+        "def _fake_rule(claim, presence, session):\n"
+        "    if claim.pid is None and session.cur_pid is not None:\n"
+        "        return RoutingDecision(pid=None, action=\"new_stranger\", reasoning=\"x\")\n"
+        "    return None\n"
+    )
+    assert _new_stranger_rules_missing_guard(src) == []
+
+
+def test_d1_self_test_non_new_stranger_rule_not_flagged():
+    """D1 self-test (c) — a NON-new_stranger rule WITHOUT the guard is NOT flagged. The
+    detector is scoped to new_stranger only: grep shows 9 rules use `claim.pid is None` but
+    only 3 emit new_stranger; siblings like `_p4_voice_ambiguous_*` / `_p5_no_session_no_action`
+    gate on the same compare yet emit OTHER actions and MUST stay out of D1's scope."""
+    src = (
+        "def _fake_current_rule(claim, presence, session):\n"
+        "    if session.cur_pid is not None:\n"
+        "        return RoutingDecision(pid=session.cur_pid, action=\"current\", reasoning=\"x\")\n"
+        "    return None\n"
+    )
+    assert _new_stranger_rules_missing_guard(src) == []
