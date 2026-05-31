@@ -55,19 +55,37 @@ _embedder = None   # SpeechBrain EncoderClassifier — lazy singleton
 # by `hw.shutdown_all_pools(wait=True)` at process exit.
 
 
-def load_speaker_embedder(device: str = "cuda") -> None:
-    """Load ECAPA-TDNN model. Call once at pipeline startup."""
-    global _embedder
-    if _embedder is not None:
-        return
-    try:
-        # huggingface_hub 1.0+ has two breaking changes vs SpeechBrain 1.x:
-        # 1. use_auth_token kwarg removed — strip it transparently.
-        # 2. 404s now raise RemoteEntryNotFoundError instead of FileNotFoundError —
-        #    SpeechBrain's try/except FileNotFoundError misses it and crashes.
-        #    Patch both issues in a single wrapper.
-        import huggingface_hub as _hf
-        import functools
+def _load_ecapa_patched(device: str = "cuda"):
+    """Shared ECAPA loader — owns the FULL order-dependent hf_hub_download patch sequence.
+
+    Canary #3 (2026-05-30): P0.R6.Y migrated ECAPA inference into a subprocess but left
+    this compatibility patch behind in the main loader, so the subprocess `from_hparams`
+    failed silently and `voice.embed` returned None on every call → empty voice gallery →
+    the turn-55 Jagan→Lexi mis-rename. BOTH `load_speaker_embedder` (main) AND
+    `heavy_worker._get_subprocess_ecapa` (subprocess) now call this single helper; each
+    owns only its own singleton assignment. One source of truth for the patch.
+
+    The two-phase ordering is LOAD-BEARING — do NOT flatten it:
+      Phase 1 — patch the GLOBAL huggingface_hub.hf_hub_download (idempotent) BEFORE the
+                speechbrain import (speechbrain binds the symbol at import time).
+      Phase 2 — import EncoderClassifier (binds the now-patched global).
+      Phase 3 — patch speechbrain.utils.fetching.hf_hub_download AFTER the import (that
+                module captured its own reference to hf_hub_download at import time).
+      Phase 4 — from_hparams.
+
+    huggingface_hub 1.0+ vs SpeechBrain 1.x: (1) `use_auth_token` kwarg removed — strip it;
+    (2) 404s raise RemoteEntryNotFoundError, not FileNotFoundError — convert to ValueError
+    so SpeechBrain's existing `except` clause works.
+
+    Returns the EncoderClassifier, or None (logged — A2: never silent) on failure. Lazy
+    speechbrain/hf imports keep the subprocess import light (Q1 lock).
+    """
+    import functools
+    import huggingface_hub as _hf
+
+    # Phase 1 — GLOBAL patch, idempotent (sentinel so repeat calls don't wrap the wrapper).
+    # huggingface_hub is always importable; the patch is the load-bearing pre-import step.
+    if not getattr(_hf.hf_hub_download, "_dogai_patched", False):
         _orig_download = _hf.hf_hub_download
 
         @functools.wraps(_orig_download)
@@ -76,35 +94,47 @@ def load_speaker_embedder(device: str = "cuda") -> None:
             try:
                 return _orig_download(*args, **kwargs)
             except Exception as _e:
-                # huggingface_hub 1.x raises RemoteEntryNotFoundError for 404s.
-                # SpeechBrain 1.x catches ValueError for missing optional files
-                # (e.g. custom.py). Convert so the existing except clause works.
                 if type(_e).__name__ in ("RemoteEntryNotFoundError", "EntryNotFoundError") \
                         or "404" in str(_e):
                     raise ValueError(str(_e)) from _e
                 raise
 
+        _patched_download._dogai_patched = True
         _hf.hf_hub_download = _patched_download
 
+    # Phases 2-4 — import + namespace patch + load, failure-guarded → None (logged).
+    try:
         from speechbrain.inference.speaker import EncoderClassifier
 
-        # Also patch the local reference inside SpeechBrain's fetching module,
-        # which captured hf_hub_download at import time into its own namespace.
+        # Phase 3 — patch SpeechBrain's captured reference (after import).
         import speechbrain.utils.fetching as _sbfetch
-        if hasattr(_sbfetch, "hf_hub_download"):
-            _sbfetch.hf_hub_download = _patched_download
+        if hasattr(_sbfetch, "hf_hub_download") \
+                and not getattr(_sbfetch.hf_hub_download, "_dogai_patched", False):
+            _sbfetch.hf_hub_download = _hf.hf_hub_download
 
-        print("[Voice] Loading ECAPA-TDNN speaker embedder...")
-        t0 = time.time()
-        _embedder = EncoderClassifier.from_hparams(
+        return EncoderClassifier.from_hparams(
             source="speechbrain/spkrec-ecapa-voxceleb",
             savedir="pretrained_models/spkrec-ecapa-voxceleb",
             run_opts={"device": device},
         )
-        print(f"[Voice] ECAPA-TDNN ready — {time.time() - t0:.1f}s")
     except Exception as e:
-        print(f"[Voice] WARNING: Could not load speaker embedder ({e}) — voice ID disabled")
-        _embedder = None
+        # A2: this swallow hid Canary #3 for a week — log type+message, never silent.
+        print(f"[Voice] ECAPA load failed: {type(e).__name__}: {e}")
+        return None
+
+
+def load_speaker_embedder(device: str = "cuda") -> None:
+    """Load ECAPA-TDNN model into the main-process singleton. Call once at startup."""
+    global _embedder
+    if _embedder is not None:
+        return
+    print("[Voice] Loading ECAPA-TDNN speaker embedder...")
+    t0 = time.time()
+    _embedder = _load_ecapa_patched(device)
+    if _embedder is not None:
+        print(f"[Voice] ECAPA-TDNN ready — {time.time() - t0:.1f}s")
+    else:
+        print("[Voice] WARNING: Could not load speaker embedder — voice ID disabled")
 
 
 async def embed(audio: np.ndarray, sample_rate: int = MIC_SAMPLE_RATE) -> np.ndarray | None:

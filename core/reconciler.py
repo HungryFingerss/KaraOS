@@ -174,6 +174,7 @@ def _p0_short_utterance_hard_mismatch(
             and VOICE_ROUTING_SHORT_UTT_MISMATCH_ENABLED
             and session.cur_pid is not None
             and claim.utterance_duration >= VOICE_ROUTING_MIN_AUDIO_FOR_SCORE
+            and not claim.confidence_is_no_signal  # Spec 1 D1: no_signal = abstain, NOT a mismatch
             and claim.confidence < VOICE_ROUTING_SHORT_UTT_FLOOR):
         return RoutingDecision(
             pid=None,
@@ -203,6 +204,7 @@ def _p0_short_utterance_ambiguous_multi_session(
             and VOICE_ROUTING_SHORT_UTT_MISMATCH_ENABLED
             and session.cur_pid is not None
             and claim.utterance_duration >= VOICE_ROUTING_MIN_AUDIO_FOR_SCORE
+            and not claim.confidence_is_no_signal  # Spec 1 D1: no_signal = abstain, NOT a mismatch
             and claim.confidence < VOICE_ROUTING_SHORT_UTT_AMBIGUOUS
             and session.n_active_sessions >= 2):
         return RoutingDecision(
@@ -780,13 +782,19 @@ def _p5_no_session_new_stranger(
     if (claim.pid is None
             and session.cur_pid is None
             and (not claim.confidence_is_no_signal  # any real cosine signal (positive or negative)
-                 or len(presence.unrecognized_track_ids) > 0)):
+                 or len(presence.unrecognized_track_ids) > 0
+                 # Spec 1 D2: a real-length utterance opens a (GATED) stranger session even
+                 # when voice abstains (empty gallery → no_signal) — the Lexi case. Gated open
+                 # keeps safety unchanged; an abstaining sub-MIN_AUDIO utterance still falls
+                 # through to _p5_no_session_no_action.
+                 or claim.utterance_duration >= VOICE_ROUTING_MIN_AUDIO_FOR_SCORE)):
         return RoutingDecision(
             pid=None,
             action="new_stranger",
             reasoning=(
                 f"ambient first entry — score={claim.confidence:.3f}, "
-                f"unrec_tracks={len(presence.unrecognized_track_ids)}"
+                f"unrec_tracks={len(presence.unrecognized_track_ids)}, "
+                f"utt={claim.utterance_duration:.2f}s"
             ),
         )
     return None
@@ -949,6 +957,13 @@ EXPECTED_RULES_BY_BAND: dict[str, tuple[str, ...]] = {
     "short_hard": (
         "_p0_short_utterance_hard_mismatch",
         "_p0_short_utterance_ambiguous_multi_session",
+        # Spec 1 D1 (Q2): a no_signal short_hard utterance now ABSTAINS from the two P0
+        # drop rules above and falls through to the voice-ambiguous P4 rules — which ARE
+        # the expected handlers for that sub-case. Without these two names the
+        # band-divergence watchdog would log a false divergence (if SHADOW_CHANNEL_LOGGING
+        # is flipped) on every empty-gallery short utterance.
+        "_p4_voice_ambiguous_no_candidates",
+        "_p4_voice_ambiguous_with_candidates",
         # Boundary cases — see comment above.
         "_p0_short_utterance_gap_hold_current",
         "_p0_pure_noise_hold_current",

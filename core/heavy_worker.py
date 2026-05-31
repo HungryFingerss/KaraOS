@@ -137,8 +137,15 @@ def _get_subprocess_embedder() -> "Any":
     global _SUBPROCESS_EMBEDDER
     if _SUBPROCESS_EMBEDDER is None:
         import core.vision as vision_mod  # noqa: PLC0415
-
-        _SUBPROCESS_EMBEDDER = vision_mod.FaceEmbedder()
+        try:
+            _SUBPROCESS_EMBEDDER = vision_mod.FaceEmbedder()
+        except Exception as _e:
+            # Q5 sweep (Canary #3): log-only visibility. Unlike the ECAPA/whisper/pyannote
+            # loaders this site has NO silent swallow — FaceEmbedder() failure already
+            # propagates; we re-raise to preserve that (LOG ONLY, no behavior change) while
+            # making a future load failure visible. (AdaFace ONNX — no SpeechBrain patch.)
+            print(f"[HeavyWorker] _get_subprocess_embedder load failed: {type(_e).__name__}: {_e}")
+            raise
     return _SUBPROCESS_EMBEDDER
 
 
@@ -409,7 +416,10 @@ def _get_subprocess_whisper() -> "Any | None":
                 device="cuda",
                 compute_type="float16",
             )
-        except Exception:
+        except Exception as _e:
+            # Q5 sweep (Canary #3): log-only — make a future load failure visible instead
+            # of hiding it (different load mechanism than ECAPA; no SpeechBrain patch needed).
+            print(f"[HeavyWorker] _get_subprocess_whisper load failed: {type(_e).__name__}: {_e}")
             return None
     return _SUBPROCESS_WHISPER_MODEL
 
@@ -489,16 +499,13 @@ def _get_subprocess_ecapa() -> "Any | None":
     """
     global _SUBPROCESS_ECAPA_EMBEDDER
     if _SUBPROCESS_ECAPA_EMBEDDER is None:
-        try:
-            from speechbrain.inference.speaker import EncoderClassifier  # noqa: PLC0415
-
-            _SUBPROCESS_ECAPA_EMBEDDER = EncoderClassifier.from_hparams(
-                source="speechbrain/spkrec-ecapa-voxceleb",
-                savedir="pretrained_models/spkrec-ecapa-voxceleb",
-                run_opts={"device": "cuda"},
-            )
-        except Exception:
-            return None
+        # Canary #3 (2026-05-30): route through the SHARED patch helper so the subprocess
+        # applies the SAME hf_hub_download patch the main loader does. P0.R6.Y migrated the
+        # inference here but left a bare from_hparams → silent load failure → embed
+        # returned None → empty gallery → the Jagan→Lexi mis-rename. The helper owns the
+        # order-dependent patch sequence and logs failures (A2 — no more silent swallow).
+        import core.voice as voice_mod  # noqa: PLC0415
+        _SUBPROCESS_ECAPA_EMBEDDER = voice_mod._load_ecapa_patched("cuda")
     return _SUBPROCESS_ECAPA_EMBEDDER
 
 
@@ -561,7 +568,10 @@ def ecapa_embed_worker(
         if norm > 0:
             emb_np = emb_np / norm
         return emb_np.astype(np.float32).tobytes()
-    except Exception:
+    except Exception as _e:
+        # A2 (Canary #3): never silent — this inference swallow hid the break alongside
+        # the load swallow. Log type+message before returning None.
+        print(f"[HeavyWorker] ecapa_embed_worker inference failed: {type(_e).__name__}: {_e}")
         return None
 
 
@@ -603,7 +613,11 @@ def _get_subprocess_pyannote() -> "Any | None":
             )
             if torch.cuda.is_available():
                 _SUBPROCESS_PYANNOTE_PIPELINE.to(torch.device("cuda"))
-        except Exception:
+        except Exception as _e:
+            # Q5 sweep (Canary #3): log-only — make a future load failure visible instead
+            # of hiding it (Pipeline.from_pretrained via the vendored fork; no SpeechBrain
+            # patch needed — that missing-patch class is ECAPA/SpeechBrain-specific).
+            print(f"[HeavyWorker] _get_subprocess_pyannote load failed: {type(_e).__name__}: {_e}")
             return None
     return _SUBPROCESS_PYANNOTE_PIPELINE
 

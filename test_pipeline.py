@@ -2957,10 +2957,11 @@ async def test_kairos_tick_logs_turns_and_notifies_brain():
     orig_last_speech = pipeline._pipeline_state_store.peek_last_user_speech_at()
     orig_last_kairos = pipeline._pipeline_state_store.peek_last_kairos_at()
     # P0.S7.3 — threshold bumped 30s → 120s + baseline now = max(last_user_speech_at, _tts_end_time).
+    # Canary #2 clock spec #4: KAIROS elapsed-math is MONOTONIC now — seed on time.monotonic().
     # Seed 150s past last_user_speech (clears 120s threshold via the user-speech baseline);
-    # _tts_end_time defaults to 0.0 module init, so the max resolves to the user-speech ts.
-    await pipeline._pipeline_state_store.set_last_user_speech_at(_time_mod.time() - 150)
-    await pipeline._pipeline_state_store.set_last_kairos_at(_time_mod.time() - 200)  # past 120s cooldown
+    # _tts_end_time_monotonic defaults to 0.0 module init, so the max resolves to the user-speech ts.
+    await pipeline._pipeline_state_store.set_last_user_speech_at(_time_mod.monotonic() - 150)
+    await pipeline._pipeline_state_store.set_last_kairos_at(_time_mod.monotonic() - 200)  # past 120s cooldown
 
     async def fake_ask_stream(*args, **kwargs):
         yield ("text", "Hey, how are you feeling today?")
@@ -10312,6 +10313,10 @@ async def test_enrollment_mishear_escape_hatch_renames_fresh_best_friend():
     from pipeline import _execute_tool
     import time as _t
     await pipeline._session_store.open_session("jagan_bf", "Gevan", "best_friend", "face", now=_t.time() - 30)
+    # Canary #3 PI-1: pin the in-window turn count EXPLICITLY (was the incidental default 0).
+    # user_turns=1 is within ENROLLMENT_RENAME_MAX_TURNS (3) — a genuine turn-1 enrollment
+    # mishear correction MUST still rename through the escape hatch after B1.
+    pipeline._session_store._sessions["jagan_bf"].user_turns = 1
     await pipeline._conversation_store.set_history("jagan_bf", [])
     mock_db = MagicMock()
     mock_db.voice_embedding_count.return_value = 0  # no voice samples yet
@@ -12650,9 +12655,20 @@ def test_s3b1_room_started_at_lifecycle(tmp_path):
         "second open into same room must inherit existing start time"
     )
 
-    # Close everyone — stamp clears.
-    pipeline._close_session("a_1")
-    pipeline._close_session("b_1")
+    # Close everyone — stamp clears. Canary #4: B1 made _open_session SYNCHRONOUS, so the
+    # sessions are now really in the store. _close_session's session removal is still an
+    # async create_task (Part B unchanged, per spec), so drive the closes in a loop with a
+    # drain between them — mirroring production's inter-turn draining: the earlier close
+    # must drain (a_1 removed) before the last close runs its room-end "is this the last
+    # person?" check, which excludes the closing person but not an already-closed one.
+    # (Pre-B1 this test passed only because the async OPEN also no-op'd in a sync context,
+    # leaving the store trivially empty; B1's real opens exposed the close's drain need.)
+    async def _close_seq():
+        pipeline._close_session("a_1")
+        await asyncio.sleep(0)
+        pipeline._close_session("b_1")
+        await asyncio.sleep(0)
+    asyncio.run(_close_seq())
     assert pipeline._pipeline_state_store.peek_active_room_session() is None
     assert pipeline._pipeline_state_store.peek_active_room_started_at() is None, (
         "room end must clear start-time stamp alongside the id"
@@ -14764,6 +14780,11 @@ def test_s116_room_lifecycle_logs_participant_join_and_synthesis(monkeypatch):
 
             async def _drive():
                 pipeline._close_session("a_1")
+                # Canary #4: B1's synchronous open means a_1 is really in the store now —
+                # drain its async removal BEFORE b_1's close runs the room-end "is this the
+                # last person?" check (which excludes the closing person, not an
+                # already-closing one). Mirrors production's inter-turn draining.
+                await _aio.sleep(0)
                 pipeline._close_session("b_1")
                 await _aio.sleep(0)
             _aio.run(_drive())

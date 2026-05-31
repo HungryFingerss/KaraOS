@@ -136,6 +136,25 @@ def test_expected_rules_by_band_references_existing_rules():
             )
 
 
+def test_spec1_q2_short_hard_band_includes_voice_ambiguous_p4_rules():
+    """Spec 1 Q2 (2026-05-30): after D1, a no_signal short_hard utterance abstains from
+    the two P0 drop rules and falls through to the voice-ambiguous P4 rules — so those P4
+    rules ARE the expected handlers for the short_hard band's no_signal sub-case. Without
+    them in EXPECTED_RULES_BY_BAND['short_hard'], the Reconciler-Shadow band-divergence
+    watchdog (when SHADOW_CHANNEL_LOGGING_ENABLED is flipped) would log a false divergence
+    on every empty-gallery short utterance. Both names also exist in _CASCADE — guarded by
+    test_expected_rules_by_band_references_existing_rules above."""
+    short_hard = EXPECTED_RULES_BY_BAND["short_hard"]
+    assert "_p4_voice_ambiguous_no_candidates" in short_hard, (
+        "short_hard band must accept _p4_voice_ambiguous_no_candidates as the post-D1 "
+        "no_signal-abstain handler (holds solo)"
+    )
+    assert "_p4_voice_ambiguous_with_candidates" in short_hard, (
+        "short_hard band must accept _p4_voice_ambiguous_with_candidates as the post-D1 "
+        "no_signal-abstain handler (drops multi-person)"
+    )
+
+
 def test_p0_10_gap_rule_present_in_cascade():
     """P0.10 Block A: `_p0_short_utterance_gap_hold_current` must be in
     the cascade and positioned between the noise-floor rule and the

@@ -141,18 +141,27 @@ def test_p0_r6_y_d2_anchor_1_subprocess_ecapa_singleton_and_accessor() -> None:
                 "function-local instead of populating the module "
                 "singleton."
             )
-            encoder_calls = [
+            # Canary #3 (2026-05-30): Part A moved the EncoderClassifier.from_hparams
+            # construction OUT of this accessor into the shared patch helper
+            # voice._load_ecapa_patched (so the subprocess applies the same
+            # hf_hub_download patch the main loader does — the missing-patch bug that
+            # made embed return None forever). The lazy-init contract is unchanged in
+            # spirit: the body must still ATTEMPT construction (not an unconditional
+            # `return None`) — now via the shared helper. The A2-guard
+            # (test_canary3_ecapa_embed_and_rename_safety) enforces that from_hparams
+            # lives ONLY in the helper.
+            construction_calls = [
                 n for n in ast.walk(node)
                 if isinstance(n, ast.Call)
                 and isinstance(n.func, ast.Attribute)
-                and n.func.attr == "from_hparams"
+                and n.func.attr in ("from_hparams", "_load_ecapa_patched")
             ]
-            assert encoder_calls, (
-                "D2 regression: _get_subprocess_ecapa() body missing "
-                "EncoderClassifier.from_hparams(...) construction. The "
-                "lazy-init contract requires constructing the model on "
-                "first call; an unconditional `return None` body bypasses "
-                "this."
+            assert construction_calls, (
+                "D2 regression: _get_subprocess_ecapa() body missing the model "
+                "construction call — voice._load_ecapa_patched(...) post-Canary-3 (or "
+                "EncoderClassifier.from_hparams pre-Canary-3). The lazy-init contract "
+                "requires constructing on first call; an unconditional `return None` "
+                "body bypasses this."
             )
             break
 

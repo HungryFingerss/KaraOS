@@ -323,14 +323,36 @@ def test_c19_no_session_low_score_opens_stranger():
 
 
 def test_c20_no_session_no_signal_returns_no_action():
-    """C20 (P5b): cur_pid is None + v_score == 0 + no unrec tracks
-    → no_action."""
-    claim = _claim(pid=None, confidence=0.0, utterance_duration=2.0,
+    """C20 (P5b): cur_pid is None + no_signal + no unrec tracks + SUB-MIN_AUDIO
+    utterance → no_action.
+
+    NARROWED at Spec 1 D2 (2026-05-30): the utterance is now sub-0.5s (was 2.0s).
+    A real-length no_signal utterance now opens a stranger via D2 — see c20b. A
+    sub-0.5s no_signal utterance with no unrec tracks still correctly falls to
+    _p5_no_session_no_action (new_stranger's three OR clauses all fail: no_signal,
+    no unrec, utt 0.3 < 0.5)."""
+    claim = _claim(pid=None, confidence=0.0, utterance_duration=0.3,
                    n_diarize_segments=1, is_no_signal=True)
     session = _session(cur_pid=None, cur_person_type="", n_active_sessions=0,
                        voice_gallery_sizes={}, cur_holder_voice_n=0)
     decision = reconcile(claim, _presence(), session)
     assert decision.action == "no_action"
+
+
+def test_c20b_no_session_no_signal_real_length_opens_stranger():
+    """Spec 1 D2 (the Lexi fix): cur_pid is None + no_signal (empty gallery) + a
+    REAL-LENGTH utterance (>= MIN_AUDIO_FOR_SCORE 0.5s) → new_stranger.
+
+    Deliberately reverses the pre-D2 C20 behavior: a 1.6s utterance from a speaker
+    whose voice can't be matched (empty gallery → no_signal) now opens a GATED
+    stranger session instead of dropping every turn. The session opens gated, so
+    safety is unchanged; the speaker can finally be heard."""
+    claim = _claim(pid=None, confidence=0.0, utterance_duration=1.6,
+                   n_diarize_segments=1, is_no_signal=True)
+    session = _session(cur_pid=None, cur_person_type="", n_active_sessions=0,
+                       voice_gallery_sizes={}, cur_holder_voice_n=0)
+    decision = reconcile(claim, _presence(), session)
+    assert decision.action == "new_stranger"
 
 
 def test_c21_last_resort_ambiguous_catches_fallthrough():

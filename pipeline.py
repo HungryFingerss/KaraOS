@@ -375,7 +375,7 @@ from core.vision  import (
 )
 from core.db      import FaceDB, wipe_all
 from core.brain   import ask, ask_offline, ask_retry_text, ask_stream, ping_together, generate_greeting, autocompact_history, choose_greeting_order, render_session_stable_prefix
-from core.config  import CLOUD_OFFLINE_TIMEOUT, CLOUD_RETRY_INTERVAL, DREAM_IDLE_MINUTES, DREAM_COOLDOWN, DREAM_MAX_INTERVAL, KAIROS_SILENCE_THRESHOLD_SECS, KAIROS_COOLDOWN, STRANGER_REQUIRE_SYSTEM_NAME, SCENE_STALE_SECS, SCENE_BLOCK_ENABLED, SCENE_VOICE_STALE, STRANGER_TTL_DAYS, STRANGER_VOICE_TTL_DAYS, DISPUTE_MAX_DURATION, DISPUTE_RENAME_BLOCK_THRESHOLD, VALID_PERSON_TYPES, TOOL_PRIVILEGES, N_INITIAL_VOICE_BOOTSTRAP, VOICE_ACCUM_FACE_WITNESS_MIN_CONF, VOICE_ACCUM_FACE_WITNESS_MAX_AGE_SEC, VOICE_ACCUM_VOICE_SELF_MATCH_MIN, VOICE_ACCUM_MATURE_SAMPLE_COUNT, VOICE_ROUTING_MIDRANGE_SWITCH_MIN, VOICE_ROUTING_FACE_ASSIST_MIN, VOICE_ROUTING_SELF_MATCH_FLOOR, VOICE_ROUTING_SELF_MATCH_OFFSCREEN, VOICE_ROUTING_MIN_UTTERANCE_SECS, VOICE_ROUTING_SHORT_UTT_MISMATCH_ENABLED, VOICE_ROUTING_SHORT_UTT_FLOOR, VOICE_ROUTING_MIN_AUDIO_FOR_SCORE, VOICE_ROUTING_SHORT_UTT_AMBIGUOUS, VOICE_ROUTING_NOISE_FLOOR_SECS, VOICE_ROUTING_STRANGER_FLOOR, VOICE_ROUTING_SINGLE_SEGMENT_MISMATCH_ENABLED, VISION_SHADOW_INTERVAL_SECS, MEMORY_SPARSE_THRESHOLD, SYSTEM_NAME_ASSIGN_PATTERNS, PERSON_NAME_ASSIGN_PATTERNS, IDENTITY_DENIAL_PATTERNS, DISPUTE_AUTO_CLEAR_VOICE_MIN, DISPUTE_AUTO_CLEAR_VOICE_SOLO_MIN, DISPUTE_AUTO_CLEAR_CONSECUTIVE_TURNS, ENROLLMENT_RENAME_GRACE_SECS, ENROLLMENT_RENAME_VOICE_THRESHOLD, SCENE_VISITOR_RECENCY_SECS, KAIROS_PREFER_BEST_FRIEND, BATCH_GREETING_ENABLED, BATCH_GREETING_MIN_PEOPLE, BATCH_GREETING_LLM_TIMEOUT_SECS, ROOM_BLOCK_ENABLED, ROOM_BLOCK_TURN_CAP, SHARED_CONTEXT_BLOCK_ENABLED, SHARED_CONTEXT_BLOCK_TURN_CAP, ROUTING_USE_RECONCILER, STRANGER_IDENTITY_BLOCK_MIN_TURNS, SCENE_BLOCK_CACHE_ENABLED, SCENE_BLOCK_CACHE_MAX_ENTRIES
+from core.config  import CLOUD_OFFLINE_TIMEOUT, CLOUD_RETRY_INTERVAL, DREAM_IDLE_MINUTES, DREAM_COOLDOWN, DREAM_MAX_INTERVAL, KAIROS_SILENCE_THRESHOLD_SECS, KAIROS_COOLDOWN, STRANGER_REQUIRE_SYSTEM_NAME, SCENE_STALE_SECS, SCENE_BLOCK_ENABLED, SCENE_VOICE_STALE, STRANGER_TTL_DAYS, STRANGER_VOICE_TTL_DAYS, DISPUTE_MAX_DURATION, DISPUTE_RENAME_BLOCK_THRESHOLD, VALID_PERSON_TYPES, TOOL_PRIVILEGES, N_INITIAL_VOICE_BOOTSTRAP, VOICE_ACCUM_FACE_WITNESS_MIN_CONF, VOICE_ACCUM_FACE_WITNESS_MAX_AGE_SEC, VOICE_ACCUM_VOICE_SELF_MATCH_MIN, VOICE_ACCUM_MATURE_SAMPLE_COUNT, VOICE_ROUTING_MIDRANGE_SWITCH_MIN, VOICE_ROUTING_FACE_ASSIST_MIN, VOICE_ROUTING_SELF_MATCH_FLOOR, VOICE_ROUTING_SELF_MATCH_OFFSCREEN, VOICE_ROUTING_MIN_UTTERANCE_SECS, VOICE_ROUTING_SHORT_UTT_MISMATCH_ENABLED, VOICE_ROUTING_SHORT_UTT_FLOOR, VOICE_ROUTING_MIN_AUDIO_FOR_SCORE, VOICE_ROUTING_SHORT_UTT_AMBIGUOUS, VOICE_ROUTING_NOISE_FLOOR_SECS, VOICE_ROUTING_STRANGER_FLOOR, VOICE_ROUTING_SINGLE_SEGMENT_MISMATCH_ENABLED, VISION_SHADOW_INTERVAL_SECS, MEMORY_SPARSE_THRESHOLD, SYSTEM_NAME_ASSIGN_PATTERNS, PERSON_NAME_ASSIGN_PATTERNS, IDENTITY_DENIAL_PATTERNS, DISPUTE_AUTO_CLEAR_VOICE_MIN, DISPUTE_AUTO_CLEAR_VOICE_SOLO_MIN, DISPUTE_AUTO_CLEAR_CONSECUTIVE_TURNS, ENROLLMENT_RENAME_GRACE_SECS, ENROLLMENT_RENAME_VOICE_THRESHOLD, ENROLLMENT_RENAME_MAX_TURNS, SCENE_VISITOR_RECENCY_SECS, KAIROS_PREFER_BEST_FRIEND, BATCH_GREETING_ENABLED, BATCH_GREETING_MIN_PEOPLE, BATCH_GREETING_LLM_TIMEOUT_SECS, ROOM_BLOCK_ENABLED, ROOM_BLOCK_TURN_CAP, SHARED_CONTEXT_BLOCK_ENABLED, SHARED_CONTEXT_BLOCK_TURN_CAP, ROUTING_USE_RECONCILER, STRANGER_IDENTITY_BLOCK_MIN_TURNS, SCENE_BLOCK_CACHE_ENABLED, SCENE_BLOCK_CACHE_MAX_ENTRIES, SHADOW_CHANNEL_LOGGING_ENABLED
 import core.config as config
 from core         import voice as voice_mod
 from core.audio   import record_until_silence, transcribe, speak, speak_stream, listen_and_transcribe, preload_models, stop_audio, play_filler, set_lip_active
@@ -417,6 +417,30 @@ def _name_heard_in(text: str, system_name: str) -> tuple[bool, str]:
             if jellyfish.metaphone(word) == target_code:
                 return True, "phonetic"
     return False, ""
+
+
+def _voice_first_should_engage_stranger(
+    voice_id_result, face_available: bool, ambient_text: str, system_name: str
+) -> bool:
+    """Canary #4 Q2 — pure decision for the camera-off voice-first path: must the stranger
+    engagement gate open a voice-only stranger?
+
+    Returns False when a known speaker was established — by voice (`voice_id_result` truthy,
+    a known session opened) OR by camera-fallback face (`face_available`) — because that
+    session is opened and the gate is skipped. Returns True ONLY when NO known identity was
+    established AND the user addressed the system by name (the genuine voice-only-stranger
+    engagement signal).
+
+    Mechanical extraction (P0.8) of the boolean inlined in `run()`'s voice-first block — the
+    camera-fallback face recognition + the actual `_open_session` calls stay in `run()`; this
+    is the testable decision only (GT-A/GT-B). No behavior change: it is equivalent to the
+    `not _session_store.peek_all_snapshots()` guard at the stranger-open site, because (post
+    Canary #4 B1) the only sessions opened by then are the known-voice or known-face ones."""
+    if voice_id_result:            # voice ID established a known speaker → session opened
+        return False
+    if face_available:             # camera fallback recognized a known face → session opened
+        return False
+    return bool(_name_heard_in(ambient_text, system_name)[0])
 
 
 # Optional YOLO object detection — spatial memory disabled if ultralytics missing
@@ -631,6 +655,17 @@ def _is_enrollment_mishear_candidate(
     # WALLCLOCK: session.started_at is stored as wall-clock at open_session
     # (_open_session sets now=time.time()); the age check must use the same clock.
     if started_at <= 0 or time.time() - started_at > ENROLLMENT_RENAME_GRACE_SECS:
+        return False
+    # Canary #3 (2026-05-30 Jagan→Lexi): B1 — an established multi-turn conversation is
+    # PAST the enrollment moment. A genuine mishear-correction happens in the first few
+    # turns while the name is fresh; by canary turn 55 the name had been used 50+ times
+    # uncorrected. Turn-count is the principled "is this still enrollment?" signal —
+    # vision is non-discriminative (both a genuine turn-1 mishear AND the canary had the
+    # face on camera; the real speaker was voice-only / never on camera). Once Part A
+    # fills the gallery, voice_n>=5 independently blocks this too — B1 covers the
+    # pre-gallery window. Q4: turn-count alone, no vision signal.
+    _user_turns = int(getattr(session, "user_turns", 0) or 0)
+    if _user_turns > ENROLLMENT_RENAME_MAX_TURNS:
         return False
     if db is None:
         # No DB means we can't verify voice count — fail to the safer
@@ -1021,6 +1056,24 @@ _brain_orchestrator:    "BrainOrchestrator | None" = None  # set in run() after 
 _anti_spoof_checker:    "AntiSpoofChecker | None"  = None  # set in run(); None when ANTISPOOFING_ENABLED=False
 _query_embedding_store: "CacheStore"               = CacheStore("query_embedding")  # person_id → embedding from previous turn
 _voice_tasks:           "set[asyncio.Task]"         = set() # pending fire-and-forget voice accumulation tasks
+
+
+def _voice_accum_done_callback(task: "asyncio.Task") -> None:
+    """Done-callback for fire-and-forget voice accumulation tasks (Spec 2 Phase A, A3).
+
+    Retrieves + LOGS any exception the task raised — previously a bare
+    `_voice_tasks.discard` swallowed it silently, so an accumulation failure left no
+    trace and the next canary couldn't see why the gallery wasn't filling. Then discards
+    from the pending set. Never re-raises (a background-task failure must not crash the
+    turn) and never silently swallows again (the doctrine standard)."""
+    try:
+        exc = task.exception()
+    except asyncio.CancelledError:
+        _voice_tasks.discard(task)
+        return
+    if exc is not None:
+        print(f"[Voice] accum task error: {type(exc).__name__}: {exc}")
+    _voice_tasks.discard(task)
 _presence_store:        "PresenceStore"             = PresenceStore()  # replaces _persons_in_frame
 _track_store:           "TrackStore"               = TrackStore()     # replaces _unrecognized_tracks/_embeddings/_stranger_track_map/_track_identity
 # P0.S1 MED 5 — per-track anti-spoof rejection log (Store pattern; ratchet cap=0).
@@ -1870,18 +1923,22 @@ def _open_session(
                             pass
             except Exception:
                 pass  # OPTIONAL: cache fallback already seeded above — stale count safe until next session open
-        # P0.7.2-SHIM: canonical-first — populate SessionStore BEFORE legacy dict
-        try:
-            _loop = asyncio.get_running_loop()
-            _loop.create_task(_session_store.open_session(
-                person_id, person_name, person_type, session_type,
-                now=now,
-                bootstrap_credits=_bootstrap,
-                room_session_id=_current_room_session,
-                voice_sample_count=_db_voice_count,
-            ))
-        except RuntimeError:
-            pass  # OPTIONAL: no running loop in test/early-boot context
+        # Canary #4 B1 (2026-05-31): register the session SYNCHRONOUSLY so peek_snapshot /
+        # peek_all_snapshots see it the instant _open_session returns. The old fire-and-forget
+        # create_task left it invisible to the very next voice-first re-check (:7684), which
+        # then ran the stranger engagement gate even after a known speaker was identified —
+        # dropping the turn (no system name) or spawning a phantom visitor (system name).
+        # _sync_open_session is the one blessed sync write (atomic construct-then-insert, no
+        # await — see SessionStore docstring); it needs no running loop, so the old
+        # create_task / get_running_loop / except-RuntimeError dance is gone (the session now
+        # also opens in test/early-boot contexts that previously had no loop to schedule on).
+        _session_store._sync_open_session(
+            person_id, person_name, person_type, session_type,
+            now=now,
+            bootstrap_credits=_bootstrap,
+            room_session_id=_current_room_session,
+            voice_sample_count=_db_voice_count,
+        )
         # Wave 4 Item 18 — fetch core memory at session open so render_session_stable_prefix
         # can inject it into Section 2 without a DB call on every turn.
         _core_mem_value: list = []
@@ -2310,10 +2367,10 @@ def _expire_stale_sessions() -> bool:
         try:
             _loop_exp = asyncio.get_running_loop()
             _loop_exp.create_task(_conversation_store.pop_history(_pid))
-            _loop_exp.create_task(_conversation_store.touch_greeted(_pid, time.time()))
+            _loop_exp.create_task(_conversation_store.touch_greeted(_pid, time.monotonic()))
         except RuntimeError:
             asyncio.run(_conversation_store.pop_history(_pid))  # OPTIONAL: sync fallback
-            asyncio.run(_conversation_store.touch_greeted(_pid, time.time()))  # OPTIONAL: sync fallback
+            asyncio.run(_conversation_store.touch_greeted(_pid, time.monotonic()))  # OPTIONAL: sync fallback
         if _brain_orchestrator:
             _brain_orchestrator.notify_session_end(_pid)
         _close_session(_pid)
@@ -2441,6 +2498,10 @@ async def _accumulate_voice(
             )
         return
 
+    # Spec 2 Phase A (A4): name the chosen accumulation path so the next canary's log
+    # shows which path filled (or failed to fill) the gallery. (Refused is logged above.)
+    print(f"[Voice] accum path for {person_id}: {path}")
+
     v_pid, v_score, _ = await voice_mod.identify(
         audio, _voice_gallery_store.peek_all_gallery(), VOICE_RECOGNITION_THRESHOLD
     )
@@ -2455,6 +2516,11 @@ async def _accumulate_voice(
     elif path in ("face_witness", "bootstrap"):
         source = "voice_face_verified"
     else:
+        # Spec 2 Phase A (A2): stop failing silently — log the Path-B weak-self-match skip.
+        print(
+            f"[Voice] accum skip {person_id}: Path-B self-match weak "
+            f"(v_pid={v_pid!r}, v_score={v_score:.3f} < {min_self_match}, path={path})"
+        )
         return  # Path B said OK but self-match weak — skip this sample
 
     # P0.S7.5.2 D3 — minimum-utterance-duration gate. ECAPA-TDNN embeddings
@@ -2474,6 +2540,8 @@ async def _accumulate_voice(
 
     emb = await voice_mod.embed(audio)
     if emb is None:
+        # Spec 2 Phase A (A1): stop failing silently — log the embed-failure skip.
+        print(f"[Voice] accum skip {person_id}: embed returned None")
         return
     added = await loop.run_in_executor(
         None, db.add_voice_embedding, person_id, emb, source, v_score
@@ -2591,7 +2659,13 @@ async def _vision_watchdog_loop() -> None:
     from core.config import VISION_WATCHDOG_INTERVAL_SECS, VISION_WATCHDOG_STALE_THRESHOLD_SECS
     while True:
         await asyncio.sleep(VISION_WATCHDOG_INTERVAL_SECS)
-        _now = time.time()
+        # Canary #2 / latency D1: staleness is pure elapsed-duration math against the
+        # heartbeat written at :2845 via set_vision_heartbeat(time.monotonic()). MUST be
+        # monotonic — was time.time(), which subtracted a wall-clock now (~1.78e9) from a
+        # monotonic heartbeat (~10²) → staleness ≈ 1.78e9 ≫ threshold on every poll →
+        # the watchdog cancelled+respawned the vision task every 5s for the whole session
+        # (GPU thrash). No cross-process/persisted reason for this `now` to be wall-clock.
+        _now = time.monotonic()
         _heartbeat_at = _pipeline_state_store.peek_vision_heartbeat_at()
         _staleness = _now - _heartbeat_at
         if _staleness < VISION_WATCHDOG_STALE_THRESHOLD_SECS:
@@ -3176,7 +3250,8 @@ async def _background_vision_loop(
                         if s.source == "face" and _bv_scan_now - s.last_seen < SCENE_STALE_SECS
                     }
                     _new_visible = set(_shadow_state.visible_pids)
-                    if _prod_visible != _new_visible:
+                    # D6: comparison still runs (rollout data); only the print is gated.
+                    if _prod_visible != _new_visible and SHADOW_CHANNEL_LOGGING_ENABLED:
                         _diff_added = _new_visible - _prod_visible
                         _diff_dropped = _prod_visible - _new_visible
                         print(
@@ -3365,7 +3440,7 @@ async def _kairos_tick(person_id: str, person_name: str, db: "FaceDB", memory_se
     if not _brain_orchestrator:
         return False
 
-    now = time.time()
+    now = time.monotonic()  # Canary #2 clock spec #4 — KAIROS elapsed-math (cooldown + silence)
     # P0.S7.3 — silence baseline = max(last_user_speech_at, _tts_end_time).
     # Bug pre-fix: `_silence_elapsed` accumulated from BEFORE the brain
     # started speaking, so a long TTS response (3+ min) made KAIROS fire
@@ -3373,7 +3448,9 @@ async def _kairos_tick(person_id: str, person_name: str, db: "FaceDB", memory_se
     # user utterance" and "last brain-TTS end" gives the user real silence
     # time after each brain response before KAIROS re-engages.
     import core.audio as _audio_mod
-    _last_tts_end = float(getattr(_audio_mod, "_tts_end_time", 0.0))
+    # Canary #2 clock spec #4: read the MONOTONIC companion (the wall-clock `_tts_end_time`
+    # is for the echo window). max() with monotonic last_user_speech_at compares like-for-like.
+    _last_tts_end = float(getattr(_audio_mod, "_tts_end_time_monotonic", 0.0))
     _last_user = _pipeline_state_store.peek_last_user_speech_at()
     _silence_baseline = max(_last_user, _last_tts_end)
     _silence_elapsed  = now - _silence_baseline
@@ -6071,7 +6148,7 @@ async def conversation_turn(
         except Exception as e:
             print(f"[Brain] Together.ai stream failed: {e}")
             print(f"[Cloud] State: ONLINE → SICK ({type(e).__name__})")
-            _ct_failed_at = time.time()
+            _ct_failed_at = time.monotonic()
             asyncio.create_task(_pipeline_state_store.transition_to_sick(_ct_failed_at))
             _cmt2 = _pipeline_state_store.peek_cloud_monitor_task()
             if _cmt2 is None or _cmt2.done():
@@ -6604,6 +6681,61 @@ async def _warmup_models(loop: asyncio.AbstractEventLoop) -> None:
     print(f"[Warmup] complete — {time.time() - overall_t0:.2f}s total")
 
 
+async def _warm_heavy_worker_pools() -> None:
+    """Canary #2 / latency D2 — force the lazy model-load in each heavy-worker
+    subprocess at boot so the user's FIRST turn pays no cold-start cost.
+
+    `get_or_create_pool` (and run_heavy's internal pool-resolve) only SPAWNS the
+    subprocess; each model loads lazily on the FIRST real `run_heavy` call. Without
+    this warm, the canary's first STT was ~20s (cold Whisper subprocess load) and the
+    first diarize ~23s (cold pyannote). One dummy inference per pool forces the load
+    NOW. Parallelized via `asyncio.gather` so boot cost ≈ the slowest single pool
+    (~pyannote 23s), not the sum. Each warm is non-fatal (try/except) — a degraded pool
+    (P0.R9 VRAM refusal → `run_heavy` returns None) must not block boot.
+
+    MUST be awaited BEFORE '[Pipeline] All systems ready' — backgrounding it loses the
+    race against a user who speaks ~3s after boot (the canary #2 failure mode).
+
+    Dummy arg shapes cribbed VERBATIM from the real call sites so each matches its
+    worker signature:
+      adaface_embed     pipeline.py:2916  (crop.tobytes(), crop.shape)                  uint8 HxWx3
+      whisper_transcribe core/audio.py:584 (.tobytes(), .shape, .dtype.name, language=)  float32
+      ecapa_embed       core/voice.py:129  (.tobytes(), .shape, .dtype.name, sample_rate) float32
+      pyannote_diarize  core/voice.py:297  (.tobytes(), .shape, .dtype.name, sample_rate) float32
+    """
+    import core.heavy_worker as hw  # noqa: PLC0415
+    import numpy as np  # noqa: PLC0415
+    from core.config import MIC_SAMPLE_RATE, SPEAKER_LANGUAGES  # noqa: PLC0415
+
+    _crop = np.zeros((112, 112, 3), dtype=np.uint8)   # dummy face crop (AdaFace)
+    _wav1 = np.zeros(16000, dtype=np.float32)          # ~1.0s silence (Whisper)
+    _wav15 = np.zeros(24000, dtype=np.float32)         # ~1.5s silence (ECAPA)
+    _wav2 = np.zeros(32000, dtype=np.float32)          # ~2.0s silence (pyannote)
+
+    async def _warm(label: str, make_coro) -> None:
+        _t0 = time.perf_counter()  # perf_counter (not time.time) — elapsed timing, not a clock value
+        try:
+            await make_coro()
+            print(f"[Warmup] {label} pool warm — {time.perf_counter() - _t0:.1f}s")
+        except Exception as e:
+            print(f"[Warmup] {label} pool warm skipped (non-fatal): {type(e).__name__}: {e!r}")
+
+    print("[Warmup] warming heavy-worker subprocess pools (first-turn cold-start fix)...")
+    await asyncio.gather(
+        _warm("adaface_embed", lambda: hw.run_heavy(
+            "adaface_embed", hw.adaface_embed_worker, _crop.tobytes(), _crop.shape)),
+        _warm("whisper_transcribe", lambda: hw.run_heavy(
+            "whisper_transcribe", hw.whisper_transcribe_worker,
+            _wav1.tobytes(), _wav1.shape, _wav1.dtype.name, language=SPEAKER_LANGUAGES[0])),
+        _warm("ecapa_embed", lambda: hw.run_heavy(
+            "ecapa_embed", hw.ecapa_embed_worker,
+            _wav15.tobytes(), _wav15.shape, _wav15.dtype.name, MIC_SAMPLE_RATE)),
+        _warm("pyannote_diarize", lambda: hw.run_heavy(
+            "pyannote_diarize", hw.pyannote_diarize_worker,
+            _wav2.tobytes(), _wav2.shape, _wav2.dtype.name, MIC_SAMPLE_RATE)),
+    )
+
+
 async def run():
     """Main pipeline loop."""
     global _shutdown_event, _brain_orchestrator, _yolo_frame_counter, \
@@ -6837,6 +6969,28 @@ async def run():
             print(f"[Pipeline] YOLO object detection ready ({VISION_YOLO_MODEL})")
         except Exception as e:
             print(f"[Pipeline] YOLO load failed — spatial memory disabled: {e}")
+
+    # Canary #2 / latency D2 — warm the 4 heavy-worker subprocess pools (force lazy
+    # model-load) BEFORE declaring ready, so the user's first turn is genuinely warm.
+    # Awaited (NOT backgrounded): a backgrounded warm loses the race against a user who
+    # speaks ~3s after boot. Boot takes ~20-25s longer here (parallel cold-loads,
+    # pyannote-dominated) — the intended trade vs a 40s cold-start mid-first-turn.
+    await _warm_heavy_worker_pools()
+
+    # Canary #2 / latency D5a — boot health-check: warn LOUDLY if Ollama is unreachable
+    # so the operator knows the OFFLINE fallback is dead BEFORE the cloud goes SICK (the
+    # canary saw Ollama 500, silently dead-ending _ask_offline_safe + the greeting fallback).
+    # Non-fatal — do not block boot.
+    try:
+        from core.brain import ping_ollama
+        if not await ping_ollama():
+            from core.config import OLLAMA_URL as _OLLAMA_URL, OLLAMA_MODEL as _OLLAMA_MODEL
+            print(
+                f"[Warmup] WARNING — Ollama unreachable at {_OLLAMA_URL}; offline fallback "
+                f"DISABLED. Run 'ollama serve' + 'ollama pull {_OLLAMA_MODEL}'."
+            )
+    except Exception as _ollama_probe_err:
+        print(f"[Warmup] Ollama health-check skipped (non-fatal): {_ollama_probe_err!r}")
 
     print("[Pipeline] All systems ready. Watching...")
     state.write(mode="watching")
@@ -7111,7 +7265,7 @@ async def run():
                     ]
                     if yolo_dets:
                         _latest_yolo_detections = yolo_dets
-                        _yolo_last_ran = time.time()
+                        _yolo_last_ran = time.monotonic()
                         det_summary = ", ".join(
                             f"{d['class']}({d['conf']:.2f})" for d in yolo_dets
                         )
@@ -7241,7 +7395,7 @@ async def run():
                             if not _anti_spoof_ok:
                                 # Fail-closed: skip the write when liveness is unavailable or failed.
                                 # Avoid log spam by throttling with the same cooldown.
-                                await _conversation_store.touch_self_update(person_id, time.time())
+                                await _conversation_store.touch_self_update(person_id, time.monotonic())
                             else:
                                 # P0.S1 D1 — pass the verdict through to the catch-all.
                                 # _anti_spoof_ok is True at this point (the else branch
@@ -7251,7 +7405,7 @@ async def run():
                                     anti_spoof_verdict=_anti_spoof_ok,
                                 )
                                 if added:
-                                    await _conversation_store.touch_self_update(person_id, time.time())
+                                    await _conversation_store.touch_self_update(person_id, time.monotonic())
                                     print(f"[Pipeline] {person_name} gallery updated — new angle stored ({db.embedding_count(person_id)}/{MAX_EMBEDDINGS} face embeddings)")
 
                     # ── Greet known person or returning stranger ──────────────
@@ -7275,7 +7429,7 @@ async def run():
                                 print(f"[Pipeline] Anti-spoof: PASSED {person_name}")
                             else:
                                 print(f"[Pipeline] Anti-spoof: DISABLED {person_name} (no liveness check performed)")
-                            await _conversation_store.touch_greeted(person_id, time.time())
+                            await _conversation_store.touch_greeted(person_id, time.monotonic())
                             # Fetch DB-sourced person_type BEFORE opening the session so it
                             # lands in the dict at creation — closes the race window where
                             # a best_friend could be mis-gated as stranger via the fail-safe
@@ -7461,7 +7615,7 @@ async def run():
                 unknown_key = "unknown"
                 last_sighted = _conversation_store.peek_last_greeted(unknown_key)
                 if time.monotonic() - last_sighted >= GREET_COOLDOWN:
-                    await _conversation_store.touch_greeted(unknown_key, time.time())
+                    await _conversation_store.touch_greeted(unknown_key, time.monotonic())
                     if not db.list_people():
                         # Empty DB — first time anyone has stood in front of this system
                         await first_boot_flow(camera, detector, embedder, db)
@@ -7544,11 +7698,13 @@ async def run():
                     v_pid, v_score, _ = await voice_mod.identify(
                         _ambient_audio, _voice_gallery_store.peek_all_gallery(), VOICE_RECOGNITION_THRESHOLD
                     )
+                    _voice_known_opened = False  # Canary #4: did voice ID open a known session?
                     if v_pid:
                         row = db.get_person(v_pid)
                         if row:
                             _v_pt = db.get_person_type(v_pid) or "known"
                             _open_session(v_pid, row["name"], "voice", person_type=_v_pt, voice_confidence=v_score)
+                            _voice_known_opened = True
                             print(f"[Voice] Identified {row['name']} by voice (score={v_score:.3f})")
                             await _conversation_store.ensure_history_loaded(v_pid, lambda: db.load_conversation_history(v_pid))
                     # #15 invariant: session-opening authority comes from (a) a known-voice
@@ -7562,6 +7718,7 @@ async def run():
                             _ambient_text = ""  # first_boot handled it
                         elif _name_heard_in(_ambient_text, _pipeline_state_store.peek_active_system_name())[0]:
                             # Gate PASSED — use camera to attach face identity if available.
+                            _best_pid = None  # Canary #4: camera-fallback known-face result (None if no face / no fresh frame)
                             cam_f = _vision_frame_store.peek_frame_if_fresh(0.5, time.monotonic())
                             if cam_f is not None:
                                 _best_pid, _best_pname, _best_conf = None, None, 0.0
@@ -7601,7 +7758,10 @@ async def run():
                                     _best_pt = db.get_person_type(_best_pid) or "known"
                                     _open_session(_best_pid, _best_pname, "voice", person_type=_best_pt)
                                     await _conversation_store.ensure_history_loaded(_best_pid, lambda: db.load_conversation_history(_best_pid))
-                            if not _session_store.peek_all_snapshots():
+                            if _voice_first_should_engage_stranger(
+                                _voice_known_opened, _best_pid is not None,
+                                _ambient_text, _pipeline_state_store.peek_active_system_name(),
+                            ):
                                 # No face visible or face unrecognized — voice-only stranger
                                 _sid = db.add_stranger("visitor")
                                 # Session 90 Bug 1 Fix A: this branch OPENS a stranger
@@ -7644,7 +7804,7 @@ async def run():
                 if not _per_person_agent_store.is_session_started(_primary_pid_conv):
                     db.update_last_seen(_primary_pid_conv)
                     await _per_person_agent_store.add_session_started(_primary_pid_conv)
-                    await _conversation_store.touch_greeted(_primary_pid_conv, time.time())  # prevent face-recog re-greet
+                    await _conversation_store.touch_greeted(_primary_pid_conv, time.monotonic())  # prevent face-recog re-greet
                     _pp_snap = _session_store.peek_snapshot(_primary_pid_conv)
                     _ppname = _pp_snap.person_name if _pp_snap is not None else _primary_pid_conv
                     print(f"[Pipeline] Conversation started for {_ppname} (voice/camera-fallback path)")
@@ -8041,7 +8201,8 @@ async def run():
                         )
                         _vc_pid_diff = _vc_claim.pid != _v_pid
                         _vc_conf_diff = abs(float(_vc_claim.confidence) - float(_v_score)) > 0.05
-                        if _vc_pid_diff or _vc_conf_diff:
+                        # D6: comparison still runs; only the divergence print is gated.
+                        if (_vc_pid_diff or _vc_conf_diff) and SHADOW_CHANNEL_LOGGING_ENABLED:
                             print(
                                 f"[VoiceChannel-Shadow] {_now_log_ts()} divergence: "
                                 f"new=(pid={_vc_claim.pid!r}, conf={_vc_claim.confidence:.3f}, "
@@ -8113,7 +8274,10 @@ async def run():
                         # / `_rc_reconcile`.
                         from core.reconciler import EXPECTED_RULES_BY_BAND
                         _expected = EXPECTED_RULES_BY_BAND.get(_band, ())
-                        if _band in _watch_bands and _rule_fired not in _expected:
+                        # D6: reconcile() comparison already ran above; this gates only the
+                        # divergence-logging diagnostic (computation + print).
+                        if (_band in _watch_bands and _rule_fired not in _expected
+                                and SHADOW_CHANNEL_LOGGING_ENABLED):
                             try:
                                 _face_seens = [
                                     s.last_seen
@@ -8429,7 +8593,8 @@ async def run():
                         _t = asyncio.create_task(
                             _accumulate_voice(_cur_pid, audio_buf, db, face_verified=_face_vis_acc)
                         )
-                        _voice_tasks.add(_t); _t.add_done_callback(_voice_tasks.discard)
+                        # Spec 2 Phase A (A3): log task exceptions instead of swallowing them.
+                        _voice_tasks.add(_t); _t.add_done_callback(_voice_accum_done_callback)
 
                     # Build live sensor state — vision + voice together give brain
                     # the complete picture: what it SEES and who it HEARS, every turn.
@@ -8634,7 +8799,8 @@ async def run():
                                         except RuntimeError:
                                             pass  # OPTIONAL
                                         _t = asyncio.create_task(_accumulate_voice(_cur_pid, audio_buf, db, face_verified=False))
-                                    _voice_tasks.add(_t); _t.add_done_callback(_voice_tasks.discard)
+                                    # Spec 2 Phase A (A3): sibling _accumulate_voice task — log exceptions, don't swallow.
+                                    _voice_tasks.add(_t); _t.add_done_callback(_voice_accum_done_callback)
                             # Fall through to conversation_turn() with original text.
                             # LLM responds naturally to whatever they said (which included the name).
                         else:

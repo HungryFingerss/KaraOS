@@ -154,17 +154,36 @@ class TestSessionStoreMethods:
 class TestSyncMutatorInvariant:
 
     def test_session_store_no_sync_mutators(self):
-        """All SessionStore methods must be async, except __init__ and peek_snapshot.
+        """All SessionStore methods must be async, except __init__, the sync reads, and
+        the blessed sync open path (Canary #4).
 
         peek_snapshot is sync-safe because:
         1. Single-threaded asyncio (no real thread parallelism)
-        2. No sync mutators (all mutations go through async methods + lock)
+        2. No sync mutator leaves the dict in a half-state observable by a concurrent peek.
+           (Narrowed from "no sync mutators at all" to the precise-necessary form by
+           Canary #4 — see the _sync_open_session allowlist justification below.)
         3. Returned SessionSnapshot is frozen + slots
         """
+        # Canary #4 (2026-05-31): the first blessed SYNC writes on SessionStore.
+        #   _sync_open_session — the one sync session-open (pipeline._open_session calls it
+        #     directly so the session is visible the instant it returns, closing the
+        #     voice-first peek-after-open race that dropped turns / spawned phantom visitors).
+        #   _build_and_insert — the shared construct-and-insert body that BOTH the async
+        #     open_session (under self._lock) and _sync_open_session delegate to (so the two
+        #     open paths cannot diverge).
+        # SAFE under the precise-necessary invariant: single-threaded asyncio + atomic
+        # construct-then-insert (build the full Session, THEN self._sessions[pid] = s) with
+        # NO await → a concurrent peek_snapshot sees the old state (no pid) or the
+        # fully-built new state, never a half-write. This narrows condition 2 from the
+        # conservative-sufficient "no sync mutators at all" to the precise-necessary "no sync
+        # write that yields or leaves a half-state"; peek_snapshot's safety is preserved.
+        # Mirrors the _sync_mint_room precedent on PipelineStateStore (which opens room state
+        # synchronously "without waiting for a create_task to drain").
         SYNC_METHOD_ALLOWLIST = frozenset({
             "__init__", "__repr__", "__eq__", "__str__",
             "__hash__", "__del__",
             "peek_snapshot", "peek_all_snapshots",
+            "_sync_open_session", "_build_and_insert",
         })
         tree = _parse_session_state_ast()
         store_node = _find_class_node(tree, "SessionStore")

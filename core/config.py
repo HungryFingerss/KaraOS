@@ -932,6 +932,13 @@ VOICE_ROUTING_SINGLE_SEGMENT_MISMATCH_ENABLED = True
 # sample once per N seconds instead of every scan iteration.
 VISION_SHADOW_INTERVAL_SECS  = 5.0
 
+# Canary #2 / latency D6 — gate the three Phase-2 shadow-channel divergence PRINTS
+# (VisionChannel-Shadow / VoiceChannel-Shadow / Reconciler-Shadow). The shadow
+# COMPARISONS still run (they feed the rollout-validation data); only their per-turn
+# log spam is gated. Default False for canary log cleanliness; flip True during active
+# Phase-2 shadow-rollout review.
+SHADOW_CHANNEL_LOGGING_ENABLED = False
+
 # Phase 5 (Session 119) — continuous evaluation infrastructure.
 # Pure observability — none of these flags affect production behavior.
 #   SHADOW_SAMPLE_RATE             — 1% of production classifier calls
@@ -1391,6 +1398,14 @@ ENROLLMENT_RENAME_GRACE_SECS       = 600   # 10 min — long enough for a real u
 ENROLLMENT_RENAME_VOICE_THRESHOLD  = 5     # matches N_INITIAL_VOICE: below this, the system
                                             # hasn't accumulated enough voice data to
                                             # independently corroborate the stored name.
+# Canary #3 (2026-05-30): the enrollment-mishear escape hatch renamed a 55-turn
+# best_friend (Jagan→Lexi) because age<10min AND voice_n=0 were both incidentally true —
+# voice_n=0 only because the ECAPA subprocess embed was broken. A genuine mishear
+# correction happens in the FIRST FEW TURNS while the name is fresh; an established
+# conversation is past the enrollment moment. This caps the escape hatch to the early
+# turns. Q3 lock: 3 (asymmetric — too-tight fails safe to the dispute-flip path; once the
+# embed fix fills the gallery, voice_n>=5 overlaps this as a second independent layer).
+ENROLLMENT_RENAME_MAX_TURNS        = 3
 DREAM_PRUNE_FLOOR          = 0.15   # effective confidence below this → fact invalidated
 DREAM_DECAY_WRITE_THRESHOLD = 0.005 # minimum decay delta to bother writing back
 

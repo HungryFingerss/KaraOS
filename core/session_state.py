@@ -151,11 +151,20 @@ def _to_snapshot(s: Session) -> SessionSnapshot:
 
 
 class SessionStore:
-    """Single owner of all active sessions. All mutations are async.
+    """Single owner of all active sessions. Mutations are async (lock-protected), with
+    ONE blessed sync write — `_sync_open_session` (Canary #4, 2026-05-31).
 
     peek_snapshot() is the ONLY sync read method — safe under:
     1. Single-threaded asyncio (no real thread parallelism).
-    2. No sync mutators (all mutations protected by self._lock via async methods).
+    2. No sync mutator leaves the dict in a half-state observable by a concurrent peek.
+       `_sync_open_session` is the one blessed sync write: it does an atomic
+       construct-then-insert (build the full Session, THEN `self._sessions[pid] = s`) with
+       NO await — so a concurrent peek sees either the old state (no pid) or the fully-built
+       new state, never a half-written one. (Narrowed from the prior conservative-sufficient
+       "no sync mutators at all" to the precise-necessary "no sync write that yields or
+       leaves a half-state"; peek_snapshot's safety is preserved. Mirrors the
+       `_sync_mint_room` precedent on PipelineStateStore.) Every OTHER mutation stays async
+       via self._lock.
     3. Returned SessionSnapshot is frozen + slots (safe to hold across await).
     """
 
@@ -179,25 +188,60 @@ class SessionStore:
             return _to_snapshot(s) if s is not None else None
 
     # --- Lifecycle ---
+    def _build_and_insert(self, person_id: str, person_name: str,
+                          person_type: str, session_type: str, *,
+                          now: float, bootstrap_credits: int = 0,
+                          room_session_id: str = "",
+                          voice_sample_count: int = 0) -> None:
+        """C2 (Canary #4) — the ONE shared construct-and-insert body, so the async
+        `open_session` and the sync `_sync_open_session` cannot diverge. Has NO internal
+        await, so it is atomic once entered (under the lock, or directly from the sync
+        path). The dict insert is the LAST step, on a fully-built Session — a concurrent
+        peek_snapshot never observes a half-state."""
+        s = Session(
+            person_id=person_id, person_name=person_name,
+            person_type=person_type, session_type=session_type,
+            started_at=now, last_face_seen=now, last_spoke_at=now,
+        )
+        # P0.B1 D1: VoiceEvidence is frozen — rebind via dataclasses.replace().
+        s.evidence = dataclasses.replace(
+            s.evidence,
+            bootstrap_credits=bootstrap_credits,
+            voice_sample_count=voice_sample_count,
+        )
+        s.room_session_id = room_session_id
+        self._sessions[person_id] = s
+
     async def open_session(self, person_id: str, person_name: str,
                            person_type: str, session_type: str, *,
                            now: float, bootstrap_credits: int = 0,
                            room_session_id: str = "",
                            voice_sample_count: int = 0) -> None:
         async with self._lock:
-            s = Session(
-                person_id=person_id, person_name=person_name,
-                person_type=person_type, session_type=session_type,
-                started_at=now, last_face_seen=now, last_spoke_at=now,
+            self._build_and_insert(
+                person_id, person_name, person_type, session_type,
+                now=now, bootstrap_credits=bootstrap_credits,
+                room_session_id=room_session_id, voice_sample_count=voice_sample_count,
             )
-            # P0.B1 D1: VoiceEvidence is frozen — rebind via dataclasses.replace().
-            s.evidence = dataclasses.replace(
-                s.evidence,
-                bootstrap_credits=bootstrap_credits,
-                voice_sample_count=voice_sample_count,
-            )
-            s.room_session_id = room_session_id
-            self._sessions[person_id] = s
+
+    def _sync_open_session(self, person_id: str, person_name: str,
+                           person_type: str, session_type: str, *,
+                           now: float, bootstrap_credits: int = 0,
+                           room_session_id: str = "",
+                           voice_sample_count: int = 0) -> None:
+        """C1 (Canary #4) — the ONE blessed SYNC session write. Purely sync: NO `await`,
+        NO `async with self._lock`. Safe by atomic construct-then-insert under
+        single-threaded asyncio (delegates to `_build_and_insert`, which has no internal
+        await + inserts last on a fully-built Session) — a concurrent peek_snapshot sees
+        the old state or the fully-built new state, never a half-write. Used by
+        `pipeline._open_session` so the session is visible the instant it returns, closing
+        the voice-first peek-after-open race. See the SYNC_METHOD_ALLOWLIST justification
+        + the `_sync_mint_room` precedent on PipelineStateStore."""
+        self._build_and_insert(
+            person_id, person_name, person_type, session_type,
+            now=now, bootstrap_credits=bootstrap_credits,
+            room_session_id=room_session_id, voice_sample_count=voice_sample_count,
+        )
 
     async def close_session(self, pid: str) -> None:
         async with self._lock:

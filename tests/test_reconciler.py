@@ -358,9 +358,13 @@ def test_p5_no_session_returns_no_action():
     from core.vision_channel import PresenceState
     from core.reconciler_state import SessionState
 
+    # NARROWED at Spec 1 D2 (2026-05-30): utterance_duration sub-MIN_AUDIO (was 1.5s).
+    # Post-D2 a REAL-LENGTH no_signal no-session turn opens a gated stranger; the
+    # "truly empty, nothing to do" turn this test asserts is now the sub-0.5s case
+    # (new_stranger's utt>=0.5 OR clause stays False, so it falls to no_action).
     claim = IdentityClaim(
         pid=None, confidence=0.0, n_diarize_segments=1,
-        utterance_duration=1.5, reasoning="test",
+        utterance_duration=0.3, reasoning="test",
         confidence_is_no_signal=True,
     )
     presence = PresenceState(visible_pids=(), unrecognized_track_ids=())
@@ -1350,9 +1354,14 @@ def test_cascade_walks_all_22_rules_only_rule_21_matches_empty_state():
     from core.vision_channel import PresenceState
     from core.reconciler_state import RoutingDecision, SessionState
 
+    # NARROWED at Spec 1 D2 (2026-05-30): utterance_duration sub-MIN_AUDIO (was 1.5s).
+    # The canonical "empty / nothing-to-do" turn that must match ONLY _p5_no_session_no_action
+    # is now sub-0.5s — post-D2 a real-length (utt>=0.5) no_signal no-session turn legitimately
+    # ALSO matches _p5_no_session_new_stranger (the Lexi fix), which is correct, not a
+    # false-positive. Sub-0.5s keeps new_stranger's OR clauses all False so only no_action matches.
     claim = IdentityClaim(
         pid=None, confidence=0.0, n_diarize_segments=1,
-        utterance_duration=1.5, reasoning="empty",
+        utterance_duration=0.3, reasoning="empty",
         confidence_is_no_signal=True,
     )
     presence = PresenceState(visible_pids=(), unrecognized_track_ids=())
@@ -1513,3 +1522,69 @@ def test_b6_d4_cascade_membership_covered():
         "<rule_name>.__name__` assertion in some test body. Future rule additions "
         "to _CASCADE without test coverage fail CI at PR review time."
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Spec 1 D1 — no_signal short utterance ABSTAINS from the P0 drop rules
+# (canary 2026-05-30: empty voice gallery -> identify() returns no_signal every
+#  turn -> the P0 short-utterance drop rules treated abstention as a mismatch
+#  and dropped turns vision could route. Same shape as Session 119.)
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_spec1_d1_no_signal_short_utterance_holds_current():
+    """D1: a no_signal short_hard utterance (0.7s, empty gallery -> no_signal) with a
+    holder ALONE must HOLD current, not drop. Pre-D1 the P0 hard-mismatch rule read the
+    forced-0.0 no_signal score as a sub-floor mismatch and dropped (the 'Travel anywhere
+    for free.' canary turn). Post-D1 it abstains -> _p4_voice_ambiguous_no_candidates."""
+    from core.voice_channel import IdentityClaim
+    from core.vision_channel import PresenceState
+    from core.reconciler_state import SessionState
+
+    claim = IdentityClaim(
+        pid=None, confidence=0.0, n_diarize_segments=1,
+        utterance_duration=0.7, reasoning="test", confidence_is_no_signal=True,
+    )
+    presence = PresenceState(
+        visible_pids=("jagan_abc",),  # only cur_pid; no other candidate
+        unrecognized_track_ids=(),
+    )
+    session = SessionState(
+        cur_pid="jagan_abc", cur_person_type="best_friend", n_active_sessions=1,
+        voice_gallery_sizes={"jagan_abc": 20}, cur_holder_voice_n=20, now=0.0,
+    )
+    decision = reconcile(claim, presence, session)
+    assert decision.action == "current", (
+        f"D1: no_signal short utterance with holder alone must hold current, got "
+        f"{decision.action!r} from {decision.rule_fired!r}"
+    )
+    assert decision.rule_fired == _p4_voice_ambiguous_no_candidates.__name__
+    assert decision.pid == "jagan_abc"
+
+
+def test_spec1_d1_no_signal_short_utterance_multi_candidate_returns_ambiguous():
+    """D1 boundary: same no_signal short utterance but with a SECOND candidate in scene
+    must return ambiguous (drop) - D1 did NOT over-relax. A genuinely-ambiguous
+    multi-person short no_signal turn still drops, via _p4_voice_ambiguous_with_candidates."""
+    from core.voice_channel import IdentityClaim
+    from core.vision_channel import PresenceState
+    from core.reconciler_state import SessionState
+
+    claim = IdentityClaim(
+        pid=None, confidence=0.0, n_diarize_segments=1,
+        utterance_duration=0.7, reasoning="test", confidence_is_no_signal=True,
+    )
+    presence = PresenceState(
+        visible_pids=("jagan_abc",),
+        unrecognized_track_ids=(42,),  # a second candidate -> scene genuinely ambiguous
+    )
+    session = SessionState(
+        cur_pid="jagan_abc", cur_person_type="best_friend", n_active_sessions=1,
+        voice_gallery_sizes={"jagan_abc": 20}, cur_holder_voice_n=20, now=0.0,
+    )
+    decision = reconcile(claim, presence, session)
+    assert decision.action == "ambiguous", (
+        f"D1 boundary: no_signal short utterance with a second candidate must be "
+        f"ambiguous, got {decision.action!r} from {decision.rule_fired!r}"
+    )
+    assert decision.rule_fired == _p4_voice_ambiguous_with_candidates.__name__
