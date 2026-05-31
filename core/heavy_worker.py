@@ -684,7 +684,11 @@ def pyannote_diarize_worker(
         waveform = waveform.to(torch.device("cuda"))
     try:
         annotation = pipeline({"waveform": waveform, "sample_rate": sample_rate})
-    except Exception:
+    except Exception as e:
+        # #123 D3: LOG the subprocess inference failure — the Canary-#3-class silent-None
+        # that hid the embed bug. Main process still falls through to _diarize_ecapa_valley
+        # (DIARIZATION_FALLBACK_ON_ERROR), but the operator now sees WHY pyannote degraded.
+        print(f"[Diarize] pyannote subprocess failed: {e!r}")
         return None
     # Q2 (a) lock: serialize Annotation → list[tuple] subprocess-side.
     result: "list[tuple[float, float, str]]" = []

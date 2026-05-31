@@ -673,7 +673,13 @@ def _is_enrollment_mishear_candidate(
         return False
     try:
         voice_n = db.voice_embedding_count(person_id)
-    except Exception:
+    except Exception as _e:
+        # #123 D3: LOG the fail-closed decision. voice_embedding_count failed → fail closed
+        # to the dispute path (return False). This guards BOTH the Jagan→Lexi mishear-rename
+        # corruption AND a persistently-broken gate silently never working — the log surfaces
+        # the latter, which a bare `return False` would hide.
+        print(f"[Enroll] voice_embedding_count failed for {person_id!r}: {_e!r} "
+              f"— failing closed to dispute path")
         return False
     return voice_n < ENROLLMENT_RENAME_VOICE_THRESHOLD
 

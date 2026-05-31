@@ -58,47 +58,52 @@ _INDIRECT_BOUNDARIES_ALLOWLIST: dict[tuple[str, int], str] = {
     # shifted lines 521+ by +8; D1 (ASSERTION-DOMAIN RULE in classifier prompt)
     # shifted lines 843+ by additional +21 (cumulative +29 for lines after 843).
     # All entries below updated to post-P0.S10 line numbers.
+    # #123 LINE-REF-DRIFT refresh (2026-05-31): the two ping `# OPTIONAL:` annotations
+    # shifted brain.py lines after :543 by +6 (533 stays — it sits above the first ping);
+    # the brain_agent.py triage (:296 jellyfish +2, :2906 _safe_loads +3, :3872 Kuzu LOG +5)
+    # shifted :462 by +2 and all sites after :3872 by +10. Line keys refreshed via the
+    # detector RUN's reported current linenos; all entries remain legitimately indirect.
     ("core/brain.py", 533):
-        "ping_together health check — 'hi' literal, no user_text (line shifted +8 from 521 at P0.S10 D2)",
-    ("core/brain.py", 731):
-        "describe_frame vision — system-constructed describe-instruction; no user_text path (line shifted +8 from 719 at P0.S10 D2)",
-    ("core/brain.py", 1116):
+        "ping_together health check — 'hi' literal, no user_text (unchanged: above the #123 ping annotation)",
+    ("core/brain.py", 755):
+        "describe_frame vision — system-constructed describe-instruction; no user_text path (+6 #123)",
+    ("core/brain.py", 1140):
         "_classify_intent _user_prompt — UPSTREAM-WRAPPED via "
         "wrap_user_input(_snip); messages-list line consumes composite "
-        "(system context + history + wrapped user content) per Plan v2 P4 (line shifted +29 from 1083 at P0.S10 D1+D2)",
-    ("core/brain.py", 1971):
-        "autocompact_history Together — history-injection deferred to P0.S5.X per Plan v3 §2 (line shifted +29 from 1938 at P0.S10 D1+D2)",
-    ("core/brain.py", 1991):
-        "autocompact_history Ollama retry — same as line 1967 (line shifted +29 from 1958 at P0.S10 D1+D2)",
-    ("core/brain.py", 2005):
+        "(system context + history + wrapped user content) per Plan v2 P4 (+6 #123)",
+    ("core/brain.py", 1995):
+        "autocompact_history Together — history-injection deferred to P0.S5.X per Plan v3 §2 (+6 #123)",
+    ("core/brain.py", 2015):
+        "autocompact_history Ollama retry — same as the Together path (+6 #123)",
+    ("core/brain.py", 2029):
         "autocompact synthetic-summary — system-constructed compacted prompt "
-        "wrapping LLM-generated summary; history-derived deferred to P0.S5.X (line shifted +29 from 1972 at P0.S10 D1+D2)",
-    ("core/brain.py", 2046):
+        "wrapping LLM-generated summary; history-derived deferred to P0.S5.X (+6 #123)",
+    ("core/brain.py", 2070):
         "_build_context user_msg — UPSTREAM-WRAPPED via "
         "wrap_user_input(message.strip()); web-context augmentation "
-        "concatenates AROUND the wrapped user_msg so wrap survives (line shifted +29 from 2013 at P0.S10 D1+D2)",
-    ("core/brain.py", 3023):
+        "concatenates AROUND the wrapped user_msg so wrap survives (+6 #123)",
+    ("core/brain.py", 3047):
         "web-search re-injection — concatenates web_context with "
-        "already-wrapped user_msg from upstream (line shifted +29 from 2990 at P0.S10 D1+D2)",
-    ("core/brain.py", 3220):
-        "greeting generation Together — system-constructed greeting prompt (line shifted +29 from 3187 at P0.S10 D1+D2)",
+        "already-wrapped user_msg from upstream (+6 #123)",
     ("core/brain.py", 3244):
-        "greeting generation Ollama — system-constructed (parallel to 3216) (line shifted +29 from 3211 at P0.S10 D1+D2)",
-    ("core/brain.py", 3313):
-        "choose_greeting_order — structured names-list prompt, no raw user-text (line shifted +29 from 3280 at P0.S10 D1+D2)",
+        "greeting generation Together — system-constructed greeting prompt (+6 #123)",
+    ("core/brain.py", 3274):
+        "greeting generation Ollama — system-constructed (parallel to Together) (+6 #123)",
+    ("core/brain.py", 3343):
+        "choose_greeting_order — structured names-list prompt, no raw user-text (+6 #123)",
     # ── core/brain_agent.py (6 entries) ─────────────────────────────────
-    ("core/brain_agent.py", 462):
-        "_ask_privacy_llm — entity/attribute/value triples (already-wrapped upstream extraction)",
-    ("core/brain_agent.py", 4517):
-        "extract_assistant_room_turn — assistant's own prior output, not user-typed (line shifted +6 from 4508 at P0.S9 D2 transaction-wrap)",
-    ("core/brain_agent.py", 5650):
-        "ObjectPatternAgent Together — structured sighting patterns + stats, not raw turns (line shifted +6 from 5641 at P0.S9 D2)",
-    ("core/brain_agent.py", 5673):
-        "ObjectPatternAgent Ollama — parallel to 5647 (line shifted +6 from 5664 at P0.S9 D2)",
-    ("core/brain_agent.py", 5952):
-        "BriefingAgent.generate — structured event-derived prompt (gate-validated names + system templates) (line shifted +6 from 5943 at P0.S9 D2)",
-    ("core/brain_agent.py", 6020):
-        "ConversationInsightAgent — conversation summary, not raw turns (line shifted +6 from 6011 at P0.S9 D2)",
+    ("core/brain_agent.py", 464):
+        "_ask_privacy_llm — entity/attribute/value triples (already-wrapped upstream extraction) (+2 #123)",
+    ("core/brain_agent.py", 4527):
+        "extract_assistant_room_turn — assistant's own prior output, not user-typed (+10 #123)",
+    ("core/brain_agent.py", 5660):
+        "ObjectPatternAgent Together — structured sighting patterns + stats, not raw turns (+10 #123)",
+    ("core/brain_agent.py", 5683):
+        "ObjectPatternAgent Ollama — parallel to Together (+10 #123)",
+    ("core/brain_agent.py", 5962):
+        "BriefingAgent.generate — structured event-derived prompt (gate-validated names + system templates) (+10 #123)",
+    ("core/brain_agent.py", 6030):
+        "ConversationInsightAgent — conversation summary, not raw turns (+10 #123)",
 }
 
 

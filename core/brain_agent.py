@@ -294,6 +294,8 @@ def _is_phantom_name(
     try:
         import jellyfish as _jelly
     except Exception:
+        # OPTIONAL: (#123) jellyfish is an optional phonetic-match dependency — graceful
+        # degradation to "no phonetic candidate" when it isn't installed.
         return None
     cand = candidate.strip()
     if not cand:
@@ -2904,6 +2906,9 @@ class BrainDB:
                 try:
                     return _json_rr.loads(raw) if raw else []
                 except Exception:
+                    # OPTIONAL: (#123 PI-3) parses room_summaries.topic_tags / safety_flags —
+                    # system-serialized JSON we wrote ourselves, NOT external/LLM input, so the
+                    # P0.12 adversarial-input concern does not apply; [] == "no tags/flags".
                     return []
             return {
                 "room_session_id": room_id,
@@ -3869,7 +3874,12 @@ class GraphDB:
                     {"name": name, "now": now, "conf": min_confidence},
                 )
                 rows = result.get_all()
-            except Exception:
+            except Exception as _e:
+                # #123 D3: LOG the graph-read failure. A silent {} degrades cross-person
+                # inference to "no graph knowledge" with no diagnostic (the _kuzu_degraded /
+                # P0.X class). Keep returning {} (callers tolerate it), but surface why.
+                print(f"[Graph] cross-person RELATES_TO read failed for {name!r}: {_e!r} "
+                      f"— degrading to no-graph-knowledge")
                 return {}
             out: dict[str, list[tuple[str, str, str]]] = {}
             for attr, val, etype in rows:

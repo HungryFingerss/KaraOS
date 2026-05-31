@@ -541,6 +541,30 @@ async def ping_together() -> bool:
         )
         return resp.status_code == 200
     except Exception:
+        # OPTIONAL: (#123) ping failure == cloud unreachable. The CloudState SICK/OFFLINE
+        # transition + the boot-health report carry the meaningful signal with their own
+        # logging, so a per-ping log here would be redundant + noisy at the 30s cadence.
+        return False
+
+
+async def ping_ollama() -> bool:
+    """Canary #2 / latency D5a — lightweight check if Ollama is reachable.
+
+    Probes `{OLLAMA_URL}/api/tags` (the cheap model-list endpoint). Used by the boot
+    health-check so the operator knows the OFFLINE fallback is alive *before* the cloud
+    goes SICK — the canary surfaced Ollama returning 500, which silently dead-ends
+    `_ask_offline_safe` (8 call sites) + the greeting Ollama fallback.
+    """
+    try:
+        resp = await asyncio.wait_for(
+            _ollama_http.get(f"{OLLAMA_URL}/api/tags"),
+            timeout=5.0,
+        )
+        return resp.status_code == 200
+    except Exception:
+        # OPTIONAL: (#123) ping failure == Ollama unreachable. The boot-health report +
+        # the CloudState / offline-fallback path carry the meaningful signal with their own
+        # logging, so a per-ping log here would be redundant + noisy at the 30s cadence.
         return False
 
 
@@ -3221,8 +3245,11 @@ async def generate_greeting(
                     ],
                     "max_tokens":  60,
                     "temperature": 0.9,
-                    "tools":       _API_TOOLS,
-                    "tool_choice": "auto",
+                    # Canary #2 / latency D5b: NO "tools"/"tool_choice". A greeting never
+                    # needs a tool — but with tools+auto the 70B could return a tool-call
+                    # instead of content → empty greeting → silent fallthrough to a dead
+                    # Ollama → hardcoded template (the canary symptom). Dropping them
+                    # guarantees the model returns greeting content.
                 },
             )
             resp.raise_for_status()
@@ -3232,6 +3259,9 @@ async def generate_greeting(
             if greeting:
                 print(f"[Brain] Greeting for {person_name} ({tod}, {since}): {greeting}")
                 return greeting
+            # D5b: empty cloud content is a FAILURE, not a silent fallthrough. Log it so a
+            # recurrence is visible (with tools removed this should not happen).
+            print("[Brain] Greeting (cloud) returned empty content — trying Ollama")
         except Exception as e:
             print(f"[Brain] Greeting (cloud) failed ({e}) — trying Ollama")
 
