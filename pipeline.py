@@ -2149,10 +2149,13 @@ def _close_session(person_id: str) -> None:
             _face_db_ref.prune_zero_value_stranger(person_id)
         except Exception as _prune_ex:
             print(f"[Session] zero-value prune failed for {person_id}: {_prune_ex!r}")
-    try:
-        asyncio.get_running_loop().create_task(_session_store.close_session(person_id))
-    except RuntimeError:
-        pass  # OPTIONAL: no running loop in test/early-boot context
+    # Follow-up #129 (C4): the blessed SYNC close — the session is removed the instant this
+    # returns, so the room-end gate below (and the line-2379 full-cleanup in
+    # _expire_stale_sessions) read true post-removal state. Closes the simultaneous-multi-
+    # expiry room-end race (the close-side mirror of Canary #4 B1's sync open). A sync pop
+    # needs no running loop, so no try/except. The async close_session() delegates to this
+    # same method (C2) so the two removal paths cannot diverge.
+    _session_store._sync_close_session(person_id)
     try:
         _loop = asyncio.get_running_loop()
         _loop.create_task(_per_person_agent_store.discard_session_started(person_id))
@@ -2209,9 +2212,12 @@ def _close_session(person_id: str) -> None:
     # the room end + clear the id; 3B will hook room-level insight,
     # relationship update, cross-person safety scan here).
     #
-    # NOTE: check remaining sessions EXCLUDING the person being closed —
-    # close_session() is a create_task (async) so the session may still be
-    # in the store at this point. The room ends when this IS the last person.
+    # NOTE (#129 Q2): close is now SYNCHRONOUS via `_sync_close_session`, so this person's
+    # session is already gone when this gate runs. The `s.person_id != person_id` exclusion
+    # below is retained as belt-and-braces for any future caller that reaches this gate
+    # without sync-removing first. The room ends when this IS the last person: on
+    # simultaneous multi-expiry, the earlier sessions are already removed when the last one
+    # closes → the last close sees an empty remainder and fires room-end exactly once.
     _room_snap = _pipeline_state_store.peek_active_room_session()
     _remaining_sessions = [s for s in _session_store.peek_all_snapshots()
                            if s.person_id != person_id]

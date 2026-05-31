@@ -12655,20 +12655,15 @@ def test_s3b1_room_started_at_lifecycle(tmp_path):
         "second open into same room must inherit existing start time"
     )
 
-    # Close everyone — stamp clears. Canary #4: B1 made _open_session SYNCHRONOUS, so the
-    # sessions are now really in the store. _close_session's session removal is still an
-    # async create_task (Part B unchanged, per spec), so drive the closes in a loop with a
-    # drain between them — mirroring production's inter-turn draining: the earlier close
-    # must drain (a_1 removed) before the last close runs its room-end "is this the last
-    # person?" check, which excludes the closing person but not an already-closed one.
-    # (Pre-B1 this test passed only because the async OPEN also no-op'd in a sync context,
-    # leaving the store trivially empty; B1's real opens exposed the close's drain need.)
-    async def _close_seq():
-        pipeline._close_session("a_1")
-        await asyncio.sleep(0)
-        pipeline._close_session("b_1")
-        await asyncio.sleep(0)
-    asyncio.run(_close_seq())
+    # Close everyone — stamp clears. Follow-up #129: _close_session now removes the session
+    # SYNCHRONOUSLY via _sync_close_session, so back-to-back closes empty the store with no
+    # drain — the last close sees _remaining == [] and fires room-end + _sync_clear_room()
+    # synchronously, clearing the room id + start-time stamp (both sync reads below).
+    # (Canary #4 needed an asyncio.run drain here only because close was still a fire-and-
+    # forget create_task; #129 retired that close-pop scaffolding per spec §7 — the async
+    # _on_room_end synthesis drain is NOT needed here since this test reads only sync state.)
+    pipeline._close_session("a_1")
+    pipeline._close_session("b_1")
     assert pipeline._pipeline_state_store.peek_active_room_session() is None
     assert pipeline._pipeline_state_store.peek_active_room_started_at() is None, (
         "room end must clear start-time stamp alongside the id"
@@ -14780,12 +14775,13 @@ def test_s116_room_lifecycle_logs_participant_join_and_synthesis(monkeypatch):
 
             async def _drive():
                 pipeline._close_session("a_1")
-                # Canary #4: B1's synchronous open means a_1 is really in the store now —
-                # drain its async removal BEFORE b_1's close runs the room-end "is this the
-                # last person?" check (which excludes the closing person, not an
-                # already-closing one). Mirrors production's inter-turn draining.
-                await _aio.sleep(0)
                 pipeline._close_session("b_1")
+                # Follow-up #129 (§7): the inter-close drain retired — _close_session pops the
+                # session synchronously now (_sync_close_session), so a_1 is gone the instant
+                # its close returns and b_1's close sees _remaining == [] → room-end fires.
+                # This trailing drain STAYS: _on_room_end synthesis is fired via create_task
+                # (async by design) and prints "Synthesis dispatched (background)" +
+                # calls synthesize_room — both read below.
                 await _aio.sleep(0)
             _aio.run(_drive())
         out = buf.getvalue()

@@ -164,26 +164,33 @@ class TestSyncMutatorInvariant:
            Canary #4 — see the _sync_open_session allowlist justification below.)
         3. Returned SessionSnapshot is frozen + slots
         """
-        # Canary #4 (2026-05-31): the first blessed SYNC writes on SessionStore.
-        #   _sync_open_session — the one sync session-open (pipeline._open_session calls it
+        # Canary #4 + #129 (2026-05-31): the blessed SYNC writes on SessionStore — the
+        # open/close pair plus their shared insert body.
+        #   _sync_open_session — the sync session-open (pipeline._open_session calls it
         #     directly so the session is visible the instant it returns, closing the
         #     voice-first peek-after-open race that dropped turns / spawned phantom visitors).
         #   _build_and_insert — the shared construct-and-insert body that BOTH the async
         #     open_session (under self._lock) and _sync_open_session delegate to (so the two
         #     open paths cannot diverge).
+        #   _sync_close_session (#129) — the sync session-removal (pipeline._close_session
+        #     calls it directly so the removal is visible the instant it returns, closing the
+        #     simultaneous-multi-expiry room-end race; async close_session delegates to it so
+        #     the two removal paths cannot diverge). The close-side mirror of the open.
         # SAFE under the precise-necessary invariant: single-threaded asyncio + atomic
-        # construct-then-insert (build the full Session, THEN self._sessions[pid] = s) with
-        # NO await → a concurrent peek_snapshot sees the old state (no pid) or the
-        # fully-built new state, never a half-write. This narrows condition 2 from the
-        # conservative-sufficient "no sync mutators at all" to the precise-necessary "no sync
-        # write that yields or leaves a half-state"; peek_snapshot's safety is preserved.
-        # Mirrors the _sync_mint_room precedent on PipelineStateStore (which opens room state
-        # synchronously "without waiting for a create_task to drain").
+        # construct-then-insert on open (build the full Session, THEN self._sessions[pid] = s)
+        # + GIL-atomic self._sessions.pop(pid, None) on close, both with NO await → a
+        # concurrent peek_snapshot sees the old state or the fully-applied new state, never a
+        # half-write. This narrows condition 2 from the conservative-sufficient "no sync
+        # mutators at all" to the precise-necessary "no sync write that yields or leaves a
+        # half-state"; peek_snapshot's safety is preserved. Mirrors the _sync_mint_room
+        # precedent on PipelineStateStore (which opens room state synchronously "without
+        # waiting for a create_task to drain"). INV1: exactly these three sync writers —
+        # _build_and_insert, _sync_open_session, _sync_close_session — no others.
         SYNC_METHOD_ALLOWLIST = frozenset({
             "__init__", "__repr__", "__eq__", "__str__",
             "__hash__", "__del__",
             "peek_snapshot", "peek_all_snapshots",
-            "_sync_open_session", "_build_and_insert",
+            "_sync_open_session", "_build_and_insert", "_sync_close_session",
         })
         tree = _parse_session_state_ast()
         store_node = _find_class_node(tree, "SessionStore")
@@ -196,6 +203,42 @@ class TestSyncMutatorInvariant:
                     f"Either make it async or add it to SYNC_METHOD_ALLOWLIST "
                     f"with a documented justification."
                 )
+
+    def test_close_session_delegates_to_sync_close(self):
+        """INV2 (#129) — async close_session delegates to _sync_close_session, so the async
+        and sync removal paths cannot diverge (mirror of open_session → _build_and_insert)."""
+        tree = _parse_session_state_ast()
+        store_node = _find_class_node(tree, "SessionStore")
+        close_node = next(
+            (n for n in store_node.body
+             if isinstance(n, ast.AsyncFunctionDef) and n.name == "close_session"),
+            None,
+        )
+        assert close_node is not None, "SessionStore.close_session not found"
+        delegates = any(
+            isinstance(c, ast.Call)
+            and isinstance(c.func, ast.Attribute)
+            and c.func.attr == "_sync_close_session"
+            and isinstance(c.func.value, ast.Name)
+            and c.func.value.id == "self"
+            for c in ast.walk(close_node)
+        )
+        assert delegates, (
+            "close_session must delegate to self._sync_close_session(...) so the async + "
+            "sync removal paths cannot diverge (it must NOT pop the dict inline)."
+        )
+        pops_inline = any(
+            isinstance(c, ast.Call)
+            and isinstance(c.func, ast.Attribute)
+            and c.func.attr == "pop"
+            and isinstance(c.func.value, ast.Attribute)
+            and c.func.value.attr == "_sessions"
+            for c in ast.walk(close_node)
+        )
+        assert not pops_inline, (
+            "close_session must NOT call self._sessions.pop(...) inline — that re-introduces "
+            "a second removal path that can diverge from _sync_close_session."
+        )
 
 
 # ---------------------------------------------------------------------------

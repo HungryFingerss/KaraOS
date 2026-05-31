@@ -151,20 +151,21 @@ def _to_snapshot(s: Session) -> SessionSnapshot:
 
 
 class SessionStore:
-    """Single owner of all active sessions. Mutations are async (lock-protected), with
-    ONE blessed sync write — `_sync_open_session` (Canary #4, 2026-05-31).
+    """Single owner of all active sessions. Mutations are async (lock-protected), with a
+    blessed sync open/close PAIR — `_sync_open_session` (Canary #4, 2026-05-31) and
+    `_sync_close_session` (#129, 2026-05-31).
 
     peek_snapshot() is the ONLY sync read method — safe under:
     1. Single-threaded asyncio (no real thread parallelism).
     2. No sync mutator leaves the dict in a half-state observable by a concurrent peek.
-       `_sync_open_session` is the one blessed sync write: it does an atomic
-       construct-then-insert (build the full Session, THEN `self._sessions[pid] = s`) with
-       NO await — so a concurrent peek sees either the old state (no pid) or the fully-built
-       new state, never a half-written one. (Narrowed from the prior conservative-sufficient
-       "no sync mutators at all" to the precise-necessary "no sync write that yields or
-       leaves a half-state"; peek_snapshot's safety is preserved. Mirrors the
-       `_sync_mint_room` precedent on PipelineStateStore.) Every OTHER mutation stays async
-       via self._lock.
+       `_sync_open_session` does an atomic construct-then-insert (build the full Session,
+       THEN `self._sessions[pid] = s`) with NO await; `_sync_close_session` does a single
+       GIL-atomic `self._sessions.pop(pid, None)` — so a concurrent peek sees either the old
+       state or the fully-applied new state, never a half-written one. (Narrowed from the
+       prior conservative-sufficient "no sync mutators at all" to the precise-necessary "no
+       sync write that yields or leaves a half-state"; peek_snapshot's safety is preserved.
+       Mirrors the `_sync_mint_room` precedent on PipelineStateStore.) Every OTHER mutation
+       stays async via self._lock.
     3. Returned SessionSnapshot is frozen + slots (safe to hold across await).
     """
 
@@ -243,9 +244,20 @@ class SessionStore:
             room_session_id=room_session_id, voice_sample_count=voice_sample_count,
         )
 
+    def _sync_close_session(self, pid: str) -> None:
+        """C1 (#129) — the blessed SYNC session removal, mirror of _sync_open_session.
+        Purely sync: NO await, NO `async with self._lock`. `dict.pop` is GIL-atomic, so a
+        concurrent peek_snapshot sees the session present or gone, never a half-state — the
+        same single-threaded-asyncio safety argument as the sync open (strictly simpler: a
+        single pop, no build phase to leave half-state). Used by pipeline._close_session so
+        the removal is visible the instant it returns, closing the multi-expiry room-end race
+        (the close-side mirror of Canary #4's open-side fix). See the SYNC_METHOD_ALLOWLIST
+        justification + the `_sync_mint_room` precedent on PipelineStateStore."""
+        self._sessions.pop(pid, None)
+
     async def close_session(self, pid: str) -> None:
         async with self._lock:
-            self._sessions.pop(pid, None)
+            self._sync_close_session(pid)
 
     async def update_on_reopen(self, pid: str, *, voice_confidence: float,
                                now: Optional[float] = None) -> None:

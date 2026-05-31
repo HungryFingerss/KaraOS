@@ -31,20 +31,20 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Re-derived from the migration script's SITES list to keep tests in sync.
 A1_MIGRATED_SITES: tuple[tuple[str, int], ...] = (
     # 13 explicit Phase 0 + 14 paired writers + 1 cross-file = 28 sites (locked at Plan v2 §1.8)
-    ("pipeline.py", 963), ("pipeline.py", 2773), ("pipeline.py", 2774),
-    ("pipeline.py", 2915), ("pipeline.py", 3313), ("pipeline.py", 3396),
-    ("pipeline.py", 5636), ("pipeline.py", 5758), ("pipeline.py", 7454),
-    ("pipeline.py", 7753), ("pipeline.py", 8419), ("pipeline.py", 8457),
+    ("pipeline.py", 1006), ("pipeline.py", 2885), ("pipeline.py", 2886),
+    ("pipeline.py", 2915), ("pipeline.py", 3426), ("pipeline.py", 3396),  # #129 refresh (+6 C4 comment shift)
+    ("pipeline.py", 5745), ("pipeline.py", 5867), ("pipeline.py", 7369),
+    ("pipeline.py", 7753), ("pipeline.py", 8628), ("pipeline.py", 8589),  # Canary4 line-ref refresh (+25 Q2-helper shift + B1 wiring)
     ("core/brain_agent.py", 6908),
-    ("pipeline.py", 967), ("pipeline.py", 2813), ("pipeline.py", 2833),
-    ("pipeline.py", 2835), ("pipeline.py", 3492), ("pipeline.py", 3494),
-    ("pipeline.py", 3536), ("pipeline.py", 3538), ("pipeline.py", 6715),
-    ("pipeline.py", 6716), ("pipeline.py", 7475), ("pipeline.py", 7666),
-    ("pipeline.py", 7721), ("pipeline.py", 7765),
+    ("pipeline.py", 1030), ("pipeline.py", 2879), ("pipeline.py", 2919),
+    ("pipeline.py", 2939), ("pipeline.py", 3533), ("pipeline.py", 3494),
+    ("pipeline.py", 3536), ("pipeline.py", 3538), ("pipeline.py", 6858),
+    ("pipeline.py", 6859), ("pipeline.py", 7521), ("pipeline.py", 7666),  # Canary4 + #129 refresh (+6 C4 comment shift)
+    ("pipeline.py", 7807), ("pipeline.py", 7831),
     ("core/cache_store.py", 87),
     # Developer Pass-3 grep refinement (+6 sites; banked as `Plan-v1-Pass-2-grep-undercount`)
-    ("pipeline.py", 548), ("pipeline.py", 601), ("pipeline.py", 7230),
-    ("pipeline.py", 7259), ("pipeline.py", 7390), ("pipeline.py", 7458),
+    ("pipeline.py", 599), ("pipeline.py", 601), ("pipeline.py", 7395),
+    ("pipeline.py", 7389), ("pipeline.py", 7393), ("pipeline.py", 7379),  # Canary4 refresh (+25 Q2-helper shift)
 )
 
 
