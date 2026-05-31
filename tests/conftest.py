@@ -249,3 +249,71 @@ def _reset_pipeline_state_between_tests():
     except Exception as _e:
         print(f"[conftest] store reset failed: {_e!r}")
     yield
+
+
+# ── #126 D2: shared real_voice fixture + ECAPA skip gate (extracted from #125) ──────
+#
+# Moved verbatim from tests/test_canary3_ecapa_embed_and_rename_safety.py (#125) so EVERY
+# real-voice-behavior golden test in tests/ uses ONE blessed path past the conftest stub.
+# The Canary #3 lesson: a golden test that imports core.voice + asserts real behavior
+# against the autouse STUB (embed → None) is vacuous (permanent false-RED). This fixture is
+# the only sanctioned way to reach the real module; its `_load_ecapa_patched` assert is the
+# vacuity guard. Mark such tests @pytest.mark.real_voice (registered in pytest.ini). The
+# `importlib.import_module("core.voice")` below is the ONLY blessed force-import — the #126
+# D4(a) tripwire excludes exactly this file (tests/conftest.py) and flags it anywhere else.
+
+
+def _require_real_ecapa_or_skip():
+    """Gate real-voice tests on the real SpeechBrain ECAPA model + CUDA (like the P0.R5
+    anchors). A vacuous skip on GPU-less CI is the same blindness that hid the Canary #3
+    bug for a week — so on the CUDA dev box / canary host this MUST actually run.
+
+    #126 Q2 — ECAPA-SCOPED gate: it checks speechbrain + CUDA, which is what the ECAPA voice
+    path needs. The `real_voice` fixture NAME is generic, but this availability gate is NOT a
+    universal real-model gate — a future pyannote/whisper real-voice test must add its OWN
+    model-availability gate; do not assume `real_voice` covers it."""
+    pytest.importorskip("speechbrain")
+    try:
+        import torch
+    except Exception:
+        pytest.skip("torch unavailable")
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA unavailable — real_voice tests run on the CUDA dev box / canary host")
+
+
+@pytest.fixture
+def real_voice():
+    """Swap the conftest `core.voice` STUB for the REAL module for the duration of one test
+    (function-scoped). The blessed path past the autouse stub — see the #126 D2 block above.
+
+    Why this exists: the autouse `_reset_pipeline_state_between_tests` installs a `core.voice`
+    stub whose `embed = AsyncMock(return_value=None)`. A real-voice-behavior test against that
+    stub is vacuous (tests a mock hardcoded to None; permanent false-RED). This fixture pops
+    the stub, imports the real `core.voice`, and — load-bearing — re-points `pipeline.voice_mod`
+    to it (tests reach embed through the `pipeline.py: from core import voice as voice_mod`
+    alias, a SEPARATE binding from sys.modules["core.voice"], so re-importing the module alone
+    is NOT enough).
+
+    PI-1 hardening: try/finally restores the stub + the alias even if setup raises (so a
+    setup-time assert can't leak the popped stub into sibling tests). The `_load_ecapa_patched`
+    assert is MANDATORY + fail-loud — it guards against silently re-introducing the exact
+    vacuity (real module never actually loaded)."""
+    _require_real_ecapa_or_skip()  # the single call site for the ECAPA gate
+    import importlib
+    import pipeline
+
+    _stub = sys.modules.get("core.voice")        # capture the stub BEFORE any mutation
+    _orig_vm = getattr(pipeline, "voice_mod", None)
+    try:
+        sys.modules.pop("core.voice", None)
+        real = importlib.import_module("core.voice")
+        assert hasattr(real, "_load_ecapa_patched"), \
+            "real core.voice not loaded — stub still active (fixture vacuity guard)"
+        pipeline.voice_mod = real                # load-bearing: tests reach embed via this alias
+        yield real
+    finally:                                     # PI-1: always restores, even on setup raise
+        pipeline.voice_mod = _orig_vm
+        if _stub is not None:
+            sys.modules["core.voice"] = _stub
+        else:
+            sys.modules.pop("core.voice", None)

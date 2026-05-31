@@ -36,63 +36,19 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-def _require_real_ecapa_or_skip():
-    """Gate GT1/GT1b on the real SpeechBrain model + CUDA (like the P0.R5 anchors).
-
-    A vacuous skip on GPU-less CI is the same blindness that hid this bug for a week —
-    so on the CUDA dev box / canary host this MUST actually run (RED before Part A)."""
-    pytest.importorskip("speechbrain")
-    try:
-        import torch
-    except Exception:
-        pytest.skip("torch unavailable")
-    if not torch.cuda.is_available():
-        pytest.skip("CUDA unavailable — GT1/GT1b run on the CUDA dev box / canary host")
-
-
-@pytest.fixture
-def real_voice():
-    """Swap the conftest `core.voice` STUB for the REAL module for the duration of one
-    test (function-scoped, Q4).
-
-    Why this fixture exists: the autouse `_reset_session_state_between_tests` fixture
-    installs a `core.voice` stub whose `embed = AsyncMock(return_value=None)`. GT1/GT1b
-    against that stub are vacuous — they test a mock hardcoded to return None (permanent
-    false-RED; no host could ever pass them). This fixture pops the stub, imports the real
-    `core.voice`, and — load-bearing — re-points `pipeline.voice_mod` to it (GT1b reaches
-    embed through the `pipeline.py: from core import voice as voice_mod` alias, a SEPARATE
-    binding from sys.modules["core.voice"], so re-importing the module alone is NOT enough).
-
-    PI-1 hardening: try/finally restores the stub + the alias even if setup raises (so a
-    setup-time assert can't leak the popped stub into sibling tests). Q3: the
-    `_load_ecapa_patched` assert is MANDATORY + fail-loud — it guards against silently
-    re-introducing the exact vacuity (real module never actually loaded)."""
-    _require_real_ecapa_or_skip()  # Q2: the single call site for the gate
-    import sys
-    import importlib
-    import pipeline
-
-    _stub = sys.modules.get("core.voice")        # capture the stub BEFORE any mutation
-    _orig_vm = getattr(pipeline, "voice_mod", None)
-    try:
-        sys.modules.pop("core.voice", None)
-        real = importlib.import_module("core.voice")
-        assert hasattr(real, "_load_ecapa_patched"), \
-            "real core.voice not loaded — stub still active (fixture vacuity guard, Q3)"
-        pipeline.voice_mod = real                # load-bearing: GT1b reaches embed via this alias
-        yield real
-    finally:                                     # PI-1: always restores, even on setup raise
-        pipeline.voice_mod = _orig_vm
-        if _stub is not None:
-            sys.modules["core.voice"] = _stub
-        else:
-            sys.modules.pop("core.voice", None)
+# #126 D3: the `real_voice` fixture + `_require_real_ecapa_or_skip` ECAPA skip gate were
+# extracted VERBATIM to tests/conftest.py (shared across all of tests/) — GT1/GT1b below
+# request the now-shared fixture and are @pytest.mark.real_voice-marked. The fixture's
+# load-bearing properties (the `_load_ecapa_patched` vacuity guard, the pipeline.voice_mod
+# re-point, the PI-1 try/finally restore) are preserved unchanged; this migration must not
+# regress the #125 RED→GREEN-on-Part-A-revert proof.
 
 
 # ── GT1 — the ECAPA subprocess actually returns an embedding ──────────────────
 
 
 @pytest.mark.asyncio
+@pytest.mark.real_voice
 async def test_gt1_ecapa_subprocess_returns_embedding(real_voice):
     """GT1: the REAL subprocess voice.embed path returns a 192-dim embedding, not None.
     RED before Part A (subprocess load fails on the missing hf_hub_download patch)."""
@@ -111,6 +67,7 @@ async def test_gt1_ecapa_subprocess_returns_embedding(real_voice):
 
 
 @pytest.mark.asyncio
+@pytest.mark.real_voice
 async def test_gt1b_accumulate_voice_grows_gallery(real_voice, tmp_path):
     """GT1b: _accumulate_voice with a face-witnessed session + real ≥1.5s audio grows
     voice_embedding_count by 1 ([Voice] Profile updated, not embed returned None).
