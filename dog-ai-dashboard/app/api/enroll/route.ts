@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import fs from 'fs'
 import path from 'path'
 import { isBestFriendEnrolled } from '@/lib/db'
+import { requireAuth } from '@/lib/requireAuth'
 
 const FACES_DIR        = path.join(process.cwd(), '..', 'faces')
 const ENROLL_REQUEST   = path.join(FACES_DIR, 'enroll_request.json')
@@ -10,6 +11,7 @@ const POLL_INTERVAL_MS = 500
 const TIMEOUT_MS       = 40_000
 
 export async function POST(req: NextRequest) {
+  const denied = requireAuth(req); if (denied) return denied
   // Only allow enrollment if best friend is not yet enrolled
   if (isBestFriendEnrolled()) {
     return NextResponse.json(

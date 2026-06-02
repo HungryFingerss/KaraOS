@@ -196,8 +196,9 @@ def test_ensure_dashboard_token_reads_file_on_every_call(tmp_path):
     invocation; no module-scope caching. Mutating the on-disk file between
     calls must reflect in the next call's return value.
 
-    This is the Python-side complement to the middleware.ts file-read
-    invariant in `test_dashboard_middleware.py`.
+    This is the Python-side complement to the dashboard-side fresh-read
+    invariant in `test_dashboard_auth_helper.py` (the auth gate moved from
+    Edge middleware to the Node-runtime `lib/requireAuth.ts` — canary #1).
     """
     from core.dashboard_token import _ensure_dashboard_token
 

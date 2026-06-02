@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { execFile } from 'child_process'
 import path from 'path'
+import { requireAuth } from '@/lib/requireAuth'
 
 const PERSON_ID_RE = /^[a-zA-Z0-9_-]{1,80}$/
 
 // GET /api/gallery-audit/[id] — audit a single person
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const denied = requireAuth(req); if (denied) return denied
   const { id } = params
   if (!id || !PERSON_ID_RE.test(id)) {
     return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
@@ -40,9 +42,10 @@ export async function GET(
 
 // DELETE /api/gallery-audit/[id] — repair (remove outliers) for a single person
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const denied = requireAuth(req); if (denied) return denied
   const { id } = params
   if (!id || !PERSON_ID_RE.test(id)) {
     return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })

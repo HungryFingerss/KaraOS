@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import fs from 'fs'
 import path from 'path'
+import { requireAuth } from '@/lib/requireAuth'
 
 const FACES_DIR          = path.join(process.cwd(), '..', 'faces')
 const STATE_PATH         = path.join(FACES_DIR, 'state.json')
@@ -79,6 +80,7 @@ function isPipelineLive(): boolean {
 }
 
 export async function POST(req: NextRequest) {
+  const denied = requireAuth(req); if (denied) return denied
   let body: { confirm?: string } = {}
   try {
     body = await req.json()

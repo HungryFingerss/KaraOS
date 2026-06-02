@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import fs from 'fs'
 import path from 'path'
+import { requireAuth } from '@/lib/requireAuth'
 
 export async function GET(req: NextRequest) {
+  const denied = requireAuth(req); if (denied) return denied
   const photoPath = req.nextUrl.searchParams.get('path')
   if (!photoPath) return new NextResponse('Missing path', { status: 400 })
 
@@ -19,7 +21,11 @@ export async function GET(req: NextRequest) {
   } catch {
     return new NextResponse('Not found', { status: 404 })
   }
-  return new NextResponse(data, {
+  // Wrap the Node Buffer in a fresh Uint8Array: @types/node types `Buffer` as
+  // `Buffer<ArrayBufferLike>`, which is not assignable to the DOM `BodyInit`
+  // (SharedArrayBuffer-backed views are excluded). `new Uint8Array(data)` yields
+  // a standard `Uint8Array<ArrayBuffer>` (a valid BufferSource) with the same bytes.
+  return new NextResponse(new Uint8Array(data), {
     headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=3600' }
   })
 }
