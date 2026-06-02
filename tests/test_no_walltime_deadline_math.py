@@ -5,6 +5,9 @@ Per Plan v2 §2 D2. Rejects `time.time()` calls inside:
 - `ast.Compare` with subtraction patterns (`time.time() - X` followed by comparison)
 - `ast.Assign` targets ending in `_deadline`
 - `ast.Call` `time.time()` followed by binary `+` operation (e.g., `_deadline = time.time() + TIMEOUT`)
+- (Canary #2) Direction-A VARIABLE-HOP: `now = time.time()` on one line, then `now - X`
+  on another — patterns 1-4 require `time.time()` *directly* in the subtraction, so they
+  all missed the vision-watchdog bug (pipeline.py:2594). Tracked scope-locally.
 
 Allowlist via `# WALLCLOCK:` annotation (inline OR on previous 3 lines).
 
@@ -71,6 +74,72 @@ def _is_time_time_addition(node: ast.AST) -> bool:
     )
 
 
+def _iter_scope_local(scope: ast.AST):
+    """Yield every descendant of `scope` in its OWN lexical scope, NOT descending
+    into nested function / class / lambda scopes (so a name assigned in one function
+    cannot match a subtraction in a sibling function)."""
+    stack: list[ast.AST] = list(getattr(scope, "body", []) or [])
+    _NESTED = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+    while stack:
+        node = stack.pop()
+        yield node
+        # Do NOT descend into a nested scope's body — it is processed as its own scope.
+        # (Check on the popped node, because scope.body can seed nested defs directly.)
+        if isinstance(node, _NESTED):
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+
+
+def _find_variable_hop_violations(tree: ast.Module, is_allowlisted) -> list[tuple[int, str]]:
+    """Direction-A variable-hop (Canary #2 / clock-consistency): a name assigned from a
+    bare `time.time()` call, then used as the LEFT operand of a `-` subtraction. This is
+    the `now = time.time(); elapsed = now - X` shape the original patterns (1)-(4) all
+    miss — they require `time.time()` to appear *directly* in the subtraction. The vision
+    watchdog bug (pipeline.py:2594) was exactly this shape and evaded all four patterns.
+
+    Scoped per-function (+ module) so a wall-clock name in one function does not match a
+    subtraction in another. Allowlisted if either the subtraction line OR the assignment
+    line carries `# WALLCLOCK:`.
+    """
+    violations: list[tuple[int, str]] = []
+    scopes: list[ast.AST] = [tree]
+    scopes.extend(
+        n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    )
+    for scope in scopes:
+        local = list(_iter_scope_local(scope))
+        wall_names: dict[str, int] = {}  # name -> lineno of its `= time.time()` assign
+        for node in local:
+            if isinstance(node, ast.Assign) and _is_time_time_call(node.value):
+                for tgt in node.targets:
+                    if isinstance(tgt, ast.Name):
+                        wall_names[tgt.id] = node.value.lineno
+            elif (
+                isinstance(node, ast.AnnAssign)
+                and node.value is not None
+                and _is_time_time_call(node.value)
+                and isinstance(node.target, ast.Name)
+            ):
+                wall_names[node.target.id] = node.value.lineno
+        if not wall_names:
+            continue
+        for node in local:
+            if (
+                isinstance(node, ast.BinOp)
+                and isinstance(node.op, ast.Sub)
+                and isinstance(node.left, ast.Name)
+                and node.left.id in wall_names
+            ):
+                ln = node.lineno
+                if not is_allowlisted(ln) and not is_allowlisted(wall_names[node.left.id]):
+                    violations.append((
+                        ln,
+                        f"`{node.left.id} = time.time()` then `{node.left.id} - X` "
+                        "(variable-hop DEADLINE-MATH; use time.monotonic())",
+                    ))
+    return violations
+
+
 def _find_violations(source: str) -> list[tuple[int, str]]:
     """Return list of (line_number, reason) for DEADLINE-MATH patterns lacking `# WALLCLOCK:` annotation."""
     try:
@@ -122,8 +191,33 @@ def _find_violations(source: str) -> list[tuple[int, str]]:
             if not is_allowlisted(ln):
                 violations.append((ln, "`time.time() + X` (deadline computation)"))
 
+    # NOTE: Direction-A variable-hop (pattern 5) is intentionally NOT folded into this
+    # hard-gate function during the latency spec — it surfaces ~30 pre-existing sites that
+    # the companion clock_consistency_audit_spec.md owns. The latency spec ships the
+    # DETECTOR (`_find_variable_hop`) + self-tests + a non-gating discovery xfail; the
+    # clock spec migrates/annotates every site then promotes variable-hop into THIS gate.
     # Dedupe (multiple parents may flag same line)
     return sorted(set(violations))
+
+
+def _find_variable_hop(source: str) -> list[tuple[int, str]]:
+    """Standalone runner for the Direction-A variable-hop detector (pattern 5).
+
+    Kept separate from `_find_violations` so the latency spec can DISCOVER + DOCUMENT
+    repo-wide without turning the hard gate red (clock spec owns the fixes)."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    source_lines = source.splitlines()
+
+    def is_allowlisted(line_num: int) -> bool:
+        for j in range(max(0, line_num - 4), line_num):
+            if 0 <= j < len(source_lines) and "# WALLCLOCK:" in source_lines[j]:
+                return True
+        return False
+
+    return sorted(set(_find_variable_hop_violations(tree, is_allowlisted)))
 
 
 @pytest.mark.parametrize(
@@ -184,4 +278,102 @@ def test_a2_self_test_state_py_annotations_allowlist_cross_process_ipc():
     violations = _find_violations(state_py.read_text(encoding="utf-8"))
     assert not violations, (
         f"state.py cross-process IPC sites should be allowlisted via # WALLCLOCK: annotation: {violations}"
+    )
+
+
+# --- Direction-A variable-hop self-tests (Canary #2) ---
+
+def test_a2_self_test_variable_hop_fires():
+    """Forward: `now = time.time()` then `now - X` (the vision-watchdog shape) fires.
+
+    This is the EXACT bug pattern that evaded patterns (1)-(4) — it must be caught now.
+    """
+    src = textwrap.dedent("""
+        import time
+        def watchdog():
+            _now = time.time()
+            _heartbeat = peek_heartbeat()
+            _staleness = _now - _heartbeat
+            if _staleness < 30.0:
+                return
+    """)
+    violations = _find_variable_hop(src)
+    assert any("variable-hop" in reason for _, reason in violations), (
+        f"variable-hop forward self-test failed: expected a variable-hop violation, got {violations}"
+    )
+
+
+def test_a2_self_test_variable_hop_monotonic_passes():
+    """Inverse: the fixed `now = time.monotonic()` shape must NOT fire."""
+    src = textwrap.dedent("""
+        import time
+        def watchdog():
+            _now = time.monotonic()
+            _heartbeat = peek_heartbeat()
+            _staleness = _now - _heartbeat
+            if _staleness < 30.0:
+                return
+    """)
+    violations = _find_variable_hop(src)
+    assert not violations, (
+        f"variable-hop monotonic inverse failed: monotonic now should be clean, got {violations}"
+    )
+
+
+def test_a2_self_test_variable_hop_annotated_passes():
+    """Inverse: an annotated wall-clock variable-hop (legit display/IPC) must NOT fire."""
+    src = textwrap.dedent("""
+        import time
+        def report():
+            # WALLCLOCK: displayed age, not a cooldown gate
+            _now = time.time()
+            _age = _now - _created_at
+            print(_age)
+    """)
+    violations = _find_variable_hop(src)
+    assert not violations, (
+        f"variable-hop annotated inverse failed: annotated site should pass, got {violations}"
+    )
+
+
+def test_a2_self_test_variable_hop_scoped_no_cross_function_false_positive():
+    """A wall-clock name in one function must NOT match a subtraction in another."""
+    src = textwrap.dedent("""
+        import time
+        def writer():
+            _now = time.time()
+            return _now
+        def reader(_now):
+            return _now - other  # different scope; _now here is a param, not time.time()
+    """)
+    violations = _find_variable_hop(src)
+    assert not violations, (
+        f"variable-hop scoping failed: cross-function name reuse should not flag, got {violations}"
+    )
+
+
+@pytest.mark.xfail(
+    reason="Direction-A variable-hop clock debt discovered by latency-spec D1; "
+    "migrated/annotated by clock_consistency_audit_spec.md, which then removes this "
+    "xfail and promotes variable-hop into the hard gate (_find_violations).",
+    strict=False,
+)
+def test_a2_variable_hop_repo_wide_discovery():
+    """DISCOVER + DOCUMENT (latency spec §3 D1 item 3): run the strengthened
+    variable-hop detector across the whole in-scope set. This is EXPECTED to xfail
+    until the clock-consistency audit migrates each site to time.monotonic() or
+    annotates the legitimate wall-clock ones. The vision-watchdog site (:2594) is
+    already fixed and must NOT appear; every remaining site is the clock spec's surface.
+    """
+    findings: list[str] = []
+    for path in _collect_in_scope():
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        for ln, reason in _find_variable_hop(path.read_text(encoding="utf-8")):
+            findings.append(f"  {rel}:{ln}  {reason}")
+    # Surface the count + sites for the clock spec's hand-off (printed on xfail).
+    print(f"\n[variable-hop discovery] {len(findings)} site(s) for clock_consistency_audit_spec.md:")
+    print("\n".join(findings))
+    assert not findings, (
+        f"{len(findings)} Direction-A variable-hop site(s) remain — owned by "
+        "clock_consistency_audit_spec.md (expected xfail in the latency spec)."
     )
