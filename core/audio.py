@@ -171,7 +171,13 @@ def set_lip_active(moving: bool) -> None:
 
 # ── TTS echo-window — set by speak() so record_until_silence() can skip ──────
 # pre_roll audio that contains room echo of the system's own TTS output.
+# WALLCLOCK: `_tts_end_time` is a wall-clock timestamp — the echo-window math
+# (`echo_clear_until = _tts_end_time + _POST_TTS_ECHO_WINDOW`, record_until_silence)
+# compares it against `stream_open_time = time.time()`, a wall-clock consumer. Do NOT
+# migrate this field. Canary #2 clock spec: SPLIT — the KAIROS silence-baseline reads
+# the monotonic companion below (elapsed-math against monotonic last_user_speech_at).
 _tts_end_time:        float = 0.0
+_tts_end_time_monotonic: float = 0.0  # monotonic copy for KAIROS elapsed-math (pipeline silence baseline)
 _POST_TTS_ECHO_WINDOW: float = 0.45   # seconds of echo after TTS ends
 
 # ── Piper TTS (English fallback when Kokoro unavailable) ─────────────────────
@@ -730,8 +736,9 @@ async def speak(text: str, language: str = "en"):
         # asyncio.sleep(duration) which can fire early when the event loop is busy.
         await loop.run_in_executor(None, sd.wait)
         sd.stop()
-        global _tts_end_time
-        _tts_end_time = time.time()
+        global _tts_end_time, _tts_end_time_monotonic
+        _tts_end_time = time.time()  # WALLCLOCK: echo-window consumer (see module-level note)
+        _tts_end_time_monotonic = time.monotonic()  # KAIROS silence-baseline (elapsed-math)
 
         # P0.0.7 H10 — emit tts_out event after successful playback.
         _emit_tts_event_safe(
@@ -850,7 +857,7 @@ async def speak_stream(sentences, language: str = "en"):
             await audio_q.put(None)  # sentinel — guaranteed even on exception/cancellation
 
     async def _play_worker():
-        global _tts_end_time
+        global _tts_end_time, _tts_end_time_monotonic
         first = True
         # P0.R10 D2.b Q2 (b) RATIFIED — per-sentence count tracking for
         # diagnostic context on mid-stream device failures. _sentence_total
@@ -873,7 +880,8 @@ async def speak_stream(sentences, language: str = "en"):
                 # asyncio.sleep(duration) which can fire early when the event loop
                 # is busy (BrainAgent tasks, network callbacks), clipping the last word.
                 await loop.run_in_executor(None, sd.wait)
-                _tts_end_time = time.time()  # set after actual hardware completion
+                _tts_end_time = time.time()  # WALLCLOCK: echo-window consumer; after hardware completion
+                _tts_end_time_monotonic = time.monotonic()  # KAIROS silence-baseline (elapsed-math)
                 _sentence_count += 1
                 print(f"[Audio] Playback complete — echo window reset ({_now_log_ts()})")
             except (sd.PortAudioError, OSError) as e:

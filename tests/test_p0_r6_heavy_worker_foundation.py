@@ -183,9 +183,19 @@ def test_p0_r6_d3_anchor_1_all_4_async_sites_use_heavy_worker() -> None:
     # docstring/comment mentions of the substring; AST walker scopes to
     # actual Call nodes).
     tree = ast.parse(source)
+    # Canary #2 / latency D2 added a boot WARM-UP `hw.run_heavy("adaface_embed", ...)`
+    # in `_warm_heavy_worker_pools` (first-turn cold-start fix). That is NOT one of the
+    # 4 async-HOT-PATH inference sites this anchor counts — exclude it so the count
+    # stays the contractual 4.
+    _warm_call_ids: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "_warm_heavy_worker_pools":
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Call):
+                    _warm_call_ids.add(id(sub))
     adaface_run_heavy_calls = 0
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
+        if not isinstance(node, ast.Call) or id(node) in _warm_call_ids:
             continue
         # Match `hw.run_heavy("adaface_embed", ...)` shape:
         # Call(func=Attribute(value=Name("hw"), attr="run_heavy"),

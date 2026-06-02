@@ -47,17 +47,21 @@ async def _seed_state(speech_secs_ago: float, tts_secs_ago: float, *,
 
     orig_speech_at = pipeline._pipeline_state_store.peek_last_user_speech_at()
     orig_kairos_at = pipeline._pipeline_state_store.peek_last_kairos_at()
-    orig_tts_end   = float(getattr(_audio_mod, "_tts_end_time", 0.0))
+    # Canary #2 clock spec #4: KAIROS elapsed-math is MONOTONIC now (silence baseline reads
+    # last_user_speech_at + _tts_end_time_monotonic, both monotonic; `now` is time.monotonic()).
+    # Seed the KAIROS sources on the monotonic clock; session timestamps stay wall-clock.
+    orig_tts_end   = float(getattr(_audio_mod, "_tts_end_time_monotonic", 0.0))
     orig_orch      = pipeline._brain_orchestrator
 
-    now = time.time()
+    sess_now = time.time()        # session started_at etc. are wall-clock
+    kairos_now = time.monotonic()  # KAIROS silence/cooldown math is monotonic
     await pipeline._session_store.open_session(
-        "p1", "Alice", "known", "face", now=now,
+        "p1", "Alice", "known", "face", now=sess_now,
     )
-    await pipeline._pipeline_state_store.set_last_user_speech_at(now - speech_secs_ago)
+    await pipeline._pipeline_state_store.set_last_user_speech_at(kairos_now - speech_secs_ago)
     if cooldown_clear:
         await pipeline._pipeline_state_store.set_last_kairos_at(0.0)
-    _audio_mod._tts_end_time = now - tts_secs_ago
+    _audio_mod._tts_end_time_monotonic = kairos_now - tts_secs_ago
 
     mock_orch = MagicMock()
     mock_orch.get_pending_question.return_value = {"id": "q1", "text": "How are you?"}
@@ -71,7 +75,7 @@ async def _restore_state(orig_speech_at, orig_kairos_at, orig_tts_end, orig_orch
     import core.audio as _audio_mod
     await pipeline._pipeline_state_store.set_last_user_speech_at(orig_speech_at)
     await pipeline._pipeline_state_store.set_last_kairos_at(orig_kairos_at)
-    _audio_mod._tts_end_time = orig_tts_end
+    _audio_mod._tts_end_time_monotonic = orig_tts_end
     pipeline._brain_orchestrator = orig_orch
 
 
