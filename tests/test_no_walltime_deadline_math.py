@@ -43,34 +43,64 @@ def _collect_in_scope() -> list[Path]:
     return files
 
 
-def _is_time_time_call(node: ast.AST) -> bool:
-    """True if node is `time.time()` Call expression."""
+def _time_module_aliases(tree: ast.Module) -> "frozenset[str]":
+    """Local names bound to the stdlib ``time`` module via ``import time [as X]``.
+
+    Walks the WHOLE module (descending into function bodies) so a function-local
+    ``import time as _time`` is recognized wherever its ``_time.time()`` calls appear.
+    Falls back to ``{"time"}`` when no ``time`` import is found, preserving the
+    detector's original hardcoded assumption.
+
+    #5 Slice D §3.D.2 PI-1(a): closes the aliased-import blind spot that hid
+    ``core/brain.py``'s ``import time as _time`` -> ``_time.time()`` variable-hop read
+    from the Direction-A discovery detector (the read that left ``voice_last_heard_ts``
+    with zero structural revert-protection — its ONLY production reader is the brain
+    ``_voice_age``, so this detector is its sole structural guard).
+    """
+    aliases: "set[str]" = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "time":
+                    aliases.add(alias.asname or alias.name)
+    return frozenset(aliases) if aliases else frozenset({"time"})
+
+
+def _is_time_time_call(node: ast.AST, time_aliases: "frozenset[str]" = frozenset({"time"})) -> bool:
+    """True if node is a ``<time-module>.time()`` Call.
+
+    ``time_aliases`` is the set of local names bound to the ``time`` module (default
+    ``{"time"}`` preserves the original bare-``time.time()`` behavior for the hard gate).
+    Pass the resolved set from ``_time_module_aliases`` to also catch ``import time as
+    _time`` -> ``_time.time()`` (the variable-hop discovery detector does this; the hard
+    gate ``_find_violations`` deliberately keeps the bare-``time`` default — §3.D.2 scopes
+    the strengthening to the DISCOVERY xfail, not the blocking gate)."""
     return (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "time"
         and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == "time"
+        and node.func.value.id in time_aliases
         and not node.args
         and not node.keywords
     )
 
 
-def _is_time_time_subtraction(node: ast.AST) -> bool:
-    """True if node is `time.time() - X` BinOp Sub."""
+def _is_time_time_subtraction(node: ast.AST, time_aliases: "frozenset[str]" = frozenset({"time"})) -> bool:
+    """True if node is `<time>.time() - X` BinOp Sub."""
     return (
         isinstance(node, ast.BinOp)
         and isinstance(node.op, ast.Sub)
-        and _is_time_time_call(node.left)
+        and _is_time_time_call(node.left, time_aliases)
     )
 
 
-def _is_time_time_addition(node: ast.AST) -> bool:
-    """True if node is `time.time() + X` BinOp Add."""
+def _is_time_time_addition(node: ast.AST, time_aliases: "frozenset[str]" = frozenset({"time"})) -> bool:
+    """True if node is `<time>.time() + X` BinOp Add."""
     return (
         isinstance(node, ast.BinOp)
         and isinstance(node.op, ast.Add)
-        and _is_time_time_call(node.left)
+        and _is_time_time_call(node.left, time_aliases)
     )
 
 
@@ -90,7 +120,11 @@ def _iter_scope_local(scope: ast.AST):
         stack.extend(ast.iter_child_nodes(node))
 
 
-def _find_variable_hop_violations(tree: ast.Module, is_allowlisted) -> list[tuple[int, str]]:
+def _find_variable_hop_violations(
+    tree: ast.Module,
+    is_allowlisted,
+    time_aliases: "frozenset[str]" = frozenset({"time"}),
+) -> list[tuple[int, str]]:
     """Direction-A variable-hop (Canary #2 / clock-consistency): a name assigned from a
     bare `time.time()` call, then used as the LEFT operand of a `-` subtraction. This is
     the `now = time.time(); elapsed = now - X` shape the original patterns (1)-(4) all
@@ -110,14 +144,14 @@ def _find_variable_hop_violations(tree: ast.Module, is_allowlisted) -> list[tupl
         local = list(_iter_scope_local(scope))
         wall_names: dict[str, int] = {}  # name -> lineno of its `= time.time()` assign
         for node in local:
-            if isinstance(node, ast.Assign) and _is_time_time_call(node.value):
+            if isinstance(node, ast.Assign) and _is_time_time_call(node.value, time_aliases):
                 for tgt in node.targets:
                     if isinstance(tgt, ast.Name):
                         wall_names[tgt.id] = node.value.lineno
             elif (
                 isinstance(node, ast.AnnAssign)
                 and node.value is not None
-                and _is_time_time_call(node.value)
+                and _is_time_time_call(node.value, time_aliases)
                 and isinstance(node.target, ast.Name)
             ):
                 wall_names[node.target.id] = node.value.lineno
@@ -192,10 +226,15 @@ def _find_violations(source: str) -> list[tuple[int, str]]:
                 violations.append((ln, "`time.time() + X` (deadline computation)"))
 
     # NOTE: Direction-A variable-hop (pattern 5) is intentionally NOT folded into this
-    # hard-gate function during the latency spec — it surfaces ~30 pre-existing sites that
-    # the companion clock_consistency_audit_spec.md owns. The latency spec ships the
-    # DETECTOR (`_find_variable_hop`) + self-tests + a non-gating discovery xfail; the
-    # clock spec migrates/annotates every site then promotes variable-hop into THIS gate.
+    # hard-gate function. It surfaces pre-existing clock-debt sites that the presence-fabric
+    # migration (presence_fabric_clock_migration_spec.md) SHRANK but did NOT zero. #5 Slices
+    # A+B migrated the presence/session/routing now-var SUBSET to time.monotonic() (those drop
+    # out of the discovery automatically). The REMAINING sites -- the ~20 non-presence core/*
+    # log+display Direction-A sites (brain_agent/health/crash_logs) + the pipeline.py display
+    # sites (dream-loop/history-age/heartbeat) -- are the separate wall-clock-annotation
+    # cleanup, out of #5 scope (§7). Promoting variable-hop into THIS gate waits for that
+    # cleanup to zero the discovery. (The VoiceEvidence reader sub-fabric is #5 Slice D --
+    # spec §1.4/§3.D.)
     # Dedupe (multiple parents may flag same line)
     return sorted(set(violations))
 
@@ -217,7 +256,10 @@ def _find_variable_hop(source: str) -> list[tuple[int, str]]:
                 return True
         return False
 
-    return sorted(set(_find_variable_hop_violations(tree, is_allowlisted)))
+    # §3.D.2 PI-1(a): resolve `import time as X` aliases so X.time() registers as wall
+    # (catches core/brain.py's `import time as _time` -> `_now = _time.time()` variable-hop).
+    time_aliases = _time_module_aliases(tree)
+    return sorted(set(_find_variable_hop_violations(tree, is_allowlisted, time_aliases)))
 
 
 @pytest.mark.parametrize(
@@ -352,28 +394,132 @@ def test_a2_self_test_variable_hop_scoped_no_cross_function_false_positive():
     )
 
 
+# --- §3.D.2 (#5 Slice D) — aliased-import + dict-mediated variable-hop self-tests ---
+
+def test_p3_d2_aliased_dict_mediated_variable_hop_flagged():
+    """§3.D.2 PI-1 (HARD GATE): the EXACT core/brain.py shape -- aliased `import time as
+    _time` + a `.get(field, default)` dict-mediated subtrahend inside a ternary -- MUST be
+    flagged. Sole structural guard for `voice_last_heard_ts` (its only production reader is
+    the brain `_voice_age`); resolving the alias but missing the `.get()` operand-shape would
+    leave it with zero revert-protection. Proves PI-1 (a) alias resolution AND (b) the
+    `.get(field, default)` field-read subtrahend, on the exact shape the architect named."""
+    src = textwrap.dedent('''
+        import time as _time
+        def render_identity_evidence(ev):
+            _now = _time.time()
+            _voice_age = _now - ev.get("voice_last_heard_ts", 0.0) if ev.get("voice_last_heard_ts") else None
+            return _voice_age
+    ''')
+    violations = _find_variable_hop(src)
+    assert any("variable-hop" in reason for _, reason in violations), (
+        "PI-1 failed: aliased _time.time() + ev.get('voice_last_heard_ts', 0.0) "
+        f"dict-mediated variable-hop must be flagged, got {violations}"
+    )
+
+
+def test_p3_d2_aliased_monotonic_dict_read_not_flagged():
+    """Inverse / Slice-D fix shape: after `_now = _time.monotonic()` the same dict-mediated
+    read is clean -- this is exactly what core/brain.py:2716 becomes post-flip, so it must
+    drop OUT of the discovery."""
+    src = textwrap.dedent('''
+        import time as _time
+        def render_identity_evidence(ev):
+            _now = _time.monotonic()
+            _voice_age = _now - ev.get("voice_last_heard_ts", 0.0) if ev.get("voice_last_heard_ts") else None
+            return _voice_age
+    ''')
+    violations = _find_variable_hop(src)
+    assert not violations, (
+        f"aliased monotonic dict-read should be clean (the Slice-D fix), got {violations}"
+    )
+
+
+def test_p3_d2_bare_time_dict_read_still_flagged():
+    """Regression: the alias default ({'time'}) preserves bare `time.time()` detection --
+    the bare-import dict-mediated variable-hop (pipeline.py:2048/2054 Path-A class) still
+    fires. Guards against the alias-resolution refactor accidentally dropping bare-time."""
+    src = textwrap.dedent('''
+        import time
+        def voice_accum_allowed(ev):
+            now = time.time()
+            face_age = now - ev.get("face_last_seen_ts", 0.0)
+            return face_age
+    ''')
+    violations = _find_variable_hop(src)
+    assert any("variable-hop" in reason for _, reason in violations), (
+        f"bare-time dict-mediated variable-hop must still be flagged, got {violations}"
+    )
+
+
+def test_p3_d2_aliased_direct_subtraction_not_flagged():
+    """The variable-hop detector is Name-left-only: an aliased DIRECT subtraction
+    `_time_rr.time() - X` (no intermediate `_now`) is NOT a variable-hop and must NOT be
+    flagged. This is core/brain.py:2944's legit wall-wall persisted-display read (`ended_at`
+    from the room_summaries table -- correctly wall, monotonic would be meaningless across a
+    restart). Locks that the §3.D.2 alias strengthening does NOT spuriously flag legit wall
+    displays and force annotation churn."""
+    src = textwrap.dedent('''
+        import time as _time_rr
+        def render_recent_room(recent):
+            _ended_at = recent.get("ended_at") or 0
+            _delta = max(0.0, _time_rr.time() - _ended_at)
+            return _delta
+    ''')
+    violations = _find_variable_hop(src)
+    assert not violations, (
+        f"aliased DIRECT subtraction (not a variable-hop) must not be flagged, got {violations}"
+    )
+
+
+def test_p3_d2_time_module_aliases_resolves_and_falls_back():
+    """`_time_module_aliases` resolves every `import time [as X]` binding (incl. function-local
+    imports) and falls back to {'time'} when no time import is present."""
+    assert _time_module_aliases(ast.parse("import time as _time\nx = _time.time()\n")) == frozenset({"_time"})
+    assert _time_module_aliases(ast.parse("import time\nx = time.time()\n")) == frozenset({"time"})
+    assert _time_module_aliases(ast.parse("import time\nimport time as _time\n")) == frozenset({"time", "_time"})
+    assert _time_module_aliases(ast.parse("import os\nx = 1\n")) == frozenset({"time"}), "fallback must be {'time'}"
+    assert _time_module_aliases(ast.parse("def f():\n    import time as _t\n    return _t.time()\n")) == frozenset({"_t"}), (
+        "must descend into function bodies for local aliases"
+    )
+
+
 @pytest.mark.xfail(
-    reason="Direction-A variable-hop clock debt discovered by latency-spec D1; "
-    "migrated/annotated by clock_consistency_audit_spec.md, which then removes this "
-    "xfail and promotes variable-hop into the hard gate (_find_violations).",
+    reason="Direction-A variable-hop clock debt. #5 presence-fabric migration (Slices A+B) "
+    "SHRANK this discovery: the presence/session/routing now-var subset migrated to "
+    "time.monotonic() and dropped out (43 -> ~28 sites). The REMAINDER stays xfail (NOT "
+    "promoted to the hard gate, per §5.3/§7): the ~20 non-presence core/* log+display sites "
+    "(brain_agent/health/crash_logs) + the pipeline.py display sites (dream-loop/history-age/"
+    "heartbeat) are the separate wall-clock-annotation cleanup; the VoiceEvidence reader "
+    "sub-fabric (pipeline.py _voice_accum_allowed + the aliased-import core/brain.py IDENTITY "
+    "EVIDENCE read, this detector's aliased-import blind spot) is #5 Slice D (spec §1.4/§3.D). "
+    "Hard-gate promotion waits for the annotation cleanup that zeros the discovery.",
     strict=False,
 )
 def test_a2_variable_hop_repo_wide_discovery():
-    """DISCOVER + DOCUMENT (latency spec §3 D1 item 3): run the strengthened
-    variable-hop detector across the whole in-scope set. This is EXPECTED to xfail
-    until the clock-consistency audit migrates each site to time.monotonic() or
-    annotates the legitimate wall-clock ones. The vision-watchdog site (:2594) is
-    already fixed and must NOT appear; every remaining site is the clock spec's surface.
+    """DISCOVER + DOCUMENT: run the variable-hop detector across the whole in-scope set.
+    EXPECTED to xfail (the remainder is non-zero BY DESIGN -- §5.3 shrinks, does not zero).
+
+    #5 presence-fabric migration (Slices A+B, 2026-06-04) consolidated the presence/session/
+    routing now-var subset to time.monotonic(), so those sites no longer appear here (the
+    discovery shrank 43 -> ~28). The remaining sites are the separate wall-clock-annotation
+    cleanup (non-presence core/* log+display + pipeline.py display) -- out of #5 scope (§7),
+    NOT migrated/annotated here, NOT promoted into the hard gate. The VoiceEvidence reader
+    sub-fabric (pipeline.py:_voice_accum_allowed + core/brain.py IDENTITY EVIDENCE) is #5
+    Slice D (§1.4/§3.D) -- and brain.py's reader is invisible to THIS detector until Slice D
+    teaches it the aliased `import time as _time` form. The vision-watchdog site (Bundle-3
+    fix) must NOT appear; the count printed on xfail is the live remaining surface.
     """
     findings: list[str] = []
     for path in _collect_in_scope():
         rel = path.relative_to(REPO_ROOT).as_posix()
         for ln, reason in _find_variable_hop(path.read_text(encoding="utf-8")):
             findings.append(f"  {rel}:{ln}  {reason}")
-    # Surface the count + sites for the clock spec's hand-off (printed on xfail).
-    print(f"\n[variable-hop discovery] {len(findings)} site(s) for clock_consistency_audit_spec.md:")
+    # Surface the count + sites for the annotation-cleanup hand-off (printed on xfail).
+    print(f"\n[variable-hop discovery] {len(findings)} site(s) remaining "
+          f"(#5 presence fabric migrated A+B; remainder = wall-clock-annotation cleanup):")
     print("\n".join(findings))
     assert not findings, (
-        f"{len(findings)} Direction-A variable-hop site(s) remain — owned by "
-        "clock_consistency_audit_spec.md (expected xfail in the latency spec)."
+        f"{len(findings)} Direction-A variable-hop site(s) remain -- the wall-clock-annotation "
+        "cleanup remainder (out of #5 scope, §7) + the Slice-D VoiceEvidence readers (§1.4/§3.D); "
+        "expected xfail until that cleanup zeros the discovery."
     )

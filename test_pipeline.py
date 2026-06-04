@@ -8313,7 +8313,7 @@ def test_scene_block_visible_person_speaker():
         room_session_id=None, user_turns=0, kairos_clock_reset=True,
         voice_only_origin=False, waiting_for_name=False, voice_face_confirmed=False,
         db_enrolled=False, confidence_tier="", prior_person_type=None,
-        dispute_reason=None, disputed_claimed_name=None, dispute_set_at=None,
+        dispute_reason=None, disputed_claimed_name=None, dispute_set_at=None, dispute_set_at_monotonic=None,
         disputed_block_count=0, disputed_block_alerted=False, recent_voice_confs=[],
         cached_prefix=None, core_memory=[], tool_repeat_last=None,
         tool_repeat_count=0, recent_attributions=[],
@@ -8337,7 +8337,7 @@ def test_scene_block_visible_person_silent():
         room_session_id=None, user_turns=0, kairos_clock_reset=True,
         voice_only_origin=False, waiting_for_name=False, voice_face_confirmed=False,
         db_enrolled=False, confidence_tier="", prior_person_type=None,
-        dispute_reason=None, disputed_claimed_name=None, dispute_set_at=None,
+        dispute_reason=None, disputed_claimed_name=None, dispute_set_at=None, dispute_set_at_monotonic=None,
         disputed_block_count=0, disputed_block_alerted=False, recent_voice_confs=[],
         cached_prefix=None, core_memory=[], tool_repeat_last=None,
         tool_repeat_count=0, recent_attributions=[],
@@ -8379,7 +8379,7 @@ def test_scene_block_voice_only_offscreen():
         room_session_id=None, user_turns=0, kairos_clock_reset=True,
         voice_only_origin=True, waiting_for_name=False, voice_face_confirmed=False,
         db_enrolled=False, confidence_tier="", prior_person_type=None,
-        dispute_reason=None, disputed_claimed_name=None, dispute_set_at=None,
+        dispute_reason=None, disputed_claimed_name=None, dispute_set_at=None, dispute_set_at_monotonic=None,
         disputed_block_count=0, disputed_block_alerted=False, recent_voice_confs=[],
         cached_prefix=None, core_memory=[], tool_repeat_last=None,
         tool_repeat_count=0, recent_attributions=[],
@@ -8403,7 +8403,7 @@ def test_scene_block_voice_stale_excluded():
         kairos_clock_reset=True, voice_only_origin=True, waiting_for_name=False,
         voice_face_confirmed=False, db_enrolled=False, confidence_tier="",
         prior_person_type=None, dispute_reason=None, disputed_claimed_name=None,
-        dispute_set_at=None, disputed_block_count=0, disputed_block_alerted=False,
+        dispute_set_at=None, dispute_set_at_monotonic=None, disputed_block_count=0, disputed_block_alerted=False,
         recent_voice_confs=[], cached_prefix=None, core_memory=[],
         tool_repeat_last=None, tool_repeat_count=0, recent_attributions=[],
     ),)
@@ -8539,7 +8539,7 @@ def test_scene_block_no_recent_visitors_omits_both_sections():
         room_session_id=None, user_turns=0, kairos_clock_reset=True,
         voice_only_origin=False, waiting_for_name=False, voice_face_confirmed=False,
         db_enrolled=False, confidence_tier="", prior_person_type=None,
-        dispute_reason=None, disputed_claimed_name=None, dispute_set_at=None,
+        dispute_reason=None, disputed_claimed_name=None, dispute_set_at=None, dispute_set_at_monotonic=None,
         disputed_block_count=0, disputed_block_alerted=False, recent_voice_confs=[],
         cached_prefix=None, core_memory=[], tool_repeat_last=None,
         tool_repeat_count=0, recent_attributions=[],
@@ -8572,7 +8572,7 @@ def test_scene_block_stranger_role_label():
         room_session_id="room_test", user_turns=0, kairos_clock_reset=True,
         voice_only_origin=False, waiting_for_name=False, voice_face_confirmed=False,
         db_enrolled=False, confidence_tier="", prior_person_type=None,
-        dispute_reason=None, disputed_claimed_name=None, dispute_set_at=None,
+        dispute_reason=None, disputed_claimed_name=None, dispute_set_at=None, dispute_set_at_monotonic=None,
         disputed_block_count=0, disputed_block_alerted=False, recent_voice_confs=[],
         cached_prefix=None, core_memory=[], tool_repeat_last=None,
         tool_repeat_count=0, recent_attributions=[],
@@ -8596,7 +8596,7 @@ def test_scene_block_disputed_best_friend_labeled_disputed():
         room_session_id="room_test", user_turns=0, kairos_clock_reset=True,
         voice_only_origin=False, waiting_for_name=False, voice_face_confirmed=False,
         db_enrolled=False, confidence_tier="", prior_person_type=None,
-        dispute_reason=None, disputed_claimed_name=None, dispute_set_at=None,
+        dispute_reason=None, disputed_claimed_name=None, dispute_set_at=None, dispute_set_at_monotonic=None,
         disputed_block_count=0, disputed_block_alerted=False, recent_voice_confs=[],
         cached_prefix=None, core_memory=[], tool_repeat_last=None,
         tool_repeat_count=0, recent_attributions=[],
@@ -8641,7 +8641,7 @@ def test_cross_person_excerpts_disputed_best_friend_labeled_disputed(monkeypatch
             room_session_id="room_test", user_turns=1, kairos_clock_reset=True,
             voice_only_origin=False, waiting_for_name=False, voice_face_confirmed=False,
             db_enrolled=False, confidence_tier="", prior_person_type=None,
-            dispute_reason=None, disputed_claimed_name=None, dispute_set_at=None,
+            dispute_reason=None, disputed_claimed_name=None, dispute_set_at=None, dispute_set_at_monotonic=None,
             disputed_block_count=0, disputed_block_alerted=False, recent_voice_confs=[],
             cached_prefix=None, core_memory=[], tool_repeat_last=None,
             tool_repeat_count=0, recent_attributions=[],
@@ -8653,7 +8653,7 @@ def test_cross_person_excerpts_disputed_best_friend_labeled_disputed(monkeypatch
             room_session_id="room_test", user_turns=1, kairos_clock_reset=True,
             voice_only_origin=False, waiting_for_name=False, voice_face_confirmed=False,
             db_enrolled=False, confidence_tier="", prior_person_type=None,
-            dispute_reason=None, disputed_claimed_name=None, dispute_set_at=None,
+            dispute_reason=None, disputed_claimed_name=None, dispute_set_at=None, dispute_set_at_monotonic=None,
             disputed_block_count=0, disputed_block_alerted=False, recent_voice_confs=[],
             cached_prefix=None, core_memory=[], tool_repeat_last=None,
             tool_repeat_count=0, recent_attributions=[],
@@ -9449,8 +9449,12 @@ async def test_expire_stale_sessions_closes_timed_out_voice_session():
 
     stale_pid = "stranger_expire_test"
     stale_now = time.time() - (VOICE_SESSION_TIMEOUT + 10)
+    # #5 Slice B (§0.1.3): VOICE_SESSION_TIMEOUT reads the MONOTONIC last_spoke_at now; seed the
+    # staleness clock (now_mono) backdated so the elapsed-math expiry fires. A backdated WALL `now`
+    # only stamps started_at (which is NOT the timeout clock — this test previously relied on wall).
     await pipeline._session_store.open_session(
-        stale_pid, "ExpireTest", "stranger", "voice", now=stale_now
+        stale_pid, "ExpireTest", "stranger", "voice", now=stale_now,
+        now_mono=time.monotonic() - (VOICE_SESSION_TIMEOUT + 10),
     )
     pipeline._expire_stale_sessions()
     await asyncio.sleep(0)
@@ -10817,7 +10821,13 @@ async def test_dispute_timeout_forces_session_close():
     now = time.time()
     await pipeline._session_store.open_session(pid, "Jagan", "known", "face", now=now)
     await pipeline._session_store.transition_to_disputed(pid, None, "test", now=now)
-    await pipeline._session_store.set_dispute_set_at(pid, now - (DISPUTE_MAX_DURATION + 10))
+    # #5 Slice B (§0.1.3): DISPUTE_MAX_DURATION reads the MONOTONIC companion now (the wall
+    # dispute_set_at is retained only for the persisted watchdog display). Backdate the mono
+    # companion so the elapsed-math timeout fires (a past WALL dispute_set_at no longer drives
+    # the timer — this test previously encoded the wall clock).
+    await pipeline._session_store.set_dispute_set_at(
+        pid, now - (DISPUTE_MAX_DURATION + 10),
+        ts_monotonic=time.monotonic() - (DISPUTE_MAX_DURATION + 10))
     pipeline._expire_stale_sessions()
     await asyncio.sleep(0)
     assert pipeline._session_store.peek_snapshot(pid) is None, \
@@ -10966,7 +10976,9 @@ def test_voice_accum_allowed_path_a_face_witness():
     pid = "_test_path_a"
     now = time.time()
     asyncio.run(pipeline._session_store.open_session(pid, "Test", "known", "face", now=now))
-    asyncio.run(pipeline._session_store.update_face_seen(pid, conf=0.80, ts=now, anti_spoof_live=True))
+    # #5 Slice D: _voice_accum_allowed reads time.monotonic() (was time.time()); face_last_seen_ts
+    # must be seeded monotonic so a "fresh" face reads fresh under the now-monotonic reader.
+    asyncio.run(pipeline._session_store.update_face_seen(pid, conf=0.80, ts=time.monotonic(), anti_spoof_live=True))
     allowed, reason, path = pipeline._voice_accum_allowed(pid)
     assert allowed
     assert path == "face_witness"
@@ -10978,7 +10990,10 @@ def test_voice_accum_allowed_face_witness_too_old():
     pid = "_test_path_a_stale"
     now = time.time()
     asyncio.run(pipeline._session_store.open_session(pid, "Test", "known", "face", now=now))
-    asyncio.run(pipeline._session_store.update_face_seen(pid, conf=0.80, ts=now - 30.0, anti_spoof_live=True))
+    # #5 Slice D: _voice_accum_allowed reads time.monotonic(); a monotonic face 30s old is stale
+    # (> VOICE_ACCUM_FACE_WITNESS_MAX_AGE_SEC) so Path A refuses. (Was ts=now-30.0 wall, which
+    # under the now-monotonic reader gave a hugely-negative age that incorrectly read fresh.)
+    asyncio.run(pipeline._session_store.update_face_seen(pid, conf=0.80, ts=time.monotonic() - 30.0, anti_spoof_live=True))
     allowed, reason, path = pipeline._voice_accum_allowed(pid)
     assert not allowed
     assert path == "refused"
@@ -12356,7 +12371,7 @@ def _s3b1_sess(pid, name, ptype="known"):
         room_session_id="room_test", user_turns=0, kairos_clock_reset=True,
         voice_only_origin=False, waiting_for_name=False, voice_face_confirmed=False,
         db_enrolled=False, confidence_tier="", prior_person_type=None,
-        dispute_reason=None, disputed_claimed_name=None, dispute_set_at=None,
+        dispute_reason=None, disputed_claimed_name=None, dispute_set_at=None, dispute_set_at_monotonic=None,
         disputed_block_count=0, disputed_block_alerted=False, recent_voice_confs=[],
         cached_prefix=None, core_memory=[], tool_repeat_last=None,
         tool_repeat_count=0, recent_attributions=[],
@@ -16153,9 +16168,10 @@ def test_switch_enrolled_writes_voice_match_conf_to_fresh_session():
     )
     # And ts — drives Path B's staleness check AND the
     # dispute auto-clear Bug D1 deque.
-    assert "ts=time.time()" in body, (
-        "switch_enrolled must also bump ts so staleness "
-        "checks don't immediately disqualify the fresh session"
+    assert "ts=time.monotonic()" in body, (
+        "switch_enrolled must also bump ts (monotonic per #5 Slice B — last_spoke_at is the "
+        "VOICE_SESSION_TIMEOUT staleness clock) so staleness checks don't immediately "
+        "disqualify the fresh session"
     )
 
 

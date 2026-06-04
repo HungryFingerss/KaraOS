@@ -4,9 +4,13 @@ Phase A is observability ONLY — no behavior change to accumulation. It makes t
 silent-failure paths LOG so the next instrumented canary shows exactly where the gallery
 isn't filling; the actual accumulation fix is Phase B (separate handoff after the canary).
 
-Deliberately NOT touched here (route through the clock-fabric follow-up — fix once,
-consistently): the clock mismatch at pipeline.py:8515 (`time.monotonic() -
-peek_last_recognized_at`) and the Path-A `face_age = now - ev.face_last_seen_ts` read.
+The two clock reads this deferral named were RESOLVED across #5
+(presence_fabric_clock_migration_spec.md): the `time.monotonic() - peek_last_recognized_at`
+read became single-clock once Slice A migrated the presence now-vars to monotonic
+(PresenceSnapshot.last_recognized_at is monotonic-written, so mono - mono is consistent), and
+the Path-A `face_age = now - ev.face_last_seen_ts` read was fixed in #5 Slice D — pipeline.py
+`_voice_accum_allowed` now reads `time.monotonic()`, matching the now-monotonic
+VoiceEvidence.face_last_seen_ts (§1.4/§3.D, the read-half of the deferred clock-fabric fix).
 """
 
 # SPDX-License-Identifier: Apache-2.0

@@ -1836,14 +1836,15 @@ def _open_session(
     """
     if not (person_type in VALID_PERSON_TYPES):
         raise RuntimeError(f'_open_session called with invalid person_type={person_type!r}; must be one of {sorted(VALID_PERSON_TYPES)}')
-    now = time.time()
+    now = time.time()                # WALLCLOCK: started_at (enrollment-rename grace, read at :657 via time.time()-started_at) + room id/started_at display
+    now_mono = time.monotonic()      # #5 Slice B (§0.1.3 SPLIT): last_face_seen/last_spoke_at staleness seeds (FACE_LOSS_GRACE / VOICE_SESSION_TIMEOUT)
     existing = _session_store.peek_snapshot(person_id)
     if existing is not None:
         # P0.7.3: named lifecycle call covers last_spoke_at, last_face_seen, voice_confidence
         try:
             _loop = asyncio.get_running_loop()
             _loop.create_task(_session_store.update_on_reopen(
-                person_id, voice_confidence=voice_confidence, now=now))
+                person_id, voice_confidence=voice_confidence, now=now_mono))  # #5 Slice B: last_face_seen/last_spoke_at staleness → mono
         except RuntimeError:
             pass  # OPTIONAL: no running loop in test/early-boot context
         # Don't overwrite person_type on re-open — caller may have promoted
@@ -1940,7 +1941,7 @@ def _open_session(
         # also opens in test/early-boot contexts that previously had no loop to schedule on).
         _session_store._sync_open_session(
             person_id, person_name, person_type, session_type,
-            now=now,
+            now=now, now_mono=now_mono,
             bootstrap_credits=_bootstrap,
             room_session_id=_current_room_session,
             voice_sample_count=_db_voice_count,
@@ -2044,7 +2045,12 @@ def _voice_accum_allowed(pid: str) -> tuple[bool, str, str]:
     """
     snap = _session_store.peek_snapshot(pid)
     ev = snap.evidence if snap is not None else None
-    now = time.time()
+    # #5 Slice D §1.4/§3.D: monotonic to match the now-monotonic VoiceEvidence.face_last_seen_ts
+    # (Slice A/B flipped the `update_face_seen(ts=)` writer arg). face_age = mono_now - mono_field
+    # is consistent elapsed-math; `now` feeds ONLY Path-A face_age (no persist/display) -> straight
+    # flip. Was `time.time()` -> +1.78e9 garbage face_age -> Path A never fired (the read-half of
+    # the deferral test_voice_accum_observability.py:7-9 named).
+    now = time.monotonic()
 
     if ev is None:
         return (False, "no session", "refused")
@@ -2275,7 +2281,8 @@ def _expire_stale_sessions() -> bool:
 
     Returns True if any session was closed.
     """
-    _now_fl = time.time()
+    _now_fl = time.time()                    # WALLCLOCK: persisted dispute_set_at re-anchor (watchdog display :4429)
+    _now_fl_mono = time.monotonic()          # #5 Slice B (§0.1.3 SPLIT): elapsed-math reads (FACE_LOSS_GRACE / VOICE_SESSION_TIMEOUT / DISPUTE_MAX_DURATION)
     _expired: list[str] = []
     for _snap in _session_store.peek_all_snapshots():
         # Identity-disputed sessions get a hard cap — vision keeps matching the
@@ -2285,14 +2292,20 @@ def _expire_stale_sessions() -> bool:
         # setting dispute_set_at, lazily anchor it here on the first check so the
         # timeout still fires (instead of permanently resetting to now each pass).
         if _is_disputed(_snap.person_id):
-            _dispute_start = _snap.dispute_set_at
-            if _dispute_start is None:
+            # #5 Slice B (§0.1.3 SPLIT): DISPUTE_MAX_DURATION is elapsed-math → read the
+            # monotonic companion. Wall dispute_set_at is retained for the persisted watchdog
+            # display (:4429). The defensive re-anchor stamps BOTH (wall via _now_fl + mono via
+            # _now_fl_mono) so a re-anchored dispute reads fresh on the mono timeout side too.
+            _dispute_start_mono = _snap.dispute_set_at_monotonic
+            if _dispute_start_mono is None:
                 try:
                     _loop = asyncio.get_running_loop()
-                    _loop.create_task(_session_store.set_dispute_set_at(_snap.person_id, _now_fl))
+                    _loop.create_task(_session_store.set_dispute_set_at(
+                        _snap.person_id, _now_fl, ts_monotonic=_now_fl_mono))
                 except RuntimeError:
-                    asyncio.run(_session_store.set_dispute_set_at(_snap.person_id, _now_fl))  # OPTIONAL: sync fallback
-                _dispute_start = _now_fl
+                    asyncio.run(_session_store.set_dispute_set_at(
+                        _snap.person_id, _now_fl, ts_monotonic=_now_fl_mono))  # OPTIONAL: sync fallback
+                _dispute_start_mono = _now_fl_mono
 
             # Bug D1 (2026-04-22 live run): signal-based dispute auto-clear.
             # Previously disputes only cleared via DISPUTE_MAX_DURATION=180s —
@@ -2356,18 +2369,18 @@ def _expire_stale_sessions() -> bool:
                 )
                 # Session no longer disputed — fall through to normal session
                 # expiry checks below (not `continue`, so we don't skip them).
-            elif _now_fl - _dispute_start > DISPUTE_MAX_DURATION:
+            elif _now_fl_mono - _dispute_start_mono > DISPUTE_MAX_DURATION:
                 print(
                     f"[Pipeline] Dispute timeout for {_snap.person_name} — "
-                    f"force-closing after {_now_fl - _dispute_start:.0f}s"
+                    f"force-closing after {_now_fl_mono - _dispute_start_mono:.0f}s"
                 )
                 _expired.append(_snap.person_id)
                 continue
         if _snap.session_type == "face":
-            if _now_fl - _snap.last_face_seen > FACE_LOSS_GRACE:
+            if _now_fl_mono - _snap.last_face_seen > FACE_LOSS_GRACE:
                 _expired.append(_snap.person_id)
         else:  # voice-started
-            if _now_fl - _snap.last_spoke_at > VOICE_SESSION_TIMEOUT:
+            if _now_fl_mono - _snap.last_spoke_at > VOICE_SESSION_TIMEOUT:
                 _expired.append(_snap.person_id)
 
     for _pid in _expired:
@@ -2520,7 +2533,7 @@ async def _accumulate_voice(
     # Track the latest voice self-match in evidence regardless of accumulation outcome.
     if v_pid == person_id and v_score > 0.0:
         loop.create_task(_session_store.update_voice_heard(
-            person_id, conf=v_score, ts=time.time(),
+            person_id, conf=v_score, ts=time.monotonic(),   # #5 Slice B: last_spoke_at (VOICE_SESSION_TIMEOUT elapsed-math)
         ))
 
     if v_pid == person_id and v_score >= min_self_match:
@@ -3020,7 +3033,7 @@ async def _background_vision_loop(
                         anti_spoof_live=_as_live,
                         anti_spoof_score=_as_score,
                         anti_spoof_reason=_as_reason,
-                        captured_at=time.time(),
+                        captured_at=time.monotonic(),   # #5 Slice B (§0.1.5): TrackStore.captured_at single-clock w/ the _bv_scan_now mono write (behavior-neutral; no elapsed reader)
                         bbox=_det.bbox,
                     ))
                 _h2_iter_verdicts.append(_as_live)
@@ -3051,7 +3064,13 @@ async def _background_vision_loop(
         # Runs immediately when face count rises (new arrival), otherwise throttled
         # to 1/s to avoid hammering the GPU during normal conversation.
         global _vision_face_scan_last, _last_vision_report_str
-        _bv_scan_now = time.time()
+        # #5 Slice A: monotonic. Grep-proof — every _bv_scan_now consumer is in-memory or
+        # elapsed-math: track_store.prune_stale/captured_at (:3072/:3127, in-mem), session
+        # set_last_face_seen/update_face_seen (:3149/:3165, in-mem), presence
+        # upsert_face_recognition (:3154, in-mem), should_run_recognition cadence (:3086),
+        # presence/track staleness reads (:3190/:3204/:3243/:3262), shadow-log cadence
+        # (:3221). NO db.add_embedding created_at, NO display → straight monotonic.
+        _bv_scan_now = time.monotonic()
         _det_count = len(detections) if detections else 0
         _new_arrival = _det_count > _vision_frame_store.peek_prev_det_count()
         await _vision_frame_store.set_prev_det_count(_det_count)
@@ -3282,7 +3301,9 @@ async def _background_vision_loop(
         if _det_count_bv == 0:
             _vis_report_now = "none"
         else:
-            _now_vr  = time.time()
+            _now_vr  = time.monotonic()  # #5 Slice A: monotonic — only consumers are
+            # presence last_seen (:3291) + track last_seen (:3296) staleness gates
+            # (VOICE_ROUTING_FACE_STALE_SECS elapsed-math, in-memory). No persist/display.
             # Bug B: only count face-sourced entries in the visual-scene report.
             # Voice-only entries live in _persons_in_frame for routing purposes
             # but don't belong in the "who is ON CAMERA" line.
@@ -3308,9 +3329,13 @@ async def _background_vision_loop(
 
         # ── Vision heartbeat during conversation ──────────────────────────────
         global _vision_last_heartbeat, _vision_last_heartbeat_state
-        _bv_now = time.time()
-        if _bv_now - _vision_last_heartbeat >= 30.0:
-            _vision_last_heartbeat = _bv_now
+        _bv_now = time.time()  # WALLCLOCK: frame_ts (:3389 below) feeds the PERSISTED
+        # vision_frame event-log payload (safe_emit_sync — replay-ordered, cross-process);
+        # an event-log persisted stamp is out of #5 scope (§7). Stays wall.
+        _bv_now_mono = time.monotonic()  # #5 Slice A: elapsed-math companion for the
+        # vision-loop heartbeat-log cadence below (in-memory cadence, not persisted/displayed).
+        if _bv_now_mono - _vision_last_heartbeat >= 30.0:
+            _vision_last_heartbeat = _bv_now_mono
             state_label = _pipeline_state_store.peek_pipeline_state().name if _pipeline_state_store.peek_pipeline_state() else "?"
             if _session_store.peek_all_snapshots():
                 who = ", ".join(snap.person_name for snap in _session_store.peek_all_snapshots())
@@ -4353,13 +4378,14 @@ async def _handle_update_person_name(args: dict, ctx: "_ToolContext") -> "str | 
         # owner: a mis-rename would transfer their privileges to the attacker.
         if _sess_type in ("known", "best_friend"):
             if _session_store.peek_snapshot(person_id) is not None:
-                _dispute_ts = time.time()
+                _dispute_ts = time.time()                # WALLCLOCK: persisted watchdog display (dispute_set_at :4429)
+                _dispute_ts_mono = time.monotonic()      # #5 Slice B (§0.1.3): dispute_set_at_monotonic (DISPUTE_MAX_DURATION elapsed-math)
                 try:
                     _loop = asyncio.get_running_loop()
                     _loop.create_task(_session_store.transition_to_disputed(
                         person_id, new_name,
                         f"speaker claims name '{new_name}', sensor says '{person_name}'",
-                        now=_dispute_ts,
+                        now=_dispute_ts, now_mono=_dispute_ts_mono,
                     ))
                     _loop.create_task(_session_store.set_cached_prefix(person_id, None))
                 except RuntimeError:
@@ -4558,11 +4584,12 @@ async def _handle_report_identity_mismatch(args: dict, ctx: "_ToolContext") -> "
 
     reason = (args.get("reason") or "").strip() or "identity mismatch reported"
     if _session_store.peek_snapshot(person_id) is not None:
-        _dispute_ts_ridm = time.time()
+        _dispute_ts_ridm = time.time()                   # WALLCLOCK: persisted watchdog display (dispute_set_at :4429)
+        _dispute_ts_ridm_mono = time.monotonic()         # #5 Slice B (§0.1.3): dispute_set_at_monotonic (DISPUTE_MAX_DURATION)
         try:
             _loop = asyncio.get_running_loop()
             _loop.create_task(_session_store.transition_to_disputed(
-                person_id, None, reason, now=_dispute_ts_ridm,
+                person_id, None, reason, now=_dispute_ts_ridm, now_mono=_dispute_ts_ridm_mono,
             ))
             _loop.create_task(_session_store.set_cached_prefix(person_id, None))
         except RuntimeError:
@@ -5603,7 +5630,8 @@ async def conversation_turn(
                     f"addressed to {_addressed!r}, staying silent"
                 )
                 # Preserve history + extraction. No TTS, no tool execution.
-                _now_ts_u2u = time.time()
+                _now_ts_u2u = time.time()                 # WALLCLOCK: history "ts" age-suffix display (room-block render)
+                _now_ts_u2u_mono = time.monotonic()       # #5 Slice B (§0.1.5 SPLIT): last_spoke_at (VOICE_SESSION_TIMEOUT elapsed-math)
                 history.append({
                     "role":    "user",
                     "content": text,
@@ -5631,7 +5659,7 @@ async def conversation_turn(
                 try:
                     _loop = asyncio.get_running_loop()
                     _loop.create_task(_session_store.increment_user_turns(person_id))
-                    _loop.create_task(_session_store.set_last_spoke_at(person_id, _now_ts_u2u))
+                    _loop.create_task(_session_store.set_last_spoke_at(person_id, _now_ts_u2u_mono))
                 except RuntimeError:
                     pass  # OPTIONAL
                 return ("continue", None)
@@ -7498,7 +7526,7 @@ async def run():
                                 try:
                                     _loop = asyncio.get_running_loop()
                                     _loop.create_task(_session_store.update_face_seen(
-                                        person_id, conf=conf, ts=time.time(), anti_spoof_live=True))
+                                        person_id, conf=conf, ts=time.monotonic(), anti_spoof_live=True))  # #5 Slice B: last_face_seen (FACE_LOSS_GRACE)
                                 except RuntimeError:
                                     pass  # OPTIONAL
                                 state.write(
@@ -7823,7 +7851,7 @@ async def run():
 
                 # Seed the voice session timeout for voice-started sessions
                 if _session_store.peek_snapshot(_primary_pid_conv) is not None:
-                    _conv_start_ts = time.time()
+                    _conv_start_ts = time.monotonic()  # #5 Slice B (§0.1.5): last_spoke_at (VOICE_SESSION_TIMEOUT); only consumer is set_last_spoke_at
                     try:
                         _loop = asyncio.get_running_loop()
                         _loop.create_task(_session_store.set_last_spoke_at(_primary_pid_conv, _conv_start_ts))
@@ -7991,7 +8019,10 @@ async def run():
                         try:
                             asyncio.get_running_loop().create_task(
                                 _presence_store.upsert_voice_recognition(
-                                    _v_pid, _v_name_pif, _v_score, time.time()
+                                    # #5 Slice A: monotonic — writes presence last_seen
+                                    # (in-memory staleness, consumed by _face_in_frame :599 +
+                                    # the routing reads, all elapsed-math). No persist/display.
+                                    _v_pid, _v_name_pif, _v_score, time.monotonic()
                                 )
                             )
                         except RuntimeError:
@@ -8120,7 +8151,7 @@ async def run():
                     # speaker), do NOT extend the session — a different person speaking
                     # should not keep the original person's session alive.
                     if _v_pid and _session_store.peek_snapshot(_v_pid) is not None:
-                        _vs_ts = time.time()
+                        _vs_ts = time.monotonic()  # #5 Slice B: last_spoke_at (VOICE_SESSION_TIMEOUT elapsed-math)
                         try:
                             _loop = asyncio.get_running_loop()
                             _loop.create_task(_session_store.record_voice_spoke(
@@ -8135,7 +8166,7 @@ async def run():
                         # accumulate despite a mature profile. Every Jagan turn in the
                         # second half of the 2026-04-20 run hit this refusal at voice_n=20.
                         _loop.create_task(_session_store.update_voice_heard(
-                            _v_pid, conf=_v_score, ts=time.time()))
+                            _v_pid, conf=_v_score, ts=time.monotonic()))  # #5 Slice B: last_spoke_at (VOICE_SESSION_TIMEOUT)
                         # Bug D1 (2026-04-22 live run): feed the disputed-session
                         # auto-clear detector. Only disputed sessions need this
                         # deque; lazy-initialize on first append so non-disputed
@@ -8238,7 +8269,13 @@ async def run():
                             _build_routing_inputs as _rc_build,
                             reconcile as _rc_reconcile,
                         )
-                        _rc_now = time.time()
+                        # #5 Slice A keystone: monotonic. Reconciler (clock-disciplined,
+                        # reconciler.py:12 "MUST NOT call time.time()") consumes this as `now`
+                        # vs _rs_pif_view's last_recognized_at (sourced from PresenceSnapshot
+                        # attrs, now monotonic-written). Single-clock by construction. Guarded
+                        # by tests/test_reconciler_clock_provenance.py (the dict-mediated
+                        # blind-spot closer the paired invariant can't see).
+                        _rc_now = time.monotonic()
                         _rc_claim, _rc_presence, _rc_session = _rc_build(
                             v_pid=_v_pid,
                             v_score=_v_score,
@@ -8378,7 +8415,7 @@ async def run():
                                 _loop.create_task(_query_embedding_store.discard(_resolved_pid))
                             except RuntimeError:
                                 pass  # OPTIONAL
-                        _sw_ts = time.time()
+                        _sw_ts = time.monotonic()  # #5 Slice B: last_spoke_at (VOICE_SESSION_TIMEOUT elapsed-math)
                         try:
                             _loop = asyncio.get_running_loop()
                             _loop.create_task(_session_store.record_voice_spoke(
@@ -8396,7 +8433,7 @@ async def run():
                         # routing score of 0.617. Reviewer's 2026-04-22 Jagan re-entry
                         # case after John's session expired.
                         _loop.create_task(_session_store.update_voice_heard(
-                            _resolved_pid, conf=_v_score, ts=time.time()))
+                            _resolved_pid, conf=_v_score, ts=time.monotonic()))  # #5 Slice B: last_spoke_at (VOICE_SESSION_TIMEOUT)
                         _cur_pid  = _resolved_pid
                         _cur_name = _v_name
                         # Rebuild voice_state for the switched speaker so conversation_turn()
@@ -8418,7 +8455,11 @@ async def run():
                         # #20: 1:1 stranger-track-to-session binding.
                         # Every SORT track gets a pre-allocated pid; multi-track →
                         # pick the most-recently-seen track's session (not "most-recent voice session").
-                        _now_route   = time.time()
+                        # #5 Slice A: monotonic — reads track last_seen staleness (:8426,
+                        # elapsed) + writes last_spoke_at (:8447). The last_spoke_at write
+                        # makes that field mixed-clock until Slice B flips its other writers
+                        # (_now_ext/_now_ts_u2u/_conv_start_ts) → §3.0 TRANSIENT allowlist entry.
+                        _now_route   = time.monotonic()
                         _active_unrec = {
                             s.track_id: s.last_seen
                             for s in _track_store.peek_all_snapshots()
@@ -8568,7 +8609,12 @@ async def run():
 
                     # #22: extend voice session when face confirms holder is present
                     _ext_snap = _session_store.peek_snapshot(_cur_pid) if _cur_pid else None
-                    _now_ext = time.time()
+                    # #5 Slice B (DRIFT-1): flip to monotonic. The :8608 staleness read compares
+                    # _now_ext against the MONOTONIC presence last_recognized_at (Slice A); while
+                    # _now_ext was wall, wall−mono ≈ +1.78e9 ≥ VOICE_ROUTING_FACE_STALE_SECS so
+                    # _holder_vis_ext was ALWAYS False → #22 voice-session extension was dead code.
+                    # mono−mono revives it AND makes the :8614 last_spoke_at write monotonic.
+                    _now_ext = time.monotonic()
                     if (_cur_pid and _session_store.peek_snapshot(_cur_pid) is not None
                             and (_ext_snap.session_type if _ext_snap is not None else None) == "voice"):
                         _holder_vis_ext = (
@@ -8793,7 +8839,7 @@ async def run():
                                         try:
                                             _loop = asyncio.get_running_loop()
                                             _loop.create_task(_session_store.update_face_seen(
-                                                _cur_pid, conf=0.50, ts=time.time(), anti_spoof_live=True))
+                                                _cur_pid, conf=0.50, ts=time.monotonic(), anti_spoof_live=True))  # #5 Slice B: last_face_seen (FACE_LOSS_GRACE)
                                             _loop.create_task(_session_store.set_bootstrap_credits(
                                                 _cur_pid, N_INITIAL_VOICE_BOOTSTRAP))
                                         except RuntimeError:

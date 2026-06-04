@@ -70,7 +70,8 @@ class Session:
     prior_person_type:      Optional[str]         = None   # P0.2: None → read as "stranger"
     dispute_reason:         Optional[str]         = None
     disputed_claimed_name:  Optional[str]         = None
-    dispute_set_at:         Optional[float]       = None
+    dispute_set_at:         Optional[float]       = None   # WALLCLOCK: persisted watchdog display (pipeline.py:4429)
+    dispute_set_at_monotonic: Optional[float]     = None   # #5 Slice B (§0.1.3 SPLIT): DISPUTE_MAX_DURATION elapsed-math
     disputed_block_count:   int                   = 0
     disputed_block_alerted: bool                  = False
     recent_voice_confs:     list                  = dataclasses.field(default_factory=list)
@@ -105,6 +106,7 @@ class SessionSnapshot:
     dispute_reason:         Optional[str]
     disputed_claimed_name:  Optional[str]
     dispute_set_at:         Optional[float]
+    dispute_set_at_monotonic: Optional[float]
     disputed_block_count:   int
     disputed_block_alerted: bool
     recent_voice_confs:     tuple          # Pre-P1 Bundle 5 MF8 — immutable tuple copy (frozen snapshot)
@@ -139,6 +141,7 @@ def _to_snapshot(s: Session) -> SessionSnapshot:
         dispute_reason=s.dispute_reason,
         disputed_claimed_name=s.disputed_claimed_name,
         dispute_set_at=s.dispute_set_at,
+        dispute_set_at_monotonic=s.dispute_set_at_monotonic,
         disputed_block_count=s.disputed_block_count,
         disputed_block_alerted=s.disputed_block_alerted,
         recent_voice_confs=tuple(s.recent_voice_confs),
@@ -191,18 +194,31 @@ class SessionStore:
     # --- Lifecycle ---
     def _build_and_insert(self, person_id: str, person_name: str,
                           person_type: str, session_type: str, *,
-                          now: float, bootstrap_credits: int = 0,
+                          now: float, now_mono: Optional[float] = None,
+                          bootstrap_credits: int = 0,
                           room_session_id: str = "",
                           voice_sample_count: int = 0) -> None:
         """C2 (Canary #4) — the ONE shared construct-and-insert body, so the async
         `open_session` and the sync `_sync_open_session` cannot diverge. Has NO internal
         await, so it is atomic once entered (under the lock, or directly from the sync
         path). The dict insert is the LAST step, on a fully-built Session — a concurrent
-        peek_snapshot never observes a half-state."""
+        peek_snapshot never observes a half-state.
+
+        #5 Slice B (§0.1.3 lifecycle SPLIT): `now` (WALL) seeds the persisted/displayed
+        `started_at` — read at pipeline.py:657 via `time.time() - started_at` for the
+        enrollment-rename grace window; flipping it to monotonic reintroduces the Bundle 5
+        enrollment-rename bug (a stale session reads "fresh"). `now_mono` (MONOTONIC) seeds
+        the elapsed-math staleness fields last_face_seen + last_spoke_at (FACE_LOSS_GRACE /
+        VOICE_SESSION_TIMEOUT, read against a monotonic `now`). When `now_mono` is None
+        (legacy/test callers that don't split), both fall back to `now` — old behavior
+        preserved. NB: this seed split is NOT detector-visible (Session(...) is a constructor
+        call, not a `self.attr = param` assign); its forcing function is Slice B's behavioral
+        FACE_LOSS_GRACE / VOICE_SESSION_TIMEOUT fail-on-revert tests."""
+        _stale_seed = now_mono if now_mono is not None else now
         s = Session(
             person_id=person_id, person_name=person_name,
             person_type=person_type, session_type=session_type,
-            started_at=now, last_face_seen=now, last_spoke_at=now,
+            started_at=now, last_face_seen=_stale_seed, last_spoke_at=_stale_seed,
         )
         # P0.B1 D1: VoiceEvidence is frozen — rebind via dataclasses.replace().
         s.evidence = dataclasses.replace(
@@ -215,19 +231,21 @@ class SessionStore:
 
     async def open_session(self, person_id: str, person_name: str,
                            person_type: str, session_type: str, *,
-                           now: float, bootstrap_credits: int = 0,
+                           now: float, now_mono: Optional[float] = None,
+                           bootstrap_credits: int = 0,
                            room_session_id: str = "",
                            voice_sample_count: int = 0) -> None:
         async with self._lock:
             self._build_and_insert(
                 person_id, person_name, person_type, session_type,
-                now=now, bootstrap_credits=bootstrap_credits,
+                now=now, now_mono=now_mono, bootstrap_credits=bootstrap_credits,
                 room_session_id=room_session_id, voice_sample_count=voice_sample_count,
             )
 
     def _sync_open_session(self, person_id: str, person_name: str,
                            person_type: str, session_type: str, *,
-                           now: float, bootstrap_credits: int = 0,
+                           now: float, now_mono: Optional[float] = None,
+                           bootstrap_credits: int = 0,
                            room_session_id: str = "",
                            voice_sample_count: int = 0) -> None:
         """C1 (Canary #4) — the ONE blessed SYNC session write. Purely sync: NO `await`,
@@ -240,7 +258,7 @@ class SessionStore:
         + the `_sync_mint_room` precedent on PipelineStateStore."""
         self._build_and_insert(
             person_id, person_name, person_type, session_type,
-            now=now, bootstrap_credits=bootstrap_credits,
+            now=now, now_mono=now_mono, bootstrap_credits=bootstrap_credits,
             room_session_id=room_session_id, voice_sample_count=voice_sample_count,
         )
 
@@ -372,15 +390,18 @@ class SessionStore:
                 s.last_spoke_at = ts
                 s.voice_confidence = voice_confidence
 
-    async def set_dispute_set_at(self, pid: str, ts: Optional[float]) -> None:
+    async def set_dispute_set_at(self, pid: str, ts: Optional[float], *,
+                                 ts_monotonic: Optional[float] = None) -> None:
         async with self._lock:
             s = self._sessions.get(pid)
             if s is not None:
-                s.dispute_set_at = ts
+                s.dispute_set_at = ts                       # WALLCLOCK: persisted watchdog display
+                s.dispute_set_at_monotonic = ts_monotonic   # #5 Slice B (§0.1.3): DISPUTE_MAX_DURATION elapsed-math
 
     # --- Dispute state (atomic) ---
     async def transition_to_disputed(self, pid: str, claimed_name: Optional[str],
-                                      reason: str, *, now: float) -> None:
+                                      reason: str, *, now: float,
+                                      now_mono: Optional[float] = None) -> None:
         async with self._lock:
             s = self._sessions.get(pid)
             if s is not None:
@@ -388,7 +409,8 @@ class SessionStore:
                 s.person_type = "disputed"
                 s.disputed_claimed_name = claimed_name
                 s.dispute_reason = reason
-                s.dispute_set_at = now
+                s.dispute_set_at = now                       # WALLCLOCK: persisted watchdog display (:4429)
+                s.dispute_set_at_monotonic = now_mono        # #5 Slice B (§0.1.3): DISPUTE_MAX_DURATION elapsed-math
 
     async def clear_dispute(self, pid: str, *, now: float) -> None:
         async with self._lock:
@@ -399,6 +421,7 @@ class SessionStore:
                 s.dispute_reason = None
                 s.disputed_claimed_name = None
                 s.dispute_set_at = None
+                s.dispute_set_at_monotonic = None
                 s.disputed_block_count = 0
                 s.disputed_block_alerted = False
 

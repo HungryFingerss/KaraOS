@@ -25,10 +25,11 @@ EXPECTED_SESSION_FIELDS = frozenset({
     "evidence", "room_session_id", "user_turns", "kairos_clock_reset",
     "voice_only_origin", "waiting_for_name", "voice_face_confirmed",
     "db_enrolled", "confidence_tier", "prior_person_type", "dispute_reason",
-    "disputed_claimed_name", "dispute_set_at", "disputed_block_count",
+    "disputed_claimed_name", "dispute_set_at", "dispute_set_at_monotonic",
+    "disputed_block_count",
     "disputed_block_alerted", "recent_voice_confs", "cached_prefix",
     "core_memory", "tool_repeat_last", "tool_repeat_count", "recent_attributions",
-})  # 29 fields
+})  # 30 fields (#5 Slice B §0.1.3 added dispute_set_at_monotonic)
 
 EXPECTED_VOICE_EVIDENCE_FIELDS = frozenset({
     "face_match_conf", "face_last_seen_ts", "anti_spoof_live", "anti_spoof_score",

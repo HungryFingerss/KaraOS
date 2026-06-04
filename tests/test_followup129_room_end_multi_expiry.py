@@ -37,9 +37,11 @@ import pytest
 
 def _backdate_face_session(pl, pid: str) -> None:
     """Push a 'face' session's last_face_seen far past FACE_LOSS_GRACE so the next
-    _expire_stale_sessions() poll expires it. Both _open_session and _expire_stale_sessions
-    use time.time() (wallclock), so a wallclock backdate is the correct lever."""
-    pl._session_store._sessions[pid].last_face_seen = time.time() - pl.FACE_LOSS_GRACE - 100.0
+    _expire_stale_sessions() poll expires it. #5 Slice B (§0.1.3): last_face_seen is now a
+    MONOTONIC staleness clock — _expire_stale_sessions reads `time.monotonic() - last_face_seen
+    > FACE_LOSS_GRACE` — so a MONOTONIC backdate is the correct lever (a wallclock backdate would
+    make mono_now − wall ≈ -1.78e9 < FACE_LOSS_GRACE → never expires)."""
+    pl._session_store._sessions[pid].last_face_seen = time.monotonic() - pl.FACE_LOSS_GRACE - 100.0
 
 
 @pytest.mark.asyncio

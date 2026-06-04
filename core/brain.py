@@ -2713,7 +2713,12 @@ def _build_system_prompt(
             and vision_state.get("identity_evidence")):
         ev = vision_state["identity_evidence"]
         import time as _time
-        _now = _time.time()
+        # #5 Slice D §1.4/§3.D: monotonic to match the now-monotonic VoiceEvidence timestamps
+        # (face_last_seen_ts / voice_last_heard_ts), carried verbatim into this dict via
+        # dataclasses.asdict(evidence) at pipeline.py:3548/8691. _now feeds ONLY _face_age/_voice_age
+        # elapsed-math (rendered as "Xs ago" durations, not wall-clock) -> straight flip. Was
+        # `_time.time()` -> +1.78e9 garbage ages -> face channel pinned "weak/missing".
+        _now = _time.monotonic()
         _face_conf  = ev.get("face_match_conf", 0.0)
         _face_age   = _now - ev.get("face_last_seen_ts", 0.0) if ev.get("face_last_seen_ts") else None
         _live       = ev.get("anti_spoof_live", False)

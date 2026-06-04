@@ -82,15 +82,15 @@ _INDIRECT_BOUNDARIES_ALLOWLIST: dict[tuple[str, int], str] = {
         "_build_context user_msg — UPSTREAM-WRAPPED via "
         "wrap_user_input(message.strip()); web-context augmentation "
         "concatenates AROUND the wrapped user_msg so wrap survives (+6 #123)",
-    ("core/brain.py", 3047):
+    ("core/brain.py", 3052):
         "web-search re-injection — concatenates web_context with "
-        "already-wrapped user_msg from upstream (+6 #123)",
-    ("core/brain.py", 3244):
-        "greeting generation Together — system-constructed greeting prompt (+6 #123)",
-    ("core/brain.py", 3274):
-        "greeting generation Ollama — system-constructed (parallel to Together) (+6 #123)",
-    ("core/brain.py", 3343):
-        "choose_greeting_order — structured names-list prompt, no raw user-text (+6 #123)",
+        "already-wrapped user_msg from upstream (+6 #123, +5 #5-SliceD)",
+    ("core/brain.py", 3249):
+        "greeting generation Together — system-constructed greeting prompt (+6 #123, +5 #5-SliceD)",
+    ("core/brain.py", 3279):
+        "greeting generation Ollama — system-constructed (parallel to Together) (+6 #123, +5 #5-SliceD)",
+    ("core/brain.py", 3348):
+        "choose_greeting_order — structured names-list prompt, no raw user-text (+6 #123, +5 #5-SliceD)",
     # ── core/brain_agent.py (6 entries) ─────────────────────────────────
     ("core/brain_agent.py", 464):
         "_ask_privacy_llm — entity/attribute/value triples (already-wrapped upstream extraction) (+2 #123)",

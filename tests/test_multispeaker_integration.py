@@ -157,7 +157,7 @@ class TestRoomBlock:
             room_session_id=room_session_id, user_turns=0, kairos_clock_reset=True,
             voice_only_origin=False, waiting_for_name=False, voice_face_confirmed=False,
             db_enrolled=False, confidence_tier="", prior_person_type=None,
-            dispute_reason=None, disputed_claimed_name=None, dispute_set_at=None,
+            dispute_reason=None, disputed_claimed_name=None, dispute_set_at=None, dispute_set_at_monotonic=None,
             disputed_block_count=0, disputed_block_alerted=False, recent_voice_confs=[],
             cached_prefix=None, core_memory=[], tool_repeat_last=None,
             tool_repeat_count=0, recent_attributions=[],

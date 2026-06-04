@@ -114,8 +114,10 @@ class _StoreModel:
     """Per (class, attr): setter methods (+param index), getter methods, direct clocks."""
 
     def __init__(self) -> None:
-        # method_name -> list of (class, field, param_index_including_self)
-        self.setters: dict[str, list[tuple[str, str, int]]] = {}
+        # method_name -> list of (class, field, param_index_including_self_or_None, param_name)
+        # param_index is None for keyword-only params (no stable positional index; §5.4 fix —
+        # they are resolved by NAME against node.keywords at the call site).
+        self.setters: dict[str, list[tuple[str, str, int | None, str]]] = {}
         # method_name -> list of (class, field)
         self.getters: dict[str, list[tuple[str, str]]] = {}
         # (class, field) -> {clocks} written directly at def-site
@@ -133,7 +135,13 @@ class _StoreModel:
                     self._scan_method(cls.name, m)
 
     def _scan_method(self, cls: str, method: ast.AST) -> None:
-        params = [a.arg for a in method.args.args]  # type: ignore[attr-defined]
+        a = method.args  # type: ignore[attr-defined]
+        # Positional params (posonly + regular, self at index 0) — resolved by call-position.
+        positional = [p.arg for p in (list(getattr(a, "posonlyargs", [])) + list(a.args))]
+        # Keyword-only params have NO stable positional index (§5.4 kwonly blind-spot fix):
+        # they arrive in node.keywords at the call site, never in node.args. The setter model
+        # MUST also store the param NAME so the call-site side can resolve them by name.
+        param_names = set(positional) | {p.arg for p in a.kwonlyargs}
         for node in ast.walk(method):
             if isinstance(node, ast.Assign):
                 for tgt in node.targets:
@@ -145,8 +153,9 @@ class _StoreModel:
                     if direct is not None:
                         self.direct.setdefault((cls, field), set()).add(direct)
                         self.fields.add((cls, field))
-                    elif isinstance(val, ast.Name) and val.id in params:
-                        self.setters.setdefault(method.name, []).append((cls, field, params.index(val.id)))
+                    elif isinstance(val, ast.Name) and val.id in param_names:
+                        pidx = positional.index(val.id) if val.id in positional else None
+                        self.setters.setdefault(method.name, []).append((cls, field, pidx, val.id))
                         self.fields.add((cls, field))
             elif isinstance(node, ast.Return) and node.value is not None:
                 v = node.value
@@ -247,14 +256,27 @@ def find_clock_mismatches(files: list[Path]) -> dict[str, dict]:
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
                     cls = _recv_class(node, recv_map)
                     if cls and node.func.attr in model.setters:
-                        for s_cls, field, pidx in model.setters[node.func.attr]:
+                        for s_cls, field, pidx, pname in model.setters[node.func.attr]:
                             if s_cls != cls:
                                 continue
-                            call_pos = pidx - 1  # drop self
-                            if 0 <= call_pos < len(node.args):
-                                c = _arg_clock(node.args[call_pos], locals_map)
-                                if c is not None:
-                                    add(writes, (cls, field), c, f"{rel}:{node.lineno}")
+                            c = None
+                            # Positional resolution (drop self). pidx is None for kwonly params.
+                            if pidx is not None:
+                                call_pos = pidx - 1
+                                if 0 <= call_pos < len(node.args):
+                                    c = _arg_clock(node.args[call_pos], locals_map)
+                            # By-name resolution — the param may be passed as a keyword (ALWAYS
+                            # for keyword-only params, which never land in node.args). §5.4 fix:
+                            # without this a `ts=time.time()` kwarg is never resolved even though
+                            # Part 1 registered the kwonly param. _arg_clock already resolves the
+                            # time.time() literal + the scope-local hop, so this is pure dispatch.
+                            if c is None:
+                                for kw in node.keywords:
+                                    if kw.arg == pname:
+                                        c = _arg_clock(kw.value, locals_map)
+                                        break
+                            if c is not None:
+                                add(writes, (cls, field), c, f"{rel}:{node.lineno}")
                 # READ — subtraction with a getter call operand + a clock other-operand
                 if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Sub):
                     left, right = node.left, node.right
@@ -290,31 +312,19 @@ def find_clock_mismatches(files: list[Path]) -> dict[str, dict]:
 # ── Tracked-deferred allowlist (architect ruling 2026-05-30) ──────────────────
 # NOT a `# WALLCLOCK:` lie ("needs wall-clock forever"); this means "known mismatch,
 # migrating in a tracked follow-up". Cleared by the follow-up's acceptance.
-_DEFERRED_ALLOWLIST: dict[str, str] = {
-    "SessionStore.last_face_seen":
-        "INTERMITTENT live mismatch (low-med, WATCHING-only, pre-existing): wall write "
-        "pipeline.py:3069 (_bv_scan_now) + mono write :7582 (_now_face) → wall read :2298 "
-        "(_now_fl - _snap.last_face_seen) defeats FACE_LOSS_GRACE when the mono write wins. "
-        "SessionSnapshot sibling of last_spoke_at — migrated together in the "
-        "'SessionSnapshot / now-var timestamp fabric migration' follow-up (to_be_checked.md).",
-    "PresenceStore.last_recognized_at":
-        "DICT-WOVEN into the reconciler routing clock — NOT cleanly decouplable (architect "
-        "re-scope 2026-05-30). Two direct getter reads diverge (wall pipeline.py:8490 via "
-        "_now_ext + mono :8515), but it ALSO flows through persons_in_frame dicts (:3000/:8095) "
-        "consumed against wall _rc_now (:8155) at reconciler.py:126/136 + :1387/:2521 — reads "
-        "this invariant is BLIND to. Migrated with the persons_in_frame/_rc_now/now-var fabric "
-        "follow-up (to_be_checked.md), which owns the reconciler routing clock.",
-    "PresenceStore.last_seen":
-        "PRESENCE-FABRIC sibling of last_recognized_at (architect re-scope 2026-05-30). "
-        "All-wall writes (pipeline.py:3073 _bv_scan_now + :7907 time.time()) vs a mono getter "
-        "read at :574-575 (`last_seen = peek_last_seen(...); time.monotonic() - last_seen` — a "
-        "SCENE_STALE staleness check; wall-write/mono-read makes the gap hugely negative so it "
-        "always reads 'fresh'). The read is variable-hopped (getter→local→subtraction), so the "
-        "detector only sees it AFTER the getter-side variable-hop strengthening. Migrates with "
-        "presence as one unit in the persons_in_frame/_rc_now/now-var fabric follow-up "
-        "(to_be_checked.md) — it ALSO has dict-mediated reads (:3182/:3211 via snapshot attrs) "
-        "the invariant still cannot see, so 'invariant green' is NOT a presence migration proxy.",
-}
+#
+# EMPTY as of #5 Slice B (2026-06-04). The SessionSnapshot/now-var timestamp-fabric
+# migration is complete on the store-getter-mediated surface: §5.4 strengthened this
+# detector to see keyword-only setter args, and Slice B flipped every remaining wall
+# writer/read of the presence/session/dispute fabric to monotonic (or split persisted
+# fields with a `# WALLCLOCK:`-annotated wall companion). The four fields that carried
+# transient entries across the arc — PresenceStore.last_recognized_at, SessionStore.
+# last_spoke_at, SessionStore.last_face_seen, TrackStore.captured_at — are all now
+# single-clock monotonic, so the inverse test (test_deferred_allowlist_entries_are_real
+# _mismatches) forces them OUT. The dict-mediated reconciler read this detector is blind
+# to stays guarded by tests/test_reconciler_clock_provenance.py (§5.2). Add a new entry
+# only for a genuinely-deferred future cross-slice transient.
+_DEFERRED_ALLOWLIST: dict[str, str] = {}
 
 
 def test_clock_consistency_paired_invariant() -> None:
@@ -346,6 +356,83 @@ def test_deferred_allowlist_entries_are_real_mismatches() -> None:
         f"_DEFERRED_ALLOWLIST has stale entries no longer detected as mismatches: {stale}. "
         "The fabric follow-up resolved them — remove the allowlist entry."
     )
+
+
+# ── §5.4 kwonly-setter detector self-tests (non-vacuity per §8) ───────────────
+# The §5.4 fix taught find_clock_mismatches to resolve keyword-only setter args by NAME
+# (Part 1 registers the kwonly param + its name; Part 2 resolves it from node.keywords).
+# These self-tests prove BOTH halves are live + non-vacuous, on synthetic store modules so
+# they cannot drift with production: a kwonly WALL write against a mono read is flagged, a
+# kwonly MONO write is not, and a plain positional setter still resolves (no regression).
+
+_KWONLY_WALL_SRC = '''
+import time
+class S:
+    def set_a(self, pid, *, ts):
+        self._d[pid].a = ts
+    def peek_a(self, pid):
+        return self._d[pid].a
+_store = S()
+def use():
+    _store.set_a("p", ts=time.time())        # kwonly WALL write
+    now = time.monotonic()
+    return now - _store.peek_a("p")           # mono read
+'''
+
+_KWONLY_MONO_SRC = '''
+import time
+class S:
+    def set_a(self, pid, *, ts):
+        self._d[pid].a = ts
+    def peek_a(self, pid):
+        return self._d[pid].a
+_store = S()
+def use():
+    _store.set_a("p", ts=time.monotonic())   # kwonly MONO write
+    now = time.monotonic()
+    return now - _store.peek_a("p")           # mono read
+'''
+
+_POSITIONAL_SRC = '''
+import time
+class S:
+    def set_b(self, pid, ts):
+        self._d[pid].b = ts
+    def peek_b(self, pid):
+        return self._d[pid].b
+_store = S()
+def use():
+    _store.set_b("p", time.time())           # positional WALL write
+    now = time.monotonic()
+    return now - _store.peek_b("p")           # mono read
+'''
+
+
+def _detect_synth(monkeypatch, tmp_path, source: str) -> dict:
+    """Write `source` as a synthetic store module under a fake repo root and run the
+    paired-clock detector against it (monkeypatch REPO_ROOT so relative_to works)."""
+    import sys
+    monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
+    p = tmp_path / "synth_store_mod.py"
+    p.write_text(source, encoding="utf-8")
+    return find_clock_mismatches([p])
+
+
+def test_p5_4_kwonly_wall_write_is_flagged(monkeypatch, tmp_path) -> None:
+    ms = _detect_synth(monkeypatch, tmp_path, _KWONLY_WALL_SRC)
+    assert "S.a" in ms, f"§5.4: kwonly wall-write vs mono-read MUST be flagged; got {ms}"
+    assert "wall" in ms["S.a"]["writes"] and "mono" in ms["S.a"]["reads"]
+
+
+def test_p5_4_kwonly_mono_write_not_flagged(monkeypatch, tmp_path) -> None:
+    ms = _detect_synth(monkeypatch, tmp_path, _KWONLY_MONO_SRC)
+    assert "S.a" not in ms, f"§5.4: kwonly mono-write + mono-read is single-clock; MUST NOT flag; got {ms}"
+
+
+def test_p5_4_positional_setter_still_resolves(monkeypatch, tmp_path) -> None:
+    ms = _detect_synth(monkeypatch, tmp_path, _POSITIONAL_SRC)
+    assert "S.b" in ms, f"§5.4: positional wall-write vs mono-read MUST still flag (no regression); got {ms}"
+    assert "wall" in ms["S.b"]["writes"] and "mono" in ms["S.b"]["reads"]
 
 
 if __name__ == "__main__":
