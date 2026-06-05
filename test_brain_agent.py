@@ -801,7 +801,7 @@ class TestExtractionAgent:
             raise AssertionError("LLM classifier must not fire for static-map attribute")
 
         with patch.object(agent, "_call_together", new=AsyncMock(return_value=fake_json)), \
-             patch.object(brain_agent, "_call_llm_chat", _boom):
+             patch.object(brain_agent.privacy, "_call_llm_chat", _boom):
             results = await agent.extract("I have diabetes", "Jagan", [])
         assert len(results) == 1
         assert results[0].privacy_level == "personal"
@@ -835,7 +835,7 @@ class TestExtractionAgent:
             return '{"level": "personal", "reasoning": "preference"}'
 
         with patch.object(agent, "_call_together", new=AsyncMock(return_value=fake_json)), \
-             patch.object(brain_agent, "_call_llm_chat", _fake_llm):
+             patch.object(brain_agent.privacy, "_call_llm_chat", _fake_llm):
             results = await agent.extract("My favorite is Rust", "Jagan", [])
             assert len(results) == 1
             assert results[0].privacy_level == "personal"

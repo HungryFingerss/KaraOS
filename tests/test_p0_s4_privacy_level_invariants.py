@@ -36,7 +36,14 @@ pytestmark = pytest.mark.privacy_critical
 
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_BRAIN_AGENT_PY = _REPO_ROOT / "core" / "brain_agent" / "__init__.py"
+# P1.A1 SP-2 C2: the privacy SQL-tier literals (_visibility_clause +
+# _assert_valid_privacy_level error) moved to privacy.py; GraphDB Cypher +
+# agent privacy_level= constructions stay in __init__.py. Scan BOTH so no
+# tier literal escapes the drift-protection invariant.
+_BRAIN_AGENT_FILES = [
+    _REPO_ROOT / "core" / "brain_agent" / "__init__.py",
+    _REPO_ROOT / "core" / "brain_agent" / "privacy.py",
+]
 
 # Match ``privacy_level <op> 'tier'`` where ``<op>`` ∈ {=, !=, <>, IN, NOT IN}.
 # Capture the tier literal. Allows quoted-list shapes like
@@ -86,18 +93,17 @@ def test_brain_agent_sql_tier_literals_are_all_valid():
     constants; doesn't reference line numbers in its logic). See Plan v2
     §6 known-limitation block.
     """
-    src = _BRAIN_AGENT_PY.read_text(encoding="utf-8")
-    tree = ast.parse(src)
-
     violations: list[tuple[int, str]] = []
-    for node in ast.walk(tree):
-        if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
-            continue
-        for m in _SQL_TIER_RE.finditer(node.value):
-            tier = m.group(1)
-            if tier not in config.PRIVACY_LEVELS:
-                # ``node.lineno`` is the line of the string literal in source.
-                violations.append((node.lineno, tier))
+    for _bf in _BRAIN_AGENT_FILES:
+        tree = ast.parse(_bf.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+                continue
+            for m in _SQL_TIER_RE.finditer(node.value):
+                tier = m.group(1)
+                if tier not in config.PRIVACY_LEVELS:
+                    # ``node.lineno`` is the line of the string literal in source.
+                    violations.append((node.lineno, tier))
 
     assert not violations, (
         "brain_agent.py SQL/Cypher string literals reference tier values "

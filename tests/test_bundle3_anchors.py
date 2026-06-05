@@ -36,7 +36,7 @@ A1_MIGRATED_SITES: tuple[tuple[str, int], ...] = (
     ("pipeline.py", 2915), ("pipeline.py", 3426), ("pipeline.py", 3444),  # 3396→3444 #5 Slice-A LINE-REF-DRIFT refresh (cloud subtraction shifted by _bv_now SPLIT)
     ("pipeline.py", 5867), ("pipeline.py", 7413),  # 7369→7413 #5 Slice-A refresh (SELF_UPDATE_COOLDOWN); SB.1 D1 dropped pipeline.py:5745 (_yolo_last_ran #6 deadline-math, deleted with the YOLO stack)
     ("pipeline.py", 7753), ("pipeline.py", 8580), ("pipeline.py", 8589),  # Canary4 refresh; SB.1 D2 refreshed 8628→8580 (−48: cross-person-excerpts + flag-residue deletion shifted the face_in_frame deadline-math)
-    ("core/brain_agent/__init__.py", 6297),  # 6908→6450 P1.A1 SP-2 C1 package-ify + _llm extraction (6450->6297); prior: SB.1 D1 (Kuzu _rebuild_secs up, YOLO-stack deletion)
+    ("core/brain_agent/__init__.py", 5991),  # 6908→6450 P1.A1 SP-2 C2 privacy/context extraction (6297->5991); C1 package-ify (6450->6297); prior: SB.1 D1 (Kuzu _rebuild_secs up, YOLO-stack deletion)
     ("pipeline.py", 1030), ("pipeline.py", 2879), ("pipeline.py", 2919),
     ("pipeline.py", 2939), ("pipeline.py", 3533), ("pipeline.py", 3494),
     ("pipeline.py", 3536), ("pipeline.py", 3538), ("pipeline.py", 6858),

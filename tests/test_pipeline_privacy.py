@@ -44,7 +44,7 @@ async def test_classify_privacy_static_map_hit_never_calls_llm(_clear_privacy_ca
     async def _boom(*_a, **_kw):
         raise AssertionError("LLM must not be called on static-map hit")
 
-    monkeypatch.setattr(brain_agent, "_call_llm_chat", _boom)
+    monkeypatch.setattr(brain_agent.privacy, "_call_llm_chat", _boom)
     level = await brain_agent._classify_privacy_level(
         "Lexi", "name", "Lexi", http=object()
     )
@@ -62,7 +62,7 @@ async def test_classify_privacy_cache_hit_never_calls_llm(_clear_privacy_cache, 
     async def _boom(*_a, **_kw):
         raise AssertionError("LLM must not be called on cache hit")
 
-    monkeypatch.setattr(brain_agent, "_call_llm_chat", _boom)
+    monkeypatch.setattr(brain_agent.privacy, "_call_llm_chat", _boom)
     level = await brain_agent._classify_privacy_level(
         "Lexi", "novel_attr", "something", http=object()
     )
@@ -81,7 +81,7 @@ async def test_classify_privacy_llm_success_caches_result(_clear_privacy_cache, 
         call_count["n"] += 1
         return '{"level": "personal", "reasoning": "sensitive"}'
 
-    monkeypatch.setattr(brain_agent, "_call_llm_chat", _fake_llm)
+    monkeypatch.setattr(brain_agent.privacy, "_call_llm_chat", _fake_llm)
     level = await brain_agent._classify_privacy_level(
         "Lexi", "secret_hobby", "birdwatching", http=object()
     )
@@ -105,7 +105,7 @@ async def test_classify_privacy_llm_timeout_fails_closed_no_cache(_clear_privacy
     async def _timeout_llm(*_a, **_kw):
         return None  # _call_llm_chat swallows transient errors → None
 
-    monkeypatch.setattr(brain_agent, "_call_llm_chat", _timeout_llm)
+    monkeypatch.setattr(brain_agent.privacy, "_call_llm_chat", _timeout_llm)
     level = await brain_agent._classify_privacy_level(
         "Lexi", "unseen_attr", "x", http=object()
     )
@@ -125,7 +125,7 @@ async def test_classify_privacy_llm_invalid_level_fails_closed_no_cache(
     async def _bogus_llm(*_a, **_kw):
         return '{"level": "secret", "reasoning": "classifier went rogue"}'
 
-    monkeypatch.setattr(brain_agent, "_call_llm_chat", _bogus_llm)
+    monkeypatch.setattr(brain_agent.privacy, "_call_llm_chat", _bogus_llm)
     level = await brain_agent._classify_privacy_level(
         "Lexi", "forbidden_knowledge", "x", http=object()
     )
@@ -145,7 +145,7 @@ async def test_classify_privacy_llm_malformed_json_fails_closed_no_cache(
     async def _prose_llm(*_a, **_kw):
         return "I think this is probably personal but I'm not sure"
 
-    monkeypatch.setattr(brain_agent, "_call_llm_chat", _prose_llm)
+    monkeypatch.setattr(brain_agent.privacy, "_call_llm_chat", _prose_llm)
     level = await brain_agent._classify_privacy_level(
         "Lexi", "mystery_attr", "x", http=object()
     )

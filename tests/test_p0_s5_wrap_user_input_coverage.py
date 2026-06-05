@@ -40,6 +40,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SCAN_TARGETS = [
     "core/brain.py",
     "core/brain_agent/__init__.py",
+    "core/brain_agent/privacy.py",
 ]
 
 
@@ -91,14 +92,14 @@ _INDIRECT_BOUNDARIES_ALLOWLIST: dict[tuple[str, int], str] = {
         "greeting generation Ollama — system-constructed (parallel to Together) (+6 #123, +5 #5-SliceD)",
     ("core/brain.py", 3348):
         "choose_greeting_order — structured names-list prompt, no raw user-text (+6 #123, +5 #5-SliceD)",
-    # ── core/brain_agent/__init__.py (4 entries) ─────────────────────────────────
-    ("core/brain_agent/__init__.py", 311):
+    # ── core/brain_agent __init__.py (3) + privacy.py (1) ─────────────────────────────────
+    ("core/brain_agent/privacy.py", 164):
         "_ask_privacy_llm — entity/attribute/value triples (already-wrapped upstream extraction) (+2 #123)",
-    ("core/brain_agent/__init__.py", 4169):
+    ("core/brain_agent/__init__.py", 3863):
         "extract_assistant_room_turn — assistant's own prior output, not user-typed (+10 #123)",
-    ("core/brain_agent/__init__.py", 5342):
+    ("core/brain_agent/__init__.py", 5036):
         "BriefingAgent.generate — structured event-derived prompt (gate-validated names + system templates) (+10 #123)",
-    ("core/brain_agent/__init__.py", 5410):
+    ("core/brain_agent/__init__.py", 5104):
         "ConversationInsightAgent — conversation summary, not raw turns (+10 #123)",
 }
 
