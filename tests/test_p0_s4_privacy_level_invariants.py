@@ -44,6 +44,8 @@ _BRAIN_AGENT_FILES = [
     _REPO_ROOT / "core" / "brain_agent" / "__init__.py",
     _REPO_ROOT / "core" / "brain_agent" / "privacy.py",
     _REPO_ROOT / "core" / "brain_agent" / "memory" / "graph.py",
+    _REPO_ROOT / "core" / "brain_agent" / "agents" / "extraction.py",
+    _REPO_ROOT / "core" / "brain_agent" / "agents" / "nudge.py",
 ]
 
 # Match ``privacy_level <op> 'tier'`` where ``<op>`` ∈ {=, !=, <>, IN, NOT IN}.

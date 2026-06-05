@@ -2259,7 +2259,7 @@ class TestEmbeddingAgent:
 
     async def test_embed_returns_none_without_api_key(self):
         agent = self._make_agent()
-        with patch("core.brain_agent.EMBED_API_KEY", ""):
+        with patch("core.brain_agent.agents.embedding.EMBED_API_KEY", ""):
             result = await agent.embed("hello world")
         assert result is None
 
@@ -2315,7 +2315,7 @@ class TestBrainOrchestratorEmbeddings:
 
     async def test_embed_query_returns_none_without_api_key(self, tmp_path):
         orch = self._make_orch(tmp_path)
-        with patch("core.brain_agent.EMBED_API_KEY", ""):
+        with patch("core.brain_agent.agents.embedding.EMBED_API_KEY", ""):
             result = await orch.embed_query("what do I eat?")
         assert result is None
 
@@ -4040,8 +4040,8 @@ class TestEmbeddingAgentRetry:
 
         agent, client = self._make_agent()
         with patch.object(client, "post", side_effect=fake_post), \
-             patch("core.brain_agent.EMBED_API_KEY", "fake-key"), \
-             patch("core.brain_agent.EMBED_MAX_RETRIES", 2), \
+             patch("core.brain_agent.agents.embedding.EMBED_API_KEY", "fake-key"), \
+             patch("core.brain_agent.agents.embedding.EMBED_MAX_RETRIES", 2), \
              patch("core.brain_agent.asyncio.sleep", new_callable=AsyncMock):
             result = await agent._call_together(["test"])
 
@@ -4065,8 +4065,8 @@ class TestEmbeddingAgentRetry:
 
         agent, client = self._make_agent()
         with patch.object(client, "post", side_effect=fake_post), \
-             patch("core.brain_agent.EMBED_API_KEY", "fake-key"), \
-             patch("core.brain_agent.EMBED_MAX_RETRIES", 2):
+             patch("core.brain_agent.agents.embedding.EMBED_API_KEY", "fake-key"), \
+             patch("core.brain_agent.agents.embedding.EMBED_MAX_RETRIES", 2):
             result = await agent._call_together(["test"])
 
         assert result is None
@@ -4086,8 +4086,8 @@ class TestEmbeddingAgentRetry:
 
         agent, client = self._make_agent()
         with patch.object(client, "post", side_effect=fake_post), \
-             patch("core.brain_agent.EMBED_API_KEY", "fake-key"), \
-             patch("core.brain_agent.EMBED_MAX_RETRIES", 2), \
+             patch("core.brain_agent.agents.embedding.EMBED_API_KEY", "fake-key"), \
+             patch("core.brain_agent.agents.embedding.EMBED_MAX_RETRIES", 2), \
              patch("core.brain_agent.asyncio.sleep", new_callable=AsyncMock):
             result = await agent._call_together(["test"])
 
