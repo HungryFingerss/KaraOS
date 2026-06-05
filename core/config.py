@@ -1328,6 +1328,24 @@ DAILY_BACKUP_ENABLED       = True   # take daily SQLite snapshots of faces.db + 
 SNAPSHOT_RETENTION_DAYS    = 30     # prune snapshots older than this many days
 SNAPSHOT_DIR               = "faces/snapshots"  # relative to repo root
 WAL_CHECKPOINT_ENABLED     = True   # flush WAL into main DB file at end of each dream cycle
+
+# ── KaraOS instance mode (SB.1 D4 — deployment-intent declaration) ──────────
+# Declares whether this checkout is the cloneable/publishable BASE or Jagan's
+# PERSONAL instance. Lightweight in SB.1: documents intent + emits a boot log
+# line. Heavy enforcement (identity/retention write-path gating) is SB.5; the
+# per-deployment profile loader is SB.2.
+#   base     — the cloneable default. Personal data is untracked + gitignored
+#              (SB.1 D4.1); the runtime self-creates empty DBs + rebuilds the
+#              classifier from seed on first boot. No committed PII expected.
+#   personal — Jagan's local instance. Personal DBs persist on disk as today;
+#              local backup is the existing DAILY_BACKUP snapshot mechanism
+#              (gitignored local dir, independent of git tracking) — so the
+#              SB.1 untrack does NOT break day-to-day continuity.
+# Env-overridable so the committed BASE config always reads "base"; Jagan's
+# personal instance sets KARAOS_INSTANCE_MODE=personal in its gitignored .env.
+VALID_INSTANCE_MODES       = ("base", "personal")
+KARAOS_INSTANCE_MODE       = os.getenv("KARAOS_INSTANCE_MODE", "base").strip().lower() or "base"
+
 STRANGER_TTL_DAYS          = 7      # delete unidentified strangers unseen for this many days
 STRANGER_VOICE_TTL_DAYS    = 3      # prune voice_embeddings of strangers whose voice profile never
                                       # reached N_INITIAL_VOICE samples and hasn't been updated in
