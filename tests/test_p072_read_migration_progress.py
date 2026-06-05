@@ -194,6 +194,13 @@ _RE_STRING_LITERAL = re.compile(r'["\']_active_sessions["\']')
 _SCAN_EXEMPT_FILES: frozenset[str] = frozenset({
     "test_p072_read_migration_progress.py",
     "test_repeat_guard_invariant.py",
+    # P1.A1 SP-1: the diarize tests split out of root test_pipeline.py include
+    # test_pipeline_consumer_handles_n_segment_diarize_output, which ASSERTS
+    # `"_active_sessions" not in fn_src` (a source-inspection check that pipeline
+    # code does NOT use the token) — the token is the thing being detected, not
+    # legacy usage. Same rationale as test_repeat_guard_invariant.py. Root
+    # test_pipeline.py carried this assert too but lived outside the tests/ scan.
+    "test_pipeline_diarize_multispeaker.py",
 })
 
 

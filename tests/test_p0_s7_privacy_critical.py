@@ -54,28 +54,33 @@ _KNOWN_PRIVACY_CRITICAL_FILES: tuple[str, ...] = (
 )
 
 
-# 23 standalone functions/methods (17 in test_pipeline.py + 3 method-level
-# in test_brain_agent.py non-anchored classes + 3 in test_core_memory.py).
+# 23 standalone functions/methods (17 across the P1.A1 SP-1 test_pipeline.py split
+# files + 3 method-level in test_brain_agent.py non-anchored classes + 3 in
+# test_core_memory.py).
 # Tuple shape: (file_path, parent_class_name_or_None, function_name).
 _KNOWN_PRIVACY_CRITICAL_STANDALONE: tuple[tuple[str, str | None, str], ...] = (
-    # ── test_pipeline.py (17 entries) ──────────────────────────────────────
-    ("test_pipeline.py", None, "test_privacy_levels_exhaustive_and_frozen"),
-    ("test_pipeline.py", None, "test_privacy_default_is_personal_fail_closed"),
-    ("test_pipeline.py", None, "test_privacy_static_map_values_valid"),
-    ("test_pipeline.py", None, "test_visibility_clause_best_friend_excludes_only_system_only"),
-    ("test_pipeline.py", None, "test_visibility_clause_non_best_friend_sees_public_own_personal_not_household"),
-    ("test_pipeline.py", None, "test_visibility_clause_no_best_friend_id_acts_as_non_privileged"),
-    ("test_pipeline.py", None, "test_visibility_clause_never_permits_system_only"),
-    ("test_pipeline.py", None, "test_visibility_clause_composes_cleanly_with_and"),
-    ("test_pipeline.py", None, "test_visibility_clause_params_align_with_placeholders"),
-    ("test_pipeline.py", None, "test_search_memory_description_covers_cross_person_recall"),
-    ("test_pipeline.py", None, "test_p0_s7_dc_build_room_block_section1_renders_disputed_identity"),
-    ("test_pipeline.py", None, "test_p0_s7_dc_build_room_block_section1_renders_best_friend_role"),
-    ("test_pipeline.py", None, "test_p0_s7_dc_brain_context_summary_room_field_repointed_to_active_sessions"),
-    ("test_pipeline.py", None, "test_s114_visitor_alert_dedup_updates_promoted_alerts"),
-    ("test_pipeline.py", None, "test_s114_visitor_alert_dedup_skips_unrelated_alerts"),
-    ("test_pipeline.py", None, "test_s116_query_knowledge_for_emits_privacy_audit_log"),
-    ("test_pipeline.py", None, "test_s116_classify_privacy_level_logs_static_map_path"),
+    # ── P1.A1 SP-1: re-pointed from root test_pipeline.py to the split files ──
+    # ── tests/test_pipeline_config_invariants.py (3) ──
+    ("tests/test_pipeline_config_invariants.py", None, "test_privacy_levels_exhaustive_and_frozen"),
+    ("tests/test_pipeline_config_invariants.py", None, "test_privacy_default_is_personal_fail_closed"),
+    ("tests/test_pipeline_config_invariants.py", None, "test_privacy_static_map_values_valid"),
+    # ── tests/test_pipeline_privacy.py (9) ──
+    ("tests/test_pipeline_privacy.py", None, "test_visibility_clause_best_friend_excludes_only_system_only"),
+    ("tests/test_pipeline_privacy.py", None, "test_visibility_clause_non_best_friend_sees_public_own_personal_not_household"),
+    ("tests/test_pipeline_privacy.py", None, "test_visibility_clause_no_best_friend_id_acts_as_non_privileged"),
+    ("tests/test_pipeline_privacy.py", None, "test_visibility_clause_never_permits_system_only"),
+    ("tests/test_pipeline_privacy.py", None, "test_visibility_clause_composes_cleanly_with_and"),
+    ("tests/test_pipeline_privacy.py", None, "test_visibility_clause_params_align_with_placeholders"),
+    ("tests/test_pipeline_privacy.py", None, "test_p0_s7_dc_build_room_block_section1_renders_disputed_identity"),
+    ("tests/test_pipeline_privacy.py", None, "test_p0_s7_dc_build_room_block_section1_renders_best_friend_role"),
+    ("tests/test_pipeline_privacy.py", None, "test_p0_s7_dc_brain_context_summary_room_field_repointed_to_active_sessions"),
+    # ── tests/test_pipeline_identity_tools.py (1) ──
+    ("tests/test_pipeline_identity_tools.py", None, "test_search_memory_description_covers_cross_person_recall"),
+    # ── tests/test_pipeline_canary_followups.py (4) ──
+    ("tests/test_pipeline_canary_followups.py", None, "test_s114_visitor_alert_dedup_updates_promoted_alerts"),
+    ("tests/test_pipeline_canary_followups.py", None, "test_s114_visitor_alert_dedup_skips_unrelated_alerts"),
+    ("tests/test_pipeline_canary_followups.py", None, "test_s116_query_knowledge_for_emits_privacy_audit_log"),
+    ("tests/test_pipeline_canary_followups.py", None, "test_s116_classify_privacy_level_logs_static_map_path"),
     # ── test_brain_agent.py method-level (3 entries inside non-anchored classes) ──
     ("test_brain_agent.py", "TestExtractionAgent", "test_extract_system_prompt_emits_dual_attribute_for_safety_critical"),
     ("test_brain_agent.py", "TestContradictionAgent", "test_safety_critical_attribute_never_replaces"),
@@ -95,8 +100,9 @@ _KNOWN_PRIVACY_CRITICAL_STANDALONE: tuple[tuple[str, str | None, str], ...] = (
 #   - bootstrap/               one-shot offline pipeline — tests under tests/
 #   - tools/                   helper scripts — tests under tests/
 _INVERSE_WALK_PATHS: tuple[str, ...] = (
-    "test_pipeline.py",       # top-level mixed-purpose
     "test_brain_agent.py",    # top-level mixed-purpose
+    # P1.A1 SP-1: root test_pipeline.py is split into tests/test_pipeline_*.py,
+    # covered by the "tests/" walk-path below — no separate root entry needed.
     "tests/",                 # all Python-side test files
 )
 
@@ -479,7 +485,7 @@ def test_inverse_walk_paths_locked_per_plan_v2():
     tuple covering Python-side test files. Adding a path requires a Plan
     v3 spec OR P0.S7.X follow-up (mirrors P0.S6 `_REGISTRY_ALLOWLIST`
     discipline). Catches accidental scope-creep / scope-shrinkage."""
-    expected = ("test_pipeline.py", "test_brain_agent.py", "tests/")
+    expected = ("test_brain_agent.py", "tests/")
     assert _INVERSE_WALK_PATHS == expected, (
         f"_INVERSE_WALK_PATHS drifted from Plan v2 §1.1 lock. "
         f"Expected {expected}; got {_INVERSE_WALK_PATHS}. "

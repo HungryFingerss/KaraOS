@@ -30,40 +30,40 @@ To delete an entry after fixing:
 
 INFRA_DEBT_FAILURES = frozenset({
     (
-        "test_pipeline.py::test_torchaudio_list_audio_backends_patch_applied_at_import",
+        "tests/test_pipeline_diarize_multispeaker.py::test_torchaudio_list_audio_backends_patch_applied_at_import",
         "torchaudio DLL missing on Windows dev machine; patch applied at "
         "core.voice import time but test imports in isolation. "
         "Remediation: include torchaudio wheel in dev venv or mark xfail.",
     ),
     (
-        "test_pipeline.py::test_speechbrain_logger_suppressed_at_import",
+        "tests/test_pipeline_diarize_multispeaker.py::test_speechbrain_logger_suppressed_at_import",
         "SpeechBrain logger suppression test requires the real SpeechBrain "
         "import chain, which triggers the torchaudio DLL crash on Windows dev. "
         "Remediation: fix torchaudio wheel (unblocks this + torchaudio test).",
     ),
     (
-        "test_pipeline.py::test_diarize_drops_segments_below_min_segment_secs",
+        "tests/test_pipeline_diarize_multispeaker.py::test_diarize_drops_segments_below_min_segment_secs",
         "pyannote.audio pipeline load fails: patched io.py not applied in "
         "this test's import context. Remediation: P0.R5 pyannote vendor patch.",
     ),
     (
-        "test_pipeline.py::test_diarize_short_segment_drops_attribution_keeps_label",
+        "tests/test_pipeline_diarize_multispeaker.py::test_diarize_short_segment_drops_attribution_keeps_label",
         "Same pyannote load failure as test_diarize_drops_segments_below_min_segment_secs.",
     ),
     (
-        "test_pipeline.py::test_diarize_three_speaker_returns_distinct_labels",
+        "tests/test_pipeline_diarize_multispeaker.py::test_diarize_three_speaker_returns_distinct_labels",
         "Same pyannote load failure as test_diarize_drops_segments_below_min_segment_secs.",
     ),
     (
-        "test_pipeline.py::test_diarize_empty_gallery_segments_still_have_speaker_label",
+        "tests/test_pipeline_diarize_multispeaker.py::test_diarize_empty_gallery_segments_still_have_speaker_label",
         "Same pyannote load failure as test_diarize_drops_segments_below_min_segment_secs.",
     ),
     (
-        "test_pipeline.py::test_diarize_speaker_id_attribution_via_ecapa_gallery",
+        "tests/test_pipeline_diarize_multispeaker.py::test_diarize_speaker_id_attribution_via_ecapa_gallery",
         "Same pyannote load failure as test_diarize_drops_segments_below_min_segment_secs.",
     ),
     (
-        "test_pipeline.py::test_diarize_pyannote_error_falls_back_to_ecapa_and_bumps_counter",
+        "tests/test_pipeline_diarize_multispeaker.py::test_diarize_pyannote_error_falls_back_to_ecapa_and_bumps_counter",
         "Same pyannote load failure as test_diarize_drops_segments_below_min_segment_secs.",
     ),
 })
@@ -103,7 +103,7 @@ def test_infra_debt_entries_have_rationale():
             f"Entry must be a 2-tuple (test_id, rationale): {entry!r}"
         )
         test_id, rationale = entry
-        assert test_id.startswith("test_pipeline.py::"), (
+        assert test_id.startswith("tests/test_pipeline_diarize_multispeaker.py::"), (
             f"test_id must be fully qualified 'file::name': {test_id!r}"
         )
         assert isinstance(rationale, str) and len(rationale) > 20, (
@@ -128,7 +128,10 @@ def test_xfail_decorators_align_with_allowlist():
     import ast
     import pathlib
 
-    src = pathlib.Path(__file__).resolve().parent.parent / "test_pipeline.py"
+    # P1.A1 SP-1: the 8 infra-debt tests moved from root test_pipeline.py into
+    # the split tests/test_pipeline_diarize_multispeaker.py (their xfail decorators
+    # moved verbatim with them).
+    src = pathlib.Path(__file__).resolve().parent / "test_pipeline_diarize_multispeaker.py"
     tree = ast.parse(src.read_text(encoding="utf-8"))
 
     # Build name -> function-node lookup.
@@ -146,7 +149,7 @@ def test_xfail_decorators_align_with_allowlist():
         _, _, func_name = test_id.partition("::")
         assert func_name in funcs_by_name, (
             f"{test_id} is in INFRA_DEBT_FAILURES but the function "
-            f"is missing from test_pipeline.py. Either the test was "
+            f"is missing from test_pipeline_diarize_multispeaker.py. Either the test was "
             f"renamed (update the allowlist) or deleted (remove the "
             f"allowlist entry + decrement INFRA_DEBT_CAP)."
         )
