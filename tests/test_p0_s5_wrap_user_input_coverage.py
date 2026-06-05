@@ -91,18 +91,14 @@ _INDIRECT_BOUNDARIES_ALLOWLIST: dict[tuple[str, int], str] = {
         "greeting generation Ollama — system-constructed (parallel to Together) (+6 #123, +5 #5-SliceD)",
     ("core/brain.py", 3348):
         "choose_greeting_order — structured names-list prompt, no raw user-text (+6 #123, +5 #5-SliceD)",
-    # ── core/brain_agent.py (6 entries) ─────────────────────────────────
+    # ── core/brain_agent.py (4 entries) ─────────────────────────────────
     ("core/brain_agent.py", 464):
         "_ask_privacy_llm — entity/attribute/value triples (already-wrapped upstream extraction) (+2 #123)",
-    ("core/brain_agent.py", 4527):
+    ("core/brain_agent.py", 4322):
         "extract_assistant_room_turn — assistant's own prior output, not user-typed (+10 #123)",
-    ("core/brain_agent.py", 5660):
-        "ObjectPatternAgent Together — structured sighting patterns + stats, not raw turns (+10 #123)",
-    ("core/brain_agent.py", 5683):
-        "ObjectPatternAgent Ollama — parallel to Together (+10 #123)",
-    ("core/brain_agent.py", 5962):
+    ("core/brain_agent.py", 5495):
         "BriefingAgent.generate — structured event-derived prompt (gate-validated names + system templates) (+10 #123)",
-    ("core/brain_agent.py", 6030):
+    ("core/brain_agent.py", 5563):
         "ConversationInsightAgent — conversation summary, not raw turns (+10 #123)",
 }
 
@@ -171,8 +167,8 @@ def test_every_user_role_content_passes_through_wrap_user_input():
     ``test_no_secret_value_in_prints_or_logs`` — structural prevention
     via CI, not developer discipline.
 
-    Plan v3 §5 + developer Pass-4 catch lock: 14 direct sites + 17
-    allowlist entries = 31 line-level boundaries audited. Line numbers
+    Plan v3 §5 + developer Pass-4 catch lock: 14 direct sites + 15
+    allowlist entries = 29 line-level boundaries audited. Line numbers
     drift over time; the test reports violations with file:line so
     Pass-2 re-grep at closure refreshes the allowlist (entries with
     drifted line numbers will surface as new violations needing

@@ -22,7 +22,7 @@ def _stub_module(name: str):
         if full not in sys.modules:
             mod = types.ModuleType(full)
             # Set __spec__ so importlib.util.find_spec() doesn't raise ValueError
-            # (ultralytics calls find_spec('onnxruntime') during import)
+            # (some libs call find_spec('onnxruntime') during import)
             mod.__spec__ = importlib.machinery.ModuleSpec(full, None)
             sys.modules[full] = mod
 

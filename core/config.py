@@ -355,7 +355,7 @@ EXTRACT_MAX_RETRIES = 2 # same pattern for ExtractionAgent Together.ai calls —
                         # with exponential backoff. 4xx errors propagate (not transient).
 
 # Vision / image description (brain.py) — disabled until base is solid
-# VISION_YOLO_ENABLED and describe_frame are both off; model is ready for when we enable.
+# describe_frame is off; model is ready for when we enable.
 VISION_MODEL    = "Qwen/Qwen3-VL-8B-Instruct"
 VISION_BASE_URL = TOGETHER_BASE_URL
 VISION_API_KEY  = TOGETHER_API_KEY
@@ -1538,25 +1538,6 @@ KAIROS_COOLDOWN          = 120.0  # minimum seconds between proactive initiation
 # speaker — they just spoke). Toggle lets rollback revert to
 # _primary_person_id() behavior without code churn.
 KAIROS_PREFER_BEST_FRIEND = True
-
-# ── Object Pattern Analysis ───────────────────────────────────────────────────
-# Analyzes sighting statistics to find interesting behavioral patterns and
-# generates proactive questions the robot asks naturally during conversation.
-PATTERN_MIN_SIGHTINGS  = 30    # minimum total sightings before running analysis
-PATTERN_COOLDOWN       = 3600  # seconds between analysis runs (1 hour)
-PATTERN_MAX_QUESTIONS  = 5     # max pending questions stored at once
-PATTERN_ANALYSIS_DAYS  = 7     # days of sighting history fed to LLM
-PATTERN_MIN_CONF       = 0.70  # minimum confidence to store a pattern question
-
-# ── Spatial Memory Vision ────────────────────────────────────────────────────
-# YOLO11 nano object detection — runs every Nth frame, stores sightings in brain.db.
-# Model auto-downloads from Ultralytics HuggingFace on first run (~6MB for nano).
-VISION_YOLO_ENABLED  = False          # set True when ready to use spatial memory
-VISION_YOLO_MODEL    = "yolo11s.pt"   # small: 41.2% mAP vs nano's 37.3%; ~21MB vs 6MB
-VISION_DETECT_EVERY  = 15             # run YOLO every Nth frame (~2fps at 30fps camera)
-VISION_DETECT_CONF   = 0.40           # minimum YOLO confidence to store a sighting
-VISION_SIGHTING_GAP  = 60             # seconds: skip re-storing same object in same zone
-VISION_MAX_SIGHTINGS = 5000           # max rows in object_sightings before pruning oldest
 
 # ── Dashboard API ─────────────────────────────────────────────────────────────
 # Pipeline writes state here — dashboard reads it

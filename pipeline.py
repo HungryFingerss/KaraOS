@@ -7,7 +7,6 @@ See face → identify → greet → listen → respond → repeat
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import asyncio
-import concurrent.futures
 import dataclasses
 import datetime
 from enum import Enum, auto
@@ -353,7 +352,6 @@ from core.config import (
     VOICE_RECOGNITION_THRESHOLD, VOICE_SPEAKER_SWITCH_THRESHOLD, MAX_VOICE_EMBEDDINGS, N_INITIAL_VOICE,
     VOICE_ROUTING_FACE_STALE_SECS,
     DIARIZE_MIN_SECS, MIC_SAMPLE_RATE,
-    VISION_YOLO_ENABLED, VISION_YOLO_MODEL, VISION_DETECT_EVERY, VISION_DETECT_CONF,
     DEFAULT_SYSTEM_NAME,
     EMOTION_FACT_VALIDITY_HOURS,
     IDENTITY_SOFT_THRESHOLD, IDENTITY_ASK_THRESHOLD, IDENTITY_AUTO_THRESHOLD,
@@ -443,28 +441,12 @@ def _voice_first_should_engage_stranger(
     return bool(_name_heard_in(ambient_text, system_name)[0])
 
 
-# Optional YOLO object detection — spatial memory disabled if ultralytics missing
-try:
-    from ultralytics import YOLO as _YOLO
-    _YOLO_AVAILABLE = True
-except ImportError:
-    _YOLO_AVAILABLE = False
-    print("[Pipeline] WARNING: ultralytics not installed — spatial memory disabled. Run: pip install ultralytics>=8.3.0")
-
-_yolo_model:              object | None = None
-_yolo_frame_counter:      int           = 0
-_latest_yolo_detections:  list[dict]    = []   # most recent YOLO frame (updated every detect cycle)
-_yolo_last_ran:           float         = 0.0  # epoch time of last successful YOLO run
 _vision_last_heartbeat:       float         = 0.0  # epoch time of last [Vision] status print
 _vision_last_heartbeat_state: str           = ""   # last printed heartbeat content — skip if unchanged
 # Phase 2 — Vision Channel shadow logging (Session 124, 2026-04-28).
 # Throttled to VISION_SHADOW_INTERVAL_SECS so observe_scene's extra
 # embed+recognize cost is bounded. 0.0 means "fire on first scan".
 _last_vision_shadow_at:       float         = 0.0
-# Dedicated single-thread executor for YOLO — isolates CPU-heavy PyTorch inference
-# from the default executor used by face detection, voice ID, and emotion agent.
-# This prevents GIL contention that would otherwise stall httpx LLM streaming.
-_yolo_executor: "concurrent.futures.ThreadPoolExecutor | None" = None
 
 # Identity hypothesis accumulator — updated each stranger turn by IdentityAgent.
 # person_id → {name, relationship, confidence, matched_attrs, source_person_id}
@@ -2947,7 +2929,7 @@ async def _background_vision_loop(
         if frame is None:
             await asyncio.sleep(0.05)
             continue
-        global _latest_yolo_detections, _last_active_bbox
+        global _last_active_bbox
         # P0.S1 Phase 2 — collect per-detection anti-spoof verdicts for this
         # scan iteration. Aggregated at H2 vision_frame emit time to surface
         # a single iteration-level liveness signal in the event log payload.
@@ -5778,15 +5760,7 @@ async def conversation_turn(
     _multi_person = len(_all_snaps_ct) >= 2
     print(f"[Brain] Context: history={len(history)} turns, memory={'yes' if memory_context else 'no'}, emotion={'yes' if emotion_context else 'no'}, room={'yes' if _multi_person else 'no'}, scene={'yes' if SCENE_BLOCK_ENABLED else 'no'}, shared_context={_last_shared_context_row_count}")
 
-    # Spatial memory — only active when YOLO is enabled
     object_context = None
-    if VISION_YOLO_ENABLED and _brain_orchestrator and not is_stranger:
-        object_context = _brain_orchestrator.get_object_context(text)
-        if time.monotonic() - _yolo_last_ran < 30.0:
-            live_items = [d["class"] for d in _latest_yolo_detections if d["class"] != "person"]
-            if live_items:
-                live_str = "What I can see in the camera right now: " + ", ".join(live_items)
-                object_context = (live_str + "\n\n" + object_context) if object_context else live_str
 
     # prompt_addendum_override takes precedence (used for stranger mode and similar).
     # Otherwise fall back to brain agent's learned prefs for this person.
@@ -5827,8 +5801,10 @@ async def conversation_turn(
         if SCENE_BLOCK_ENABLED else None
     )
 
-    # Proactive curiosity — pattern question queued by ObjectPatternAgent.
-    # Injected once per question; the LLM weaves it in when the moment feels right.
+    # Proactive curiosity — pattern-question consumer (KAIROS path). The
+    # object-pattern queue is no longer populated after SB.1 D1, so
+    # get_pending_question() returns None here (harmless no-op read; the
+    # path is kept per the CEO ruling, separate later cleanup).
     if _brain_orchestrator and not is_stranger:
         pending_q = _brain_orchestrator.get_pending_question()
         if pending_q:
@@ -6778,8 +6754,7 @@ async def _warm_heavy_worker_pools() -> None:
 
 async def run():
     """Main pipeline loop."""
-    global _shutdown_event, _brain_orchestrator, _yolo_frame_counter, \
-           _latest_yolo_detections, _yolo_last_ran, _vision_last_heartbeat, \
+    global _shutdown_event, _brain_orchestrator, _vision_last_heartbeat, \
            _vision_face_scan_last
 
     # ── P0.S2 dashboard auth token (FIRST line — before any other boot work) ──
@@ -6995,20 +6970,6 @@ async def run():
     asyncio.create_task(_dream_loop(db))
     global _health_log_task
     _health_log_task = asyncio.create_task(_health_log_loop(asyncio.get_event_loop()))
-
-    # YOLO spatial memory — disabled via VISION_YOLO_ENABLED flag
-    global _yolo_model, _yolo_executor
-    if VISION_YOLO_ENABLED and _YOLO_AVAILABLE:
-        try:
-            _yolo_model = _YOLO(VISION_YOLO_MODEL, verbose=False)
-            # Isolated single-thread pool — prevents PyTorch GIL from stalling
-            # httpx async I/O during LLM streaming in the conversation loop.
-            _yolo_executor = concurrent.futures.ThreadPoolExecutor(
-                max_workers=1, thread_name_prefix="yolo"
-            )
-            print(f"[Pipeline] YOLO object detection ready ({VISION_YOLO_MODEL})")
-        except Exception as e:
-            print(f"[Pipeline] YOLO load failed — spatial memory disabled: {e}")
 
     # Canary #2 / latency D2 — warm the 4 heavy-worker subprocess pools (force lazy
     # model-load) BEFORE declaring ready, so the user's first turn is genuinely warm.
@@ -7283,48 +7244,6 @@ async def run():
                 continue
 
             _null_frame_streak = 0
-
-            # ── YOLO object detection (spatial memory) — disabled when VISION_YOLO_ENABLED=False
-            _yolo_frame_counter += 1
-            if VISION_YOLO_ENABLED and _yolo_model and _yolo_frame_counter % VISION_DETECT_EVERY == 0:
-                _yolo_frame_counter = 0
-                try:
-                    _yolo_frame = frame
-                    yolo_results = await loop.run_in_executor(
-                        _yolo_executor, lambda: _yolo_model(_yolo_frame, verbose=False, device="cpu")[0]
-                    )
-                    all_boxes = yolo_results.boxes
-                    yolo_dets = [
-                        {
-                            "class": yolo_results.names[int(box.cls[0])],
-                            "conf":  float(box.conf[0]),
-                            "bbox":  tuple(int(v) for v in box.xyxy[0].tolist()),
-                        }
-                        for box in all_boxes
-                        if float(box.conf[0]) >= VISION_DETECT_CONF
-                    ]
-                    if yolo_dets:
-                        _latest_yolo_detections = yolo_dets
-                        _yolo_last_ran = time.monotonic()
-                        det_summary = ", ".join(
-                            f"{d['class']}({d['conf']:.2f})" for d in yolo_dets
-                        )
-                        print(f"[YOLO] Detected: {det_summary}")
-                    elif all_boxes is not None and len(all_boxes) > 0:
-                        top = max(all_boxes, key=lambda b: float(b.conf[0]))
-                        print(f"[YOLO] Scan: best={yolo_results.names[int(top.cls[0])]}({float(top.conf[0]):.2f}), total={len(all_boxes)} raw — all below conf={VISION_DETECT_CONF}")
-                    else:
-                        print(f"[YOLO] Scan: 0 raw detections")
-                    if yolo_dets and _brain_orchestrator:
-                        h, w = frame.shape[:2]
-                        _brain_orchestrator.record_object_sightings(
-                            yolo_dets,
-                            frame_w=w,
-                            frame_h=h,
-                            person_context=_primary_person_name(),
-                        )
-                except Exception as _yolo_err:
-                    print(f"[Pipeline] YOLO error: {_yolo_err}")
 
             # ── Detect faces ──────────────────────────────────────────────────
             detections = detector.detect(frame)

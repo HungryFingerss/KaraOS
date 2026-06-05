@@ -33,9 +33,6 @@ transformers>=4.40.0      # WhisperFeatureExtractor for Smart-Turn mel-spectrogr
 # Graph DB
 kuzu==0.11.3              # embedded property graph (entity-relationship knowledge)
 
-# Spatial memory vision (object detection)
-ultralytics>=8.3.0           # YOLO11 — auto-downloads model weights on first run
-
 # Utils
 python-dotenv>=1.0.0
 rapidfuzz>=3.0.0          # fast string similarity — schema normalization pre-filter

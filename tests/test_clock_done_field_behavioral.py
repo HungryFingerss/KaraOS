@@ -60,7 +60,6 @@ _CLOCK_SETTER_NAMES = frozenset({
 # Direct module-global / local assigns that feed a monotonic timestamp into a deadline.
 _CLOCK_DIRECT_VARS = frozenset({
     "_ct_failed_at",   # cloud_failed_at source, passed to transition_to_sick(failed_at=) (#5)
-    "_yolo_last_ran",  # YOLO cadence deadline (#6)
 })
 
 

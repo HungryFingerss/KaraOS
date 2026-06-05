@@ -1,8 +1,9 @@
 """A1 + A3 + A5 anchor tests for Pre-P1 Bundle 3 (Critical Bugs MF4 + MF5).
 
-A1 = D1 deadline-math migration source-inspection (parametrize over the 34
+A1 = D1 deadline-math migration source-inspection (parametrize over the 33
 locked DEADLINE-MATH sites; each line must contain `time.monotonic()` not
-`time.time()`).
+`time.time()`). (Was 34; SB.1 D1 deleted the #6 `_yolo_last_ran` site with the
+AGPL YOLO stack — its pipeline.py:5745 anchor is dropped below.)
 
 A3 = D3 assert → raise migration source-inspection (parametrize over the 4
 files in Plan v2 §1.14 scope; each must contain ZERO `assert` and at least
@@ -33,9 +34,9 @@ A1_MIGRATED_SITES: tuple[tuple[str, int], ...] = (
     # 13 explicit Phase 0 + 14 paired writers + 1 cross-file = 28 sites (locked at Plan v2 §1.8)
     ("pipeline.py", 1006), ("pipeline.py", 2885), ("pipeline.py", 2886),
     ("pipeline.py", 2915), ("pipeline.py", 3426), ("pipeline.py", 3444),  # 3396→3444 #5 Slice-A LINE-REF-DRIFT refresh (cloud subtraction shifted by _bv_now SPLIT)
-    ("pipeline.py", 5745), ("pipeline.py", 5867), ("pipeline.py", 7413),  # 7369→7413 #5 Slice-A LINE-REF-DRIFT refresh (SELF_UPDATE_COOLDOWN)
+    ("pipeline.py", 5867), ("pipeline.py", 7413),  # 7369→7413 #5 Slice-A refresh (SELF_UPDATE_COOLDOWN); SB.1 D1 dropped pipeline.py:5745 (_yolo_last_ran #6 deadline-math, deleted with the YOLO stack)
     ("pipeline.py", 7753), ("pipeline.py", 8628), ("pipeline.py", 8589),  # Canary4 line-ref refresh (+25 Q2-helper shift + B1 wiring)
-    ("core/brain_agent.py", 6908),
+    ("core/brain_agent.py", 6450),  # 6908→6450 SB.1 D1 LINE-REF-DRIFT refresh (Kuzu _rebuild_secs shifted up by the YOLO-stack deletion)
     ("pipeline.py", 1030), ("pipeline.py", 2879), ("pipeline.py", 2919),
     ("pipeline.py", 2939), ("pipeline.py", 3533), ("pipeline.py", 3494),
     ("pipeline.py", 3536), ("pipeline.py", 3538), ("pipeline.py", 6858),

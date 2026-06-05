@@ -34,19 +34,16 @@ from core.brain_agent import (
     FrictionDetectionAgent,
     GraphDB,
     IdentityAgent,
-    ObjectPatternAgent,
     ProactiveNudgeAgent,
     PromptPrefAgent,
     RoutineAgent,
     SchemaNormAgent,
     SocialGraphAgent,
-    SpatialMemoryAgent,
     TriageAgent,
     WatchdogAgent,
     _cosine_similarity,
     _escalate_pref,
     _format_context_lines,
-    _format_object_sightings,
     _get_prior_ai_claim,
     _infer_location_zone,
     _parse_json,
@@ -996,12 +993,10 @@ class TestBrainOrchestrator:
         orch._pref_agent           = PromptPrefAgent(orch._http)
         orch._embed_agent          = EmbeddingAgent(orch._http)
         from core.brain_agent import (
-            SchemaNormAgent, SpatialMemoryAgent, ObjectPatternAgent,
+            SchemaNormAgent,
             ConversationInsightAgent, RoutineAgent, ProactiveNudgeAgent, WatchdogAgent,
         )
         orch._schema_norm          = SchemaNormAgent(orch._brain_db, orch._embed_agent)
-        orch._spatial_memory       = SpatialMemoryAgent(orch._brain_db)
-        orch._pattern_agent        = ObjectPatternAgent(orch._brain_db, orch._http)
         orch._insight_agent        = ConversationInsightAgent(orch._http)
         orch._routine_agent        = RoutineAgent(orch._brain_db)
         orch._nudge_agent          = ProactiveNudgeAgent(orch._brain_db, orch._graph_db)
@@ -1480,12 +1475,10 @@ class TestBrainOrchestratorPrefs:
         orch._pref_agent           = PromptPrefAgent(orch._http)
         orch._embed_agent          = EmbeddingAgent(orch._http)
         from core.brain_agent import (
-            SchemaNormAgent, SpatialMemoryAgent, ObjectPatternAgent,
+            SchemaNormAgent,
             ConversationInsightAgent, RoutineAgent, ProactiveNudgeAgent, WatchdogAgent,
         )
         orch._schema_norm          = SchemaNormAgent(orch._brain_db, orch._embed_agent)
-        orch._spatial_memory       = SpatialMemoryAgent(orch._brain_db)
-        orch._pattern_agent        = ObjectPatternAgent(orch._brain_db, orch._http)
         orch._insight_agent        = ConversationInsightAgent(orch._http)
         orch._routine_agent        = RoutineAgent(orch._brain_db)
         orch._nudge_agent          = ProactiveNudgeAgent(orch._brain_db, orch._graph_db)
@@ -1717,10 +1710,8 @@ class TestGraphDB:
         orch._contradictor = ContradictionAgent(orch._http)
         orch._pref_agent   = PromptPrefAgent(orch._http)
         orch._embed_agent  = EmbeddingAgent(orch._http)
-        from core.brain_agent import SchemaNormAgent, SpatialMemoryAgent, ObjectPatternAgent
+        from core.brain_agent import SchemaNormAgent
         orch._schema_norm         = SchemaNormAgent(orch._brain_db, orch._embed_agent)
-        orch._spatial_memory      = SpatialMemoryAgent(orch._brain_db)
-        orch._pattern_agent       = ObjectPatternAgent(orch._brain_db, orch._http)
         orch._system_name         = "Dog"
         orch._session_turn_counts = {}
         orch._intra_pref_done     = set()
@@ -2649,10 +2640,8 @@ class TestParallelContradictionChecks:
         orch._contradictor        = ContradictionAgent(orch._http)
         orch._pref_agent          = PromptPrefAgent(orch._http)
         orch._embed_agent         = EmbeddingAgent(orch._http)
-        from core.brain_agent import SchemaNormAgent, SpatialMemoryAgent, ObjectPatternAgent
+        from core.brain_agent import SchemaNormAgent
         orch._schema_norm         = SchemaNormAgent(orch._brain_db, orch._embed_agent)
-        orch._spatial_memory      = SpatialMemoryAgent(orch._brain_db)
-        orch._pattern_agent       = ObjectPatternAgent(orch._brain_db, orch._http)
         orch._session_turn_counts = {}
         orch._intra_pref_done     = set()
 
@@ -2719,12 +2708,10 @@ class TestIntraSessionPref:
         orch._http                = httpx.AsyncClient()
         orch._embed_agent         = EmbeddingAgent(orch._http)
         from core.brain_agent import (
-            SchemaNormAgent, SpatialMemoryAgent, ObjectPatternAgent,
+            SchemaNormAgent,
             ConversationInsightAgent, RoutineAgent, ProactiveNudgeAgent, WatchdogAgent,
         )
         orch._schema_norm         = SchemaNormAgent(orch._brain_db, orch._embed_agent)
-        orch._spatial_memory      = SpatialMemoryAgent(orch._brain_db)
-        orch._pattern_agent       = ObjectPatternAgent(orch._brain_db, orch._http)
         orch._insight_agent       = ConversationInsightAgent(orch._http)
         orch._routine_agent       = RoutineAgent(orch._brain_db)
         orch._nudge_agent         = ProactiveNudgeAgent(orch._brain_db, orch._graph_db)
@@ -2804,390 +2791,6 @@ class TestInferLocationZone:
         assert _infer_location_zone(0.5, 0.70) == "center"  # 0.70 is not floor (>0.70)
 
 
-# ── _format_object_sightings tests ────────────────────────────────────────────
-
-class TestFormatObjectSightings:
-    def _make_row(self, cls, zone, age_secs, times=1, person=None):
-        now = time.time()
-        return {
-            "object_class":  cls,
-            "confidence":    0.9,
-            "location_zone": zone,
-            "first_seen_at": now - age_secs - 1,
-            "last_seen_at":  now - age_secs,
-            "times_seen":    times,
-            "person_context": person,
-        }
-
-    def test_returns_none_for_empty(self):
-        assert _format_object_sightings([]) is None
-
-    def test_just_now_label(self):
-        row = self._make_row("cat", "center", age_secs=5)
-        result = _format_object_sightings([row])
-        assert "just now" in result
-
-    def test_minutes_label(self):
-        row = self._make_row("cup", "left side", age_secs=300)
-        result = _format_object_sightings([row])
-        assert "minutes ago" in result
-
-    def test_days_label(self):
-        row = self._make_row("watch", "right side", age_secs=7 * 86400)
-        result = _format_object_sightings([row])
-        assert "days ago" in result
-
-    def test_times_seen_note(self):
-        row = self._make_row("bottle", "center", age_secs=60, times=5)
-        result = _format_object_sightings([row])
-        assert "5×" in result
-
-    def test_person_context_note(self):
-        row = self._make_row("laptop", "center", age_secs=60, person="Jagan")
-        result = _format_object_sightings([row])
-        assert "while Jagan was present" in result
-
-    def test_header_present(self):
-        row = self._make_row("chair", "right side", age_secs=10)
-        result = _format_object_sightings([row])
-        assert result.startswith("Objects I have observed in the room:")
-
-
-# ── BrainDB object sighting tests ─────────────────────────────────────────────
-
-class TestBrainDBObjectSightings:
-    def test_insert_new_sighting(self, brain_db):
-        is_new = brain_db.store_object_sighting(
-            "cup", 0.9, "left side", 0.2, 0.5, None
-        )
-        assert is_new is True
-
-    def test_dedup_within_gap_updates_existing(self, brain_db):
-        brain_db.store_object_sighting("cup", 0.9, "center", 0.5, 0.5, None, dedup_gap_secs=60)
-        is_new = brain_db.store_object_sighting("cup", 0.95, "center", 0.5, 0.5, None, dedup_gap_secs=60)
-        assert is_new is False
-        rows = brain_db.get_recent_object_sightings()
-        assert rows[0]["times_seen"] == 2
-
-    def test_different_zone_inserts_new_row(self, brain_db):
-        brain_db.store_object_sighting("cup", 0.9, "left side", 0.2, 0.5, None)
-        is_new = brain_db.store_object_sighting("cup", 0.9, "right side", 0.8, 0.5, None)
-        assert is_new is True
-        rows = brain_db.get_recent_object_sightings()
-        assert len(rows) == 2
-
-    def test_search_by_keyword(self, brain_db):
-        brain_db.store_object_sighting("laptop", 0.9, "center", 0.5, 0.5, None)
-        brain_db.store_object_sighting("cup", 0.9, "left side", 0.2, 0.5, None)
-        rows = brain_db.search_object_sightings(["laptop"])
-        assert len(rows) == 1
-        assert rows[0]["object_class"] == "laptop"
-
-    def test_search_partial_match(self, brain_db):
-        brain_db.store_object_sighting("cell phone", 0.8, "center", 0.5, 0.5, None)
-        rows = brain_db.search_object_sightings(["phone"])
-        assert len(rows) == 1
-
-    def test_search_empty_keywords_returns_empty(self, brain_db):
-        brain_db.store_object_sighting("cup", 0.9, "center", 0.5, 0.5, None)
-        rows = brain_db.search_object_sightings([])
-        assert rows == []
-
-    def test_prune_removes_oldest(self, brain_db):
-        for i in range(5):
-            brain_db.store_object_sighting(f"item{i}", 0.9, f"zone{i}", 0.5, 0.5, None)
-        brain_db.prune_object_sightings(max_rows=3)
-        rows = brain_db.get_recent_object_sightings(10)
-        assert len(rows) == 3
-
-    def test_wipe_clears_sightings(self, brain_db):
-        brain_db.store_object_sighting("cup", 0.9, "center", 0.5, 0.5, None)
-        brain_db.wipe()
-        rows = brain_db.get_recent_object_sightings()
-        assert rows == []
-
-    def test_table_indexes_exist(self, brain_db):
-        indexes = {
-            r[1] for r in brain_db._conn.execute(
-                "SELECT type, name FROM sqlite_master WHERE type='index'"
-            ).fetchall()
-        }
-        assert "idx_object_sightings_class" in indexes
-        assert "idx_object_sightings_ts" in indexes
-
-
-# ── SpatialMemoryAgent tests ───────────────────────────────────────────────────
-
-class TestSpatialMemoryAgent:
-    def test_record_stores_sighting(self, brain_db):
-        agent = SpatialMemoryAgent(brain_db)
-        agent.record(
-            [{"class": "bottle", "conf": 0.9, "bbox": (100, 100, 200, 400)}],
-            frame_w=640, frame_h=480,
-        )
-        rows = brain_db.get_recent_object_sightings()
-        assert len(rows) == 1
-        assert rows[0]["object_class"] == "bottle"
-
-    def test_record_infers_location_zone(self, brain_db):
-        agent = SpatialMemoryAgent(brain_db)
-        # bbox center at x=80 out of 640 → cx=0.125 → "left side"
-        agent.record(
-            [{"class": "chair", "conf": 0.8, "bbox": (20, 200, 140, 400)}],
-            frame_w=640, frame_h=480,
-        )
-        rows = brain_db.get_recent_object_sightings()
-        assert "left side" in rows[0]["location_zone"]
-
-    def test_record_stores_person_context(self, brain_db):
-        agent = SpatialMemoryAgent(brain_db)
-        agent.record(
-            [{"class": "cup", "conf": 0.85, "bbox": (300, 200, 400, 300)}],
-            frame_w=640, frame_h=480,
-            person_context="Jagan",
-        )
-        rows = brain_db.get_recent_object_sightings()
-        assert rows[0]["person_context"] == "Jagan"
-
-    def test_record_ignores_empty_detections(self, brain_db):
-        agent = SpatialMemoryAgent(brain_db)
-        agent.record([], frame_w=640, frame_h=480)
-        assert brain_db.get_recent_object_sightings() == []
-
-    def test_get_context_returns_none_when_empty(self, brain_db):
-        agent = SpatialMemoryAgent(brain_db)
-        result = agent.get_context(["watch"])
-        assert result is None
-
-    def test_get_context_matches_keyword(self, brain_db):
-        agent = SpatialMemoryAgent(brain_db)
-        agent.record(
-            [{"class": "watch", "conf": 0.9, "bbox": (100, 100, 200, 200)}],
-            frame_w=640, frame_h=480,
-        )
-        result = agent.get_context(["watch"])
-        assert result is not None
-        assert "watch" in result
-
-    def test_get_recent_context_returns_latest(self, brain_db):
-        agent = SpatialMemoryAgent(brain_db)
-        agent.record(
-            [{"class": "laptop", "conf": 0.9, "bbox": (300, 150, 400, 250)}],
-            frame_w=640, frame_h=480,
-        )
-        result = agent.get_recent_context(5)
-        assert result is not None
-        assert "laptop" in result
-
-
-# ── BrainOrchestrator spatial memory integration ──────────────────────────────
-
-class TestBrainOrchestratorSpatialMemory:
-    def _make_orch(self, tmp_path):
-        import httpx
-        orch = BrainOrchestrator.__new__(BrainOrchestrator)
-        orch._brain_db        = BrainDB(tmp_path / "brain.db")
-        orch._graph_db        = GraphDB(tmp_path / "brain_graph")
-        orch._http            = httpx.AsyncClient()
-        orch._embed_agent     = EmbeddingAgent(orch._http)
-        orch._schema_norm     = SchemaNormAgent(orch._brain_db, orch._embed_agent)
-        orch._spatial_memory  = SpatialMemoryAgent(orch._brain_db)
-        orch._pattern_agent   = ObjectPatternAgent(orch._brain_db, orch._http)
-        orch._session_turn_counts = {}
-        orch._intra_pref_done     = set()
-        return orch
-
-    def test_record_object_sightings_stores_data(self, tmp_path):
-        orch = self._make_orch(tmp_path)
-        orch.record_object_sightings(
-            [{"class": "cup", "conf": 0.9, "bbox": (100, 100, 200, 300)}],
-            frame_w=640, frame_h=480,
-        )
-        rows = orch._brain_db.get_recent_object_sightings()
-        assert len(rows) == 1
-
-    def test_get_object_context_keyword_match(self, tmp_path):
-        orch = self._make_orch(tmp_path)
-        orch.record_object_sightings(
-            [{"class": "laptop", "conf": 0.9, "bbox": (200, 150, 400, 300)}],
-            frame_w=640, frame_h=480,
-        )
-        ctx = orch.get_object_context("where is my laptop?")
-        assert ctx is not None
-        assert "laptop" in ctx
-
-    def test_get_object_context_no_match_returns_recent(self, tmp_path):
-        orch = self._make_orch(tmp_path)
-        orch.record_object_sightings(
-            [{"class": "chair", "conf": 0.8, "bbox": (100, 100, 300, 400)}],
-            frame_w=640, frame_h=480,
-        )
-        # "have you seen anything" has no matching keywords
-        ctx = orch.get_object_context("have you seen anything?")
-        assert ctx is not None
-        assert "chair" in ctx
-
-    def test_get_object_context_empty_db_returns_none(self, tmp_path):
-        orch = self._make_orch(tmp_path)
-        ctx = orch.get_object_context("where is my watch?")
-        assert ctx is None
-
-
-# ── BrainDB pattern questions tests ───────────────────────────────────────────
-
-class TestBrainDBPatternQuestions:
-    def test_store_question_returns_true_for_new(self, brain_db):
-        is_new = brain_db.store_pattern_question("Do you always work here?", "work_location")
-        assert is_new is True
-
-    def test_store_question_dedup_on_pattern_key(self, brain_db):
-        brain_db.store_pattern_question("Do you always work here?", "work_location")
-        is_new = brain_db.store_pattern_question("Different wording but same key?", "work_location")
-        assert is_new is False
-
-    def test_get_next_pending_returns_oldest_first(self, brain_db):
-        brain_db.store_pattern_question("First question", "key_a")
-        brain_db.store_pattern_question("Second question", "key_b")
-        q = brain_db.get_next_pending_question()
-        assert q is not None
-        assert q["text"] == "First question"
-        assert q["pattern_key"] == "key_a"
-
-    def test_mark_question_asked_hides_it(self, brain_db):
-        brain_db.store_pattern_question("A question", "key_x")
-        q = brain_db.get_next_pending_question()
-        brain_db.mark_question_asked(q["id"])
-        assert brain_db.get_next_pending_question() is None
-
-    def test_pending_question_count(self, brain_db):
-        assert brain_db.pending_question_count() == 0
-        brain_db.store_pattern_question("Q1", "k1")
-        brain_db.store_pattern_question("Q2", "k2")
-        assert brain_db.pending_question_count() == 2
-
-    def test_get_next_returns_none_when_empty(self, brain_db):
-        assert brain_db.get_next_pending_question() is None
-
-    def test_wipe_clears_questions(self, brain_db):
-        brain_db.store_pattern_question("Some question", "key_q")
-        brain_db.wipe()
-        assert brain_db.pending_question_count() == 0
-
-
-# ── BrainDB get_sighting_stats tests ──────────────────────────────────────────
-
-class TestBrainDBSightingStats:
-    def test_empty_returns_empty_list(self, brain_db):
-        assert brain_db.get_sighting_stats() == []
-
-    def test_single_sighting_excluded_need_more_than_2(self, brain_db):
-        brain_db.store_object_sighting("cup", 0.9, "center", 0.5, 0.5, None)
-        # times_seen=1 → HAVING total_times > 2 filters it out
-        stats = brain_db.get_sighting_stats()
-        assert stats == []
-
-    def test_high_count_included(self, brain_db):
-        # Store sighting then bump it 4 more times (5 total times_seen)
-        brain_db.store_object_sighting("laptop", 0.9, "center", 0.5, 0.5, None)
-        for _ in range(4):
-            brain_db.store_object_sighting("laptop", 0.9, "center", 0.5, 0.5, None, dedup_gap_secs=3600)
-        stats = brain_db.get_sighting_stats()
-        assert any(r["object_class"] == "laptop" for r in stats)
-
-    def test_old_sightings_excluded(self, brain_db):
-        # Insert a sighting with last_seen far in the past via direct SQL
-        old_ts = time.time() - 10 * 86400  # 10 days ago
-        brain_db._conn.execute(
-            """INSERT INTO object_sightings
-               (object_class, confidence, location_zone, bbox_cx, bbox_cy,
-                first_seen_at, last_seen_at, times_seen, person_context)
-               VALUES ('old_lamp', 0.9, 'center', 0.5, 0.5, ?, ?, 10, NULL)""",
-            (old_ts, old_ts),
-        )
-        brain_db._conn.commit()
-        stats = brain_db.get_sighting_stats(days=7)
-        assert not any(r["object_class"] == "old_lamp" for r in stats)
-
-
-# ── ObjectPatternAgent tests ───────────────────────────────────────────────────
-
-class TestObjectPatternAgent:
-    def _make_agent(self, brain_db):
-        import httpx
-        return ObjectPatternAgent(brain_db, httpx.AsyncClient())
-
-    async def test_maybe_run_skips_below_min_sightings(self, brain_db):
-        agent = self._make_agent(brain_db)
-        # Should not run: total_sightings < PATTERN_MIN_SIGHTINGS
-        # We verify by checking no questions were added (LLM would be needed)
-        await agent.maybe_run(total_sightings=5)
-        assert brain_db.pending_question_count() == 0
-
-    async def test_maybe_run_respects_cooldown(self, brain_db):
-        agent = self._make_agent(brain_db)
-        agent._last_run_at = time.time()  # set as if just ran
-        # Should skip due to cooldown even with enough sightings
-        with patch.object(agent, "run", new=AsyncMock()) as mock_run:
-            await agent.maybe_run(total_sightings=100)
-            mock_run.assert_not_called()
-
-    async def test_maybe_run_skips_when_queue_full(self, brain_db):
-        agent = self._make_agent(brain_db)
-        # Fill up the queue
-        from core.config import PATTERN_MAX_QUESTIONS
-        for i in range(PATTERN_MAX_QUESTIONS):
-            brain_db.store_pattern_question(f"Q{i}", f"key_{i}")
-        with patch.object(agent, "run", new=AsyncMock()) as mock_run:
-            await agent.maybe_run(total_sightings=100)
-            mock_run.assert_not_called()
-
-    async def test_run_stores_questions_from_llm(self, brain_db):
-        agent = self._make_agent(brain_db)
-        fake_response = json.dumps({
-            "has_patterns": True,
-            "patterns": [{
-                "pattern_key": "laptop_morning_habit",
-                "question": "I notice a laptop appears most mornings — is that your work setup?",
-                "confidence": 0.85,
-            }]
-        })
-        with patch.object(agent, "_call_together", new=AsyncMock(return_value=fake_response)):
-            # Add stats so _format_stats has something to work with
-            brain_db.store_object_sighting("laptop", 0.9, "center", 0.5, 0.5, None)
-            for _ in range(4):
-                brain_db.store_object_sighting("laptop", 0.9, "center", 0.5, 0.5, None, dedup_gap_secs=3600)
-            await agent.run()
-        assert brain_db.pending_question_count() == 1
-        q = brain_db.get_next_pending_question()
-        assert q["pattern_key"] == "laptop_morning_habit"
-
-    async def test_run_filters_low_confidence(self, brain_db):
-        agent = self._make_agent(brain_db)
-        fake_response = json.dumps({
-            "has_patterns": True,
-            "patterns": [{
-                "pattern_key": "low_conf_pattern",
-                "question": "Some question",
-                "confidence": 0.50,  # below PATTERN_MIN_CONF
-            }]
-        })
-        with patch.object(agent, "_call_together", new=AsyncMock(return_value=fake_response)):
-            brain_db.store_object_sighting("cup", 0.9, "center", 0.5, 0.5, None)
-            for _ in range(4):
-                brain_db.store_object_sighting("cup", 0.9, "center", 0.5, 0.5, None, dedup_gap_secs=3600)
-            await agent.run()
-        assert brain_db.pending_question_count() == 0
-
-    async def test_run_skips_furniture(self, brain_db):
-        agent = self._make_agent(brain_db)
-        # Insert only furniture sightings — should be filtered before LLM call
-        for _ in range(10):
-            brain_db.store_object_sighting("chair", 0.9, "left side", 0.2, 0.5, None, dedup_gap_secs=3600)
-        with patch.object(agent, "_call_llm", new=AsyncMock(return_value=[])) as mock_llm:
-            await agent.run()
-            mock_llm.assert_not_called()
-
-
 # ── BrainOrchestrator pattern question integration ────────────────────────────
 
 class TestBrainOrchestratorPatternQuestions:
@@ -3199,8 +2802,6 @@ class TestBrainOrchestratorPatternQuestions:
         orch._http            = httpx.AsyncClient()
         orch._embed_agent     = EmbeddingAgent(orch._http)
         orch._schema_norm     = SchemaNormAgent(orch._brain_db, orch._embed_agent)
-        orch._spatial_memory  = SpatialMemoryAgent(orch._brain_db)
-        orch._pattern_agent   = ObjectPatternAgent(orch._brain_db, orch._http)
         orch._session_turn_counts = {}
         orch._intra_pref_done     = set()
         return orch
@@ -3211,14 +2812,22 @@ class TestBrainOrchestratorPatternQuestions:
 
     def test_get_pending_question_returns_stored(self, tmp_path):
         orch = self._make_orch(tmp_path)
-        orch._brain_db.store_pattern_question("Why do you use glasses sometimes?", "glasses_variable")
+        orch._brain_db._conn.execute(
+            "INSERT INTO object_pattern_questions (question, pattern_key, created_at) VALUES (?, ?, ?)",
+            ("Why do you use glasses sometimes?", "glasses_variable", time.time()),
+        )
+        orch._brain_db._conn.commit()
         q = orch.get_pending_question()
         assert q is not None
         assert "glasses" in q["text"]
 
     def test_mark_question_asked_via_orchestrator(self, tmp_path):
         orch = self._make_orch(tmp_path)
-        orch._brain_db.store_pattern_question("A curiosity question", "test_key")
+        orch._brain_db._conn.execute(
+            "INSERT INTO object_pattern_questions (question, pattern_key, created_at) VALUES (?, ?, ?)",
+            ("A curiosity question", "test_key", time.time()),
+        )
+        orch._brain_db._conn.commit()
         q = orch.get_pending_question()
         orch.mark_question_asked(q["id"])
         assert orch.get_pending_question() is None
@@ -3538,8 +3147,6 @@ class TestProactiveNudgeAgent:
         orch._http            = httpx.AsyncClient()
         orch._embed_agent     = EmbeddingAgent(orch._http)
         orch._schema_norm     = SchemaNormAgent(orch._brain_db, orch._embed_agent)
-        orch._spatial_memory  = SpatialMemoryAgent(orch._brain_db)
-        orch._pattern_agent   = ObjectPatternAgent(orch._brain_db, orch._http)
         orch._insight_agent   = ConversationInsightAgent(orch._http)
         orch._routine_agent   = RoutineAgent(orch._brain_db)
         orch._nudge_agent     = ProactiveNudgeAgent(orch._brain_db, orch._graph_db)
@@ -4678,12 +4285,6 @@ class TestSessionEndSynthesisS113:
         orch._intra_pref_done     = set()
         orch._session_start_ts    = {"lexi_xyz": time.time() - 60}
         orch._disputed_persons    = set()
-        # Stub agents — notify_session_end only needs attribute access.
-        class _Stub:
-            _new_count = 0
-            async def maybe_run(self, *a, **k): return None
-        orch._spatial_memory = _Stub()
-        orch._pattern_agent  = _Stub()
         return orch
 
     def _add_person(self, orch, pid, name, ptype="known"):
@@ -4717,10 +4318,11 @@ class TestSessionEndSynthesisS113:
         orch.notify_session_end("lexi_xyz")
 
         # The known set: pref, insight, presence, nudge, visitor_alert,
-        # pattern_agent.maybe_run, household. ≥ 6 is the floor — keep the
-        # assertion >= instead of == so a future addition doesn't false-fail.
-        assert len(scheduled_coros) >= 6, (
-            f"expected ≥6 synthesis tasks scheduled on session end; got {len(scheduled_coros)}"
+        # household. ≥ 5 is the floor — keep the assertion >= instead of ==
+        # so a future addition doesn't false-fail. (SB.1 D1 removed the
+        # pattern_agent.maybe_run task from this session-end fan-out.)
+        assert len(scheduled_coros) >= 5, (
+            f"expected ≥5 synthesis tasks scheduled on session end; got {len(scheduled_coros)}"
         )
 
     def test_s113_session_end_disputed_skips_all_synthesis(self, tmp_path, monkeypatch):

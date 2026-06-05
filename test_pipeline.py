@@ -10718,8 +10718,6 @@ def test_notify_session_end_skips_synthesis_tasks_when_disputed():
         CREATE TABLE persons (id TEXT PRIMARY KEY, name TEXT NOT NULL);
         INSERT INTO persons VALUES ('jagan_001', 'Jagan');
     """)
-    orch._spatial_memory = MagicMock(_new_count=0)
-    orch._pattern_agent  = MagicMock(maybe_run=AsyncMock())
 
     called = {"pref": 0, "insight": 0, "presence": 0, "nudge": 0, "visitor": 0, "household": 0}
     async def _fail_pref(*a, **k):     called["pref"] += 1
@@ -10760,8 +10758,6 @@ def test_notify_session_end_runs_synthesis_tasks_when_not_disputed():
         CREATE TABLE persons (id TEXT PRIMARY KEY, name TEXT NOT NULL);
         INSERT INTO persons VALUES ('jagan_001', 'Jagan');
     """)
-    orch._spatial_memory = MagicMock(_new_count=0)
-    orch._pattern_agent  = MagicMock(maybe_run=AsyncMock())
 
     called = {"pref": 0, "insight": 0}
     async def _count_pref(*a, **k):    called["pref"] += 1
@@ -13184,7 +13180,6 @@ async def test_s3b2_behavioral_silent_skip_fires_on_user_to_user(monkeypatch, tm
         def notify(self): self.notified += 1
         def get_pending_question(self): return None
         def get_prompt_addendum(self, pid): return None
-        def get_object_context(self, text): return None
         def get_context(self, *a, **k): return None
         def score_stranger_identity(self, *a, **k): return None
     orch_stub = _OrchStub()

@@ -701,8 +701,9 @@ def _classify_user_reaction(content: str) -> str:
     return "neutral"
 
 
-# ── Spatial Memory helpers ─────────────────────────────────────────────────────
-
+# Shared geometry helper — maps a normalized bbox center to a zone label.
+# Consumed by pipeline's silent-observation path (the YOLO spatial-memory
+# consumer was removed in SB.1 D1; this helper is NOT YOLO-specific).
 def _infer_location_zone(bbox_cx: float, bbox_cy: float) -> str:
     """Map normalized center coordinates to a human-readable location zone.
 
@@ -721,43 +722,6 @@ def _infer_location_zone(bbox_cx: float, bbox_cy: float) -> str:
     if bbox_cy > 0.70:
         return f"{h} (floor level)"
     return h
-
-
-def _format_object_sightings(rows: list[dict]) -> str | None:
-    """Format a list of object sighting dicts for LLM injection."""
-    if not rows:
-        return None
-    now   = time.time()
-    lines = []
-    for r in rows:
-        age = now - r["last_seen_at"]
-        if age < 60:
-            age_str = "just now"
-        elif age < 3600:
-            age_str = f"{int(age / 60)} minutes ago"
-        elif age < 86400:
-            age_str = f"{int(age / 3600)} hours ago"
-        else:
-            age_str = f"{int(age / 86400)} days ago"
-
-        times_note   = f", seen {r['times_seen']}×" if r["times_seen"] > 1 else ""
-        context_note = (
-            f" (while {r['person_context']} was present)"
-            if r.get("person_context") else ""
-        )
-        lines.append(
-            f"- {r['object_class']} on {r['location_zone']},"
-            f" last seen {age_str}{times_note}{context_note}"
-        )
-    return "Objects I have observed in the room:\n" + "\n".join(lines)
-
-
-_VISION_STOPWORDS = frozenset({
-    "what", "where", "when", "have", "seen", "last", "time",
-    "that", "this", "there", "here", "with", "from", "your",
-    "about", "some", "which", "does", "know", "think", "been",
-    "could", "would", "should", "just", "still", "around",
-})
 
 
 def _escalate_pref(content: str, friction_count: int) -> str:
@@ -1957,114 +1921,6 @@ class BrainDB:
         rows = [dict(zip(cols, row)) for row in cur.fetchall()]
         return rows
 
-    # ── Object sightings (Spatial Memory) ─────────────────────────────────────
-
-    def store_object_sighting(
-        self,
-        object_class:   str,
-        confidence:     float,
-        location_zone:  str,
-        bbox_cx:        float,
-        bbox_cy:        float,
-        person_context: str | None,
-        dedup_gap_secs: float = 60.0,
-    ) -> bool:
-        """Store a new sighting or bump an existing one within dedup_gap_secs.
-
-        Returns True if a new row was inserted (new sighting), False if an
-        existing row was updated (same object still in the same zone).
-        """
-        now      = time.time()
-        existing = self._conn.execute(
-            """SELECT id, times_seen FROM object_sightings
-               WHERE  object_class = ? AND location_zone = ?
-                 AND  last_seen_at > ?""",
-            (object_class, location_zone, now - dedup_gap_secs),
-        ).fetchone()
-        if existing:
-            self._conn.execute(
-                """UPDATE object_sightings
-                   SET last_seen_at = ?, times_seen = ?, confidence = ?
-                   WHERE id = ?""",
-                (now, existing[1] + 1, confidence, existing[0]),
-            )
-            self._conn.commit()
-            return False
-        self._conn.execute(
-            """INSERT INTO object_sightings
-               (object_class, confidence, location_zone, bbox_cx, bbox_cy,
-                first_seen_at, last_seen_at, times_seen, person_context)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)""",
-            (object_class, confidence, location_zone, bbox_cx, bbox_cy,
-             now, now, person_context),
-        )
-        self._conn.commit()
-        return True
-
-    def search_object_sightings(
-        self, keywords: list[str], limit: int = 5
-    ) -> list[dict]:
-        """Return recent sightings whose class name matches any keyword (LIKE)."""
-        if not keywords:
-            return []
-        conditions = " OR ".join("object_class LIKE ?" for _ in keywords)
-        params: list = [f"%{kw}%" for kw in keywords]
-        params.append(limit)
-        rows = self._conn.execute(
-            f"""SELECT object_class, confidence, location_zone,
-                       first_seen_at, last_seen_at, times_seen, person_context
-                FROM   object_sightings
-                WHERE  ({conditions})
-                ORDER  BY last_seen_at DESC
-                LIMIT  ?""",
-            params,
-        ).fetchall()
-        return [
-            {
-                "object_class":  r[0], "confidence":  r[1],
-                "location_zone": r[2], "first_seen_at": r[3],
-                "last_seen_at":  r[4], "times_seen": r[5],
-                "person_context": r[6],
-            }
-            for r in rows
-        ]
-
-    def get_recent_object_sightings(self, limit: int = 20) -> list[dict]:
-        """Return the most recently observed objects regardless of class."""
-        rows = self._conn.execute(
-            """SELECT object_class, confidence, location_zone,
-                      first_seen_at, last_seen_at, times_seen, person_context
-               FROM   object_sightings
-               ORDER  BY last_seen_at DESC
-               LIMIT  ?""",
-            (limit,),
-        ).fetchall()
-        return [
-            {
-                "object_class":  r[0], "confidence":  r[1],
-                "location_zone": r[2], "first_seen_at": r[3],
-                "last_seen_at":  r[4], "times_seen": r[5],
-                "person_context": r[6],
-            }
-            for r in rows
-        ]
-
-    def prune_object_sightings(self, max_rows: int) -> None:
-        """Delete the oldest sightings when the table exceeds max_rows."""
-        count = self._conn.execute(
-            "SELECT COUNT(*) FROM object_sightings"
-        ).fetchone()[0]
-        if count > max_rows:
-            self._conn.execute(
-                """DELETE FROM object_sightings WHERE id IN (
-                    SELECT id FROM object_sightings
-                    ORDER  BY last_seen_at ASC
-                    LIMIT  ?
-                )""",
-                (count - max_rows,),
-            )
-            self._conn.commit()
-
     # ── Table pruning (E) ─────────────────────────────────────────────────────
 
     def prune_knowledge_hard_cap(self, max_rows: int) -> int:
@@ -2602,61 +2458,6 @@ class BrainDB:
 
     # ── Object pattern questions ───────────────────────────────────────────────
 
-    def get_sighting_stats(self, days: int = 7) -> list[dict]:
-        """Aggregate object sighting statistics for the last N days.
-
-        Returns per-class summary suitable for pattern analysis: total times seen,
-        distinct zones, first/last seen timestamps, and associated person names.
-        Objects seen only once are excluded (no pattern possible).
-        """
-        cutoff = time.time() - days * 86400
-        rows = self._conn.execute(
-            """SELECT
-                   object_class,
-                   SUM(times_seen)                          AS total_times,
-                   COUNT(*)                                 AS distinct_sightings,
-                   COUNT(DISTINCT location_zone)            AS distinct_zones,
-                   GROUP_CONCAT(DISTINCT location_zone) AS zones,
-                   MIN(first_seen_at)                  AS first_seen,
-                   MAX(last_seen_at)                   AS last_seen,
-                   GROUP_CONCAT(DISTINCT person_context) AS persons
-               FROM object_sightings
-               WHERE last_seen_at > ?
-               GROUP BY object_class
-               HAVING total_times > 2
-               ORDER BY total_times DESC
-               LIMIT 20""",
-            (cutoff,),
-        ).fetchall()
-        return [
-            {
-                "object_class":       r[0], "total_times":      r[1],
-                "distinct_sightings": r[2], "distinct_zones":    r[3],
-                "zones":              r[4], "first_seen":        r[5],
-                "last_seen":          r[6], "persons":           r[7],
-            }
-            for r in rows
-        ]
-
-    def store_pattern_question(self, question: str, pattern_key: str) -> bool:
-        """Store a pending question, skipping if the same pattern_key already exists.
-
-        Returns True if a new row was inserted.
-        """
-        existing = self._conn.execute(
-            "SELECT id FROM object_pattern_questions WHERE pattern_key = ?",
-            (pattern_key,),
-        ).fetchone()
-        if existing:
-            return False
-        self._conn.execute(
-            """INSERT INTO object_pattern_questions (question, pattern_key, created_at)
-               VALUES (?, ?, ?)""",
-            (question, pattern_key, time.time()),
-        )
-        self._conn.commit()
-        return True
-
     def get_next_pending_question(self) -> dict | None:
         """Return the oldest unasked pattern question, or None if none pending."""
         row = self._conn.execute(
@@ -2676,12 +2477,6 @@ class BrainDB:
             (time.time(), qid),
         )
         self._conn.commit()
-
-    def pending_question_count(self) -> int:
-        """Number of questions still waiting to be asked."""
-        return self._conn.execute(
-            "SELECT COUNT(*) FROM object_pattern_questions WHERE asked = 0"
-        ).fetchone()[0]
 
     # ── Social mentions ────────────────────────────────────────────────────────
     def upsert_social_mention(
@@ -5432,268 +5227,6 @@ class EmbeddingAgent:
         return None
 
 
-# ── Agent 6: SpatialMemoryAgent ────────────────────────────────────────────────
-
-from core.config import (
-    VISION_SIGHTING_GAP,
-    VISION_MAX_SIGHTINGS,
-    PATTERN_MIN_SIGHTINGS,
-    PATTERN_COOLDOWN,
-    PATTERN_MAX_QUESTIONS,
-    PATTERN_ANALYSIS_DAYS,
-    PATTERN_MIN_CONF,
-)
-
-
-class SpatialMemoryAgent:
-    """Stores YOLO object detections as persistent spatial memories in brain.db.
-
-    Called synchronously from the pipeline's main vision loop (every Nth frame).
-    Deduplicates within VISION_SIGHTING_GAP seconds so rapid re-detections of
-    the same object in the same zone only update the existing row rather than
-    flooding the table.
-
-    Enables queries like "where did you last see my watch?" by doing a simple
-    keyword search over stored sightings.
-    """
-
-    def __init__(self, brain_db: BrainDB) -> None:
-        self._brain_db  = brain_db
-        self._new_count = 0   # new rows inserted this session
-
-    def record(
-        self,
-        detections:     list[dict],  # [{"class": str, "conf": float, "bbox": (x1,y1,x2,y2)}]
-        frame_w:        int,
-        frame_h:        int,
-        person_context: str | None = None,
-    ) -> None:
-        """Process one frame's YOLO detections and persist new sightings."""
-        if not detections or frame_w <= 0 or frame_h <= 0:
-            return
-        for det in detections:
-            x1, y1, x2, y2 = det["bbox"]
-            cx   = ((x1 + x2) / 2) / frame_w
-            cy   = ((y1 + y2) / 2) / frame_h
-            zone = _infer_location_zone(cx, cy)
-            is_new = self._brain_db.store_object_sighting(
-                object_class   = det["class"],
-                confidence     = float(det["conf"]),
-                location_zone  = zone,
-                bbox_cx        = cx,
-                bbox_cy        = cy,
-                person_context = person_context,
-                dedup_gap_secs = VISION_SIGHTING_GAP,
-            )
-            if is_new:
-                self._new_count += 1
-                if self._new_count <= 3 or self._new_count % 50 == 0:
-                    print(
-                        f"[SpatialMemory] {det['class']} spotted at {zone}"
-                        + (f" (n={self._new_count})" if self._new_count > 3 else "")
-                    )
-
-        # Prune every 100 new sightings to keep table bounded
-        if self._new_count > 0 and self._new_count % 100 == 0:
-            self._brain_db.prune_object_sightings(VISION_MAX_SIGHTINGS)
-
-    def get_context(self, keywords: list[str]) -> str | None:
-        """Formatted sighting context for objects matching any keyword."""
-        rows = self._brain_db.search_object_sightings(keywords)
-        return _format_object_sightings(rows)
-
-    def get_recent_context(self, limit: int = 10) -> str | None:
-        """Formatted context for the most recently seen objects (no filter)."""
-        rows = self._brain_db.get_recent_object_sightings(limit)
-        return _format_object_sightings(rows)
-
-
-# ── Agent 7: ObjectPatternAgent ────────────────────────────────────────────────
-
-_PATTERN_SYSTEM = """\
-You are a behavioral pattern analyst for a personal AI robot companion.
-
-The robot uses computer vision to detect objects in the person's environment.
-You receive statistics about what objects it has observed recently.
-
-Your job: identify genuinely interesting patterns that would help the robot
-understand the person's habits, routines, and lifestyle — then generate
-natural questions the robot can ask to learn more.
-
-Good pattern examples:
-- An object that appears only sometimes (suggesting different contexts or moods)
-- Two objects that always appear together (co-occurrence → habit)
-- An object that recently started appearing that wasn't there before (new activity?)
-- An object that disappears and reappears (cyclical pattern)
-
-Rules:
-- Generate ZERO questions if nothing is genuinely interesting
-- NEVER ask about obvious stationary furniture (chair, couch, dining table, bed)
-- NEVER ask about things that are always present and never change
-- Maximum 3 questions, minimum 0
-- Questions must sound natural and curious, NOT like a data query
-- Confidence >= 0.70 required
-
-Return ONLY valid JSON:
-{
-  "has_patterns": true,
-  "patterns": [
-    {
-      "pattern_key": "short_snake_case_key_max_50_chars",
-      "question": "Natural question the robot should ask the person (max 200 chars)",
-      "confidence": 0.85
-    }
-  ]
-}
-"""
-
-_PATTERN_USER = """\
-Object sighting statistics (last {days} days):
-{stats}
-
-Identify interesting patterns and generate questions. Return JSON.
-"""
-
-_STATIC_FURNITURE = frozenset({
-    "chair", "couch", "sofa", "dining table", "bed", "toilet",
-    "refrigerator", "microwave", "oven", "sink", "tv",
-})
-
-
-class ObjectPatternAgent:
-    """Analyzes object sighting statistics and generates proactive curiosity questions.
-
-    Triggered at session end and by the startup task scheduler. Cooldown prevents
-    redundant runs. Generated questions are stored in object_pattern_questions and
-    served one at a time via BrainOrchestrator.get_pending_question().
-    """
-
-    def __init__(self, brain_db: BrainDB, http: httpx.AsyncClient) -> None:
-        self._brain_db    = brain_db
-        self._http        = http
-        self._last_run_at = 0.0
-
-    async def maybe_run(self, total_sightings: int = 0) -> None:
-        """Run pattern analysis if conditions are met (enough data + cooldown elapsed)."""
-        now = time.time()
-        if total_sightings > 0 and total_sightings < PATTERN_MIN_SIGHTINGS:
-            return
-        if now - self._last_run_at < PATTERN_COOLDOWN:
-            return
-        if self._brain_db.pending_question_count() >= PATTERN_MAX_QUESTIONS:
-            return
-        self._last_run_at = now
-        await self.run()
-
-    async def run(self) -> None:
-        """Aggregate sighting stats → LLM → store new questions."""
-        stats = self._brain_db.get_sighting_stats(days=PATTERN_ANALYSIS_DAYS)
-        # Filter out static furniture — not worth asking about
-        stats = [r for r in stats if r["object_class"] not in _STATIC_FURNITURE]
-        if not stats:
-            return
-
-        patterns = await self._call_llm(stats)
-        new_count = 0
-        for p in patterns:
-            is_new = self._brain_db.store_pattern_question(p["question"], p["pattern_key"])
-            if is_new:
-                new_count += 1
-                print(f"[PatternAgent] Curiosity queued: {p['pattern_key']}")
-        if new_count:
-            print(f"[PatternAgent] {new_count} new question(s) from sighting analysis")
-
-    def _format_stats(self, stats: list[dict]) -> str:
-        """Format sighting stats as a readable summary for the LLM."""
-        lines = []
-        now = time.time()
-        for r in stats:
-            last_days  = int((now - r["last_seen"])  / 86400)
-            first_days = int((now - r["first_seen"]) / 86400)
-            age_note   = "new (appeared recently)" if first_days < 2 else f"first seen {first_days}d ago"
-            zones      = r["zones"] or "unknown zone"
-            persons    = r["persons"] or ""
-            person_note = f", present with: {persons}" if persons and persons != "None" else ""
-            lines.append(
-                f"- {r['object_class']}: {r['total_times']}× in "
-                f"{r['distinct_zones']} zone(s) [{zones}], "
-                f"last seen {last_days}d ago, {age_note}{person_note}"
-            )
-        return "\n".join(lines)
-
-    async def _call_llm(self, stats: list[dict]) -> list[dict]:
-        stats_text = self._format_stats(stats)
-        user_msg   = _PATTERN_USER.format(
-            days=PATTERN_ANALYSIS_DAYS,
-            stats=stats_text,
-        )
-        raw  = await self._call_together(user_msg) or await self._call_ollama(user_msg)
-        if not raw:
-            return []
-        data = _parse_json(raw)
-        if not data or not data.get("has_patterns"):
-            return []
-        results = []
-        for p in data.get("patterns", []):
-            try:
-                conf = float(p.get("confidence", 0))
-                if conf < PATTERN_MIN_CONF:
-                    continue
-                results.append({
-                    "pattern_key": str(p["pattern_key"])[:100],
-                    "question":    str(p["question"])[:300],
-                })
-            except (KeyError, ValueError, TypeError):
-                continue
-        return results
-
-    async def _call_together(self, user_msg: str) -> str | None:
-        if not EXTRACT_API_KEY:
-            return None
-        try:
-            resp = await self._http.post(
-                f"{EXTRACT_BASE_URL}/chat/completions",
-                json={
-                    "model":           EXTRACT_MODEL,
-                    "messages":        [
-                        {"role": "system", "content": _PATTERN_SYSTEM},
-                        {"role": "user",   "content": user_msg},
-                    ],
-                    "temperature":     0.3,
-                    "max_tokens":      400,
-                    "response_format": {"type": "json_object"},
-                },
-                headers={"Authorization": f"Bearer {EXTRACT_API_KEY}"},
-                timeout=15.0,
-            )
-            resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"]
-        except Exception as e:
-            print(f"[PatternAgent] error: {type(e).__name__}: {e}")
-            return None
-
-    async def _call_ollama(self, user_msg: str) -> str | None:
-        try:
-            resp = await self._http.post(
-                f"{OLLAMA_URL}/api/chat",
-                json={
-                    "model": OLLAMA_MODEL,
-                    "messages": [
-                        {"role": "system", "content": _PATTERN_SYSTEM + "\nOutput ONLY the JSON object."},
-                        {"role": "user",   "content": user_msg},
-                    ],
-                    "stream": False,
-                    "options": {"temperature": 0.3},
-                },
-                timeout=30.0,
-            )
-            resp.raise_for_status()
-            return resp.json()["message"]["content"]
-        except Exception as e:
-            print(f"[PatternAgent] Ollama error: {e}")
-            return None
-
-
 # ── SocialGraphAgent ───────────────────────────────────────────────────────────
 
 class SocialGraphAgent:
@@ -6792,8 +6325,6 @@ class BrainOrchestrator:
         self._friction_agent  = FrictionDetectionAgent(self._http)
         self._embed_agent  = EmbeddingAgent(self._http)
         self._schema_norm    = SchemaNormAgent(self._brain_db, self._embed_agent)
-        self._spatial_memory = SpatialMemoryAgent(self._brain_db)
-        self._pattern_agent  = ObjectPatternAgent(self._brain_db, self._http)
         self._social_graph   = SocialGraphAgent(self._http)
         self._identity_agent = IdentityAgent()
         self._briefing_agent = BriefingAgent(self._http)
@@ -6942,7 +6473,6 @@ class BrainOrchestrator:
     def _schedule_startup_tasks(self) -> None:
         """Schedule background tasks that should run once after startup."""
         asyncio.create_task(self._schema_norm.maybe_run())
-        asyncio.create_task(self._pattern_agent.maybe_run())
         asyncio.create_task(self._backfill_embeddings())   # Item 5: embed pre-Phase-3 rows
 
     @property
@@ -7074,7 +6604,6 @@ class BrainOrchestrator:
             asyncio.create_task(self._run_presence_log(person_id, started))
             asyncio.create_task(self._run_nudge_generation(person_id))
             asyncio.create_task(self._run_visitor_alert(person_id))
-            asyncio.create_task(self._pattern_agent.maybe_run(self._spatial_memory._new_count))
             if started:
                 row = self._faces_conn.execute(
                     "SELECT name FROM persons WHERE id = ?", (person_id,)
@@ -8383,41 +7912,6 @@ class BrainOrchestrator:
         """
         return await self._embed_agent.embed(text, purpose="user query")
 
-    def record_object_sightings(
-        self,
-        detections:     list[dict],
-        frame_w:        int,
-        frame_h:        int,
-        person_context: str | None = None,
-    ) -> None:
-        """Record YOLO object detections into persistent spatial memory.
-
-        Called from the pipeline's main loop every VISION_DETECT_EVERY frames.
-        Synchronous — no await needed; BrainDB writes are fast SQLite commits.
-        Periodically fires pattern analysis as a background async task.
-        """
-        self._spatial_memory.record(detections, frame_w, frame_h, person_context)
-        # Fire pattern analysis every 50 new sightings (avoids constant runs)
-        n = self._spatial_memory._new_count
-        if n > 0 and n % 50 == 0:
-            asyncio.create_task(self._pattern_agent.maybe_run(n))
-
-    def get_object_context(self, query: str) -> str | None:
-        """Return spatial memory relevant to the current query for LLM injection.
-
-        Extracts content words from the query and searches object_sightings.
-        Falls back to recently seen objects when no keywords match.
-        Synchronous — pure SQLite read (<1ms).
-        """
-        words    = [w.strip("?.,!").lower() for w in query.split()]
-        keywords = [w for w in words if len(w) > 3 and w not in _VISION_STOPWORDS]
-        if keywords:
-            ctx = self._spatial_memory.get_context(keywords)
-            if ctx:
-                return ctx
-        # Fall back to recent general scene context
-        return self._spatial_memory.get_recent_context(5)
-
     def get_pending_question(self) -> dict | None:
         """Return the next unasked pattern question for proactive injection.
 
@@ -8883,8 +8377,6 @@ class BrainOrchestrator:
         )
         # Patch all agents that hold direct DB references
         self._schema_norm    = SchemaNormAgent(self._brain_db, self._embed_agent)
-        self._spatial_memory = SpatialMemoryAgent(self._brain_db)
-        self._pattern_agent  = ObjectPatternAgent(self._brain_db, self._http)
         self._routine_agent  = RoutineAgent(self._brain_db)
         self._nudge_agent    = ProactiveNudgeAgent(self._brain_db, self._graph_db)
         self._watchdog       = WatchdogAgent(self._brain_db, self._faces_conn)
