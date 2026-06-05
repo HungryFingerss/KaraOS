@@ -260,8 +260,8 @@ def _scan_file(file_path: Path, *, rel_str: str | None = None) -> list[str]:
 def test_no_unannotated_silent_excepts_in_production_code():
     """
     Whole-file scan. Every broad silent except must carry a triage annotation.
-    If this fails, run:  python tools/bulk_annotate_p04.py
-    That adds TODO-P0.4 markers so this test passes; triage each site afterward.
+    If this fails, manually add a triage annotation (# RACE:, # CLEANUP:, or
+    # OPTIONAL:) to each offending site named in the failure output, then triage.
     """
     all_violations: list[str] = []
     for fp, rel_str in _collect_production_files():
