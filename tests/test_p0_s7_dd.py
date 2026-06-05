@@ -15,7 +15,7 @@ Plan v2 §5.1 verbatim wording.
 Test split per AST-forward-property-tests-are-the-workhorse + behavioral
 pair discipline:
 
-- Phase 1 (4 tests): class exists + 7 methods + __init__ signature +
+- Phase 1 (4 tests): class exists + 6 methods + __init__ signature +
   init refuses None safety + autouse fixture re-init.
 - Phase 2 (4 tests): module-level shims dispatch + raise when uninitialized
   + ``_init_room_orchestrator`` ordering + behavioral integration.
@@ -42,14 +42,15 @@ _PIPELINE_PY  = pathlib.Path(__file__).resolve().parent.parent / "pipeline.py"
 
 # ── Phase 1 tests — class structure + autouse fixture ───────────────────────
 
-def test_p0_s7_dd_room_orchestrator_class_exists_with_7_methods():
+def test_p0_s7_dd_room_orchestrator_class_exists_with_6_methods():
     """P0.S7.D-D Phase 1 test 1 — AST-forward-property.
 
     ``core.room_orchestrator.RoomOrchestrator`` MUST be defined and carry
-    the 7 expected methods (drop-`_`-prefix rename per D4):
+    the 6 expected methods (drop-`_`-prefix rename per D4; SB.1 D2.4 removed
+    ``build_cross_person_excerpts``):
     ``compute_room_audience``, ``kairos_preferred_speaker``,
-    ``build_cross_person_excerpts``, ``build_shared_context_block``,
-    ``build_room_block``, ``fetch_recent_room_context``, ``on_room_end``.
+    ``build_shared_context_block``, ``build_room_block``,
+    ``fetch_recent_room_context``, ``on_room_end``.
 
     Catches accidental method-rename or omission during Stage 2 cleanup.
     """
@@ -58,7 +59,6 @@ def test_p0_s7_dd_room_orchestrator_class_exists_with_7_methods():
     _expected = {
         "compute_room_audience",
         "kairos_preferred_speaker",
-        "build_cross_person_excerpts",
         "build_shared_context_block",
         "build_room_block",
         "fetch_recent_room_context",
@@ -164,11 +164,10 @@ def test_p0_s7_dd_autouse_fixture_initializes_room_orchestrator():
 
 # ── Phase 2 tests — shims + production wiring + behavioral integration ──────
 
-# 7 helper names — the canonical list. Used by multiple tests.
+# 6 helper names — the canonical list. Used by multiple tests.
 _SHIM_NAMES = (
     "_compute_room_audience",
     "_kairos_preferred_speaker",
-    "_build_cross_person_excerpts",
     "_build_shared_context_block",
     "_build_room_block",
     "_fetch_recent_room_context",
@@ -176,10 +175,10 @@ _SHIM_NAMES = (
 )
 
 
-def test_p0_s7_dd_module_level_shims_exist_for_all_7_helpers():
+def test_p0_s7_dd_module_level_shims_exist_for_all_6_helpers():
     """P0.S7.D-D Phase 2 test 4 — AST-forward-property.
 
-    Each of the 7 legacy helper names MUST exist at module scope in
+    Each of the 6 legacy helper names MUST exist at module scope in
     pipeline.py AND each MUST be a function that references
     ``_room_orchestrator``. Stage 1 contract: 130 test sites continue
     calling the legacy names; the shim layer dispatches to the class.
@@ -199,7 +198,7 @@ def test_p0_s7_dd_module_level_shims_exist_for_all_7_helpers():
     _missing = [n for n in _SHIM_NAMES if n not in _module_funcs]
     assert not _missing, (
         f"Pipeline.py missing required shim functions: {_missing}. "
-        f"Stage 1 contract requires all 7 legacy names exist as shims."
+        f"Stage 1 contract requires all 6 legacy names exist as shims."
     )
     # Each shim must reference _room_orchestrator (the dispatch target).
     for _name in _SHIM_NAMES:
@@ -365,7 +364,6 @@ def test_p0_s7_dd_room_orchestrator_build_room_block_end_to_end():
 _HELPER_TO_METHOD = {
     "_compute_room_audience":            "compute_room_audience",
     "_kairos_preferred_speaker":         "kairos_preferred_speaker",
-    "_build_cross_person_excerpts":      "build_cross_person_excerpts",
     "_build_shared_context_block":       "build_shared_context_block",
     "_build_room_block":                 "build_room_block",
     "_fetch_recent_room_context":        "fetch_recent_room_context",
@@ -456,57 +454,4 @@ def test_p0_s7_dd_class_method_signatures_match_legacy_shim_signatures():
     assert not _violations, (
         "P0.S7.D-D method-signature drift detected:\n  "
         + "\n  ".join(_violations)
-    )
-
-
-def test_p0_s7_dd_d_c_flag_gate_preserved_in_room_orchestrator_method():
-    """P0.S7.D-D Phase 3 test 10 — AST-forward-property.
-
-    The D-C Stage 1 flag-gate ``if not CROSS_PERSON_EXCERPTS_ENABLED:``
-    MUST be preserved inside ``RoomOrchestrator.build_cross_person_excerpts``
-    after the move. CRITICAL handoff item 4: the D-C semantic is
-    load-bearing during the bundled-queue canary window; stripping it
-    would re-enable the legacy block in production and break the
-    canary-gate semantic Plan v2 §3.1 (D-C) preserves.
-
-    Stage 2 (post-canary) hard-deletes both the flag and the method
-    via the combined-PR with D-D Stage 2.
-    """
-    src = _ROOM_ORCH_PY.read_text(encoding="utf-8")
-    tree = ast.parse(src)
-
-    fn_node = None
-    for inner in ast.walk(tree):
-        if (isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and inner.name == "build_cross_person_excerpts"):
-            fn_node = inner
-            break
-    assert fn_node is not None, "build_cross_person_excerpts method missing"
-
-    # Scan the method body for an actual `if not CROSS_PERSON_EXCERPTS_ENABLED:`
-    # `If` statement (AST-precise — docstring mentions of the flag name don't
-    # satisfy the structural contract).
-    _has_real_gate = False
-    for inner in ast.walk(fn_node):
-        if not isinstance(inner, ast.If):
-            continue
-        # Match shapes: `not CROSS_PERSON_EXCERPTS_ENABLED` (UnaryOp Not over
-        # a Name) OR `not <attr>.CROSS_PERSON_EXCERPTS_ENABLED` (Attribute).
-        _t = inner.test
-        if isinstance(_t, ast.UnaryOp) and isinstance(_t.op, ast.Not):
-            _operand = _t.operand
-            if (
-                (isinstance(_operand, ast.Name) and _operand.id == "CROSS_PERSON_EXCERPTS_ENABLED")
-                or (isinstance(_operand, ast.Attribute) and _operand.attr == "CROSS_PERSON_EXCERPTS_ENABLED")
-            ):
-                _has_real_gate = True
-                break
-    assert _has_real_gate, (
-        "D-C Stage 1 flag-gate `if not CROSS_PERSON_EXCERPTS_ENABLED:` "
-        "MUST be preserved as an `If` node inside "
-        "RoomOrchestrator.build_cross_person_excerpts (Plan v1 D8 + "
-        "CRITICAL handoff item 4). Docstring mentions don't satisfy the "
-        "structural contract — the gate itself must fire at runtime. "
-        "The D-C semantic is load-bearing during the bundled-queue canary "
-        "window."
     )

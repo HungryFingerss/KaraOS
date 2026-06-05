@@ -90,11 +90,6 @@ VALID_PERSON_TYPES     = frozenset({"stranger", "known", "best_friend", "dispute
 VOICE_SWITCH_THRESHOLD_MATURE = 0.40   # voice_n >= N_INITIAL_VOICE samples
 VOICE_SWITCH_THRESHOLD_THIN   = 0.55   # voice_n < N_INITIAL_VOICE — needs higher confidence
 
-# Phase 4 cutover flag — flip True to make core/reconciler.reconcile() the
-# primary routing source in pipeline.run(). Rollback: set False.
-# Set True on 2026-04-29 after canary #3 (10/10 sentinel coverage, 0 divergences).
-ROUTING_USE_RECONCILER = True
-
 VOICE_ROUTING_MIDRANGE_SWITCH_MIN   = 0.30   # Priority 2: different-person switch floor
 VOICE_ROUTING_FACE_ASSIST_MIN       = 0.42   # Priority 2: min v_score for face-assisted
                                               # confident switch. Below this, even with the
@@ -522,12 +517,6 @@ INTENT_LABELS: frozenset = frozenset({
     # label on turn N-1, optionally extract correction target via regex).
     # Linchpin of LLM-free online learning — see Spec 2.
     "correction_to_previous_response",
-    # NOTE: `topical_participant_response` was added in Session 119 (Path 1)
-    # then rolled back; the prompt no longer emits it and no production gate
-    # routes on it. Removed from INTENT_LABELS in the Spec 1 follow-up
-    # session (2026-04-28) since the orphan was confusing bootstrap
-    # distribution counts. The bridge `output_mapper.py` SPEAK branch for it
-    # is harmless residue — it never fires once the label is gone.
 })
 
 # Tool → (required turn_intent, tool-arg key to cross-check against
@@ -798,15 +787,6 @@ BATCH_GREETING_LLM_TIMEOUT_SECS = 1.0
 #   ROOM_BLOCK_TURN_CAP — max turns rendered chronologically (rolling window)
 ROOM_BLOCK_ENABLED  = True
 ROOM_BLOCK_TURN_CAP = 10
-
-# P0.S7.D-C Stage 1 — flag-gate the legacy `_build_cross_person_excerpts`
-# block (pipeline.py:1202). Default OFF — runtime renders only <<<ROOM>>>
-# (S113 P3B.1) + <<<SHARED CONTEXT>>> (P0.S7 D-A) for multi-person scenes.
-# Function code stays in source for the duration of D-B/D-D/D-E work;
-# rollback path is one-flag-flip. Stage 2 hard-deletes the function +
-# flag after the bundled-queue canary validates D-A + D-C + D-B + D-D +
-# D-E + γ AS A SET (Plan v1 §8 trigger spec).
-CROSS_PERSON_EXCERPTS_ENABLED: bool = False
 
 # P0.S7 D-A — SHARED CONTEXT block (room-scoped conversation history pulled
 # from conversation_log via FaceDB.get_recent_room_conversation).
@@ -1294,22 +1274,6 @@ SHADOW_NAME_BLOCKLIST: frozenset[str] = frozenset({
 })
 
 # ── G7b: Multi-person scene awareness ────────────────────────────────────────
-# Attributes whose names CONTAIN any of these keys (case-insensitive) are tagged
-# privacy_level='private' on write. Best_friend bypasses all privacy filters.
-PRIVATE_ATTRIBUTES: dict[str, str] = {
-    "health":       "private",
-    "medical":      "private",
-    "diagnosis":    "private",
-    "medication":   "private",
-    "finance":      "private",
-    "salary":       "private",
-    "debt":         "private",
-    "income":       "private",
-    "secret":       "private",
-    "relationship": "private",
-    "affair":       "private",
-    "confession":   "private",
-}
 SCENE_STALE_SECS              = 5.0   # _persons_in_frame entries older than this are excluded from scene block
 VOICE_ROUTING_FACE_STALE_SECS = 2.0   # tighter staleness for voice-routing decisions (vs 5.0 for LLM scene)
 SCENE_BLOCK_ENABLED           = True  # master on/off for the <<<SCENE>>> sensor block (injected every turn)

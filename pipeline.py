@@ -373,7 +373,7 @@ from core.vision  import (
 )
 from core.db      import FaceDB, wipe_all
 from core.brain   import ask, ask_offline, ask_retry_text, ask_stream, ping_together, generate_greeting, autocompact_history, choose_greeting_order, render_session_stable_prefix
-from core.config  import CLOUD_OFFLINE_TIMEOUT, CLOUD_RETRY_INTERVAL, DREAM_IDLE_MINUTES, DREAM_COOLDOWN, DREAM_MAX_INTERVAL, KAIROS_SILENCE_THRESHOLD_SECS, KAIROS_COOLDOWN, STRANGER_REQUIRE_SYSTEM_NAME, SCENE_STALE_SECS, SCENE_BLOCK_ENABLED, SCENE_VOICE_STALE, STRANGER_TTL_DAYS, STRANGER_VOICE_TTL_DAYS, DISPUTE_MAX_DURATION, DISPUTE_RENAME_BLOCK_THRESHOLD, VALID_PERSON_TYPES, TOOL_PRIVILEGES, N_INITIAL_VOICE_BOOTSTRAP, VOICE_ACCUM_FACE_WITNESS_MIN_CONF, VOICE_ACCUM_FACE_WITNESS_MAX_AGE_SEC, VOICE_ACCUM_VOICE_SELF_MATCH_MIN, VOICE_ACCUM_MATURE_SAMPLE_COUNT, VOICE_ROUTING_MIDRANGE_SWITCH_MIN, VOICE_ROUTING_FACE_ASSIST_MIN, VOICE_ROUTING_SELF_MATCH_FLOOR, VOICE_ROUTING_SELF_MATCH_OFFSCREEN, VOICE_ROUTING_MIN_UTTERANCE_SECS, VOICE_ROUTING_SHORT_UTT_MISMATCH_ENABLED, VOICE_ROUTING_SHORT_UTT_FLOOR, VOICE_ROUTING_MIN_AUDIO_FOR_SCORE, VOICE_ROUTING_SHORT_UTT_AMBIGUOUS, VOICE_ROUTING_NOISE_FLOOR_SECS, VOICE_ROUTING_STRANGER_FLOOR, VOICE_ROUTING_SINGLE_SEGMENT_MISMATCH_ENABLED, VISION_SHADOW_INTERVAL_SECS, MEMORY_SPARSE_THRESHOLD, SYSTEM_NAME_ASSIGN_PATTERNS, PERSON_NAME_ASSIGN_PATTERNS, IDENTITY_DENIAL_PATTERNS, DISPUTE_AUTO_CLEAR_VOICE_MIN, DISPUTE_AUTO_CLEAR_VOICE_SOLO_MIN, DISPUTE_AUTO_CLEAR_CONSECUTIVE_TURNS, ENROLLMENT_RENAME_GRACE_SECS, ENROLLMENT_RENAME_VOICE_THRESHOLD, ENROLLMENT_RENAME_MAX_TURNS, SCENE_VISITOR_RECENCY_SECS, KAIROS_PREFER_BEST_FRIEND, BATCH_GREETING_ENABLED, BATCH_GREETING_MIN_PEOPLE, BATCH_GREETING_LLM_TIMEOUT_SECS, ROOM_BLOCK_ENABLED, ROOM_BLOCK_TURN_CAP, SHARED_CONTEXT_BLOCK_ENABLED, SHARED_CONTEXT_BLOCK_TURN_CAP, ROUTING_USE_RECONCILER, STRANGER_IDENTITY_BLOCK_MIN_TURNS, SCENE_BLOCK_CACHE_ENABLED, SCENE_BLOCK_CACHE_MAX_ENTRIES, SHADOW_CHANNEL_LOGGING_ENABLED
+from core.config  import CLOUD_OFFLINE_TIMEOUT, CLOUD_RETRY_INTERVAL, DREAM_IDLE_MINUTES, DREAM_COOLDOWN, DREAM_MAX_INTERVAL, KAIROS_SILENCE_THRESHOLD_SECS, KAIROS_COOLDOWN, STRANGER_REQUIRE_SYSTEM_NAME, SCENE_STALE_SECS, SCENE_BLOCK_ENABLED, SCENE_VOICE_STALE, STRANGER_TTL_DAYS, STRANGER_VOICE_TTL_DAYS, DISPUTE_MAX_DURATION, DISPUTE_RENAME_BLOCK_THRESHOLD, VALID_PERSON_TYPES, TOOL_PRIVILEGES, N_INITIAL_VOICE_BOOTSTRAP, VOICE_ACCUM_FACE_WITNESS_MIN_CONF, VOICE_ACCUM_FACE_WITNESS_MAX_AGE_SEC, VOICE_ACCUM_VOICE_SELF_MATCH_MIN, VOICE_ACCUM_MATURE_SAMPLE_COUNT, VOICE_ROUTING_MIDRANGE_SWITCH_MIN, VOICE_ROUTING_FACE_ASSIST_MIN, VOICE_ROUTING_SELF_MATCH_FLOOR, VOICE_ROUTING_SELF_MATCH_OFFSCREEN, VOICE_ROUTING_MIN_UTTERANCE_SECS, VOICE_ROUTING_SHORT_UTT_MISMATCH_ENABLED, VOICE_ROUTING_SHORT_UTT_FLOOR, VOICE_ROUTING_MIN_AUDIO_FOR_SCORE, VOICE_ROUTING_SHORT_UTT_AMBIGUOUS, VOICE_ROUTING_NOISE_FLOOR_SECS, VOICE_ROUTING_STRANGER_FLOOR, VOICE_ROUTING_SINGLE_SEGMENT_MISMATCH_ENABLED, VISION_SHADOW_INTERVAL_SECS, MEMORY_SPARSE_THRESHOLD, SYSTEM_NAME_ASSIGN_PATTERNS, PERSON_NAME_ASSIGN_PATTERNS, IDENTITY_DENIAL_PATTERNS, DISPUTE_AUTO_CLEAR_VOICE_MIN, DISPUTE_AUTO_CLEAR_VOICE_SOLO_MIN, DISPUTE_AUTO_CLEAR_CONSECUTIVE_TURNS, ENROLLMENT_RENAME_GRACE_SECS, ENROLLMENT_RENAME_VOICE_THRESHOLD, ENROLLMENT_RENAME_MAX_TURNS, SCENE_VISITOR_RECENCY_SECS, KAIROS_PREFER_BEST_FRIEND, BATCH_GREETING_ENABLED, BATCH_GREETING_MIN_PEOPLE, BATCH_GREETING_LLM_TIMEOUT_SECS, ROOM_BLOCK_ENABLED, ROOM_BLOCK_TURN_CAP, SHARED_CONTEXT_BLOCK_ENABLED, SHARED_CONTEXT_BLOCK_TURN_CAP, STRANGER_IDENTITY_BLOCK_MIN_TURNS, SCENE_BLOCK_CACHE_ENABLED, SCENE_BLOCK_CACHE_MAX_ENTRIES, SHADOW_CHANNEL_LOGGING_ENABLED
 import core.config as config
 from core         import voice as voice_mod
 from core.audio   import record_until_silence, transcribe, speak, speak_stream, listen_and_transcribe, preload_models, stop_audio, play_filler, set_lip_active
@@ -1442,28 +1442,6 @@ def _count_scene_candidates(
 # caught — fixed in Phase 1 by adding _p0_short_utterance_gap_hold_current
 # (Block A) to the cascade. See tests/p0_10_routing_audit.md for the full
 # branch-mapping and tests/p0_10_plan_v2.md for the Plan v2 execution.
-
-
-def _build_cross_person_excerpts(
-    speaker_id: str,
-    active_sessions: "tuple",
-    conversation: dict,
-    best_friend_id: str | None,
-) -> str | None:
-    """P0.S7.D-D Stage 1 shim → RoomOrchestrator.build_cross_person_excerpts.
-
-    P0.S7.D-C Stage 1 flag-gate (`CROSS_PERSON_EXCERPTS_ENABLED`) preserved
-    inside the moved method body. D-C Phase 3 test 10 verifies the guard
-    survives this D-D move. Stage 2 hard-deletes both — same canary trigger.
-    """
-    if _room_orchestrator is None:
-        raise RuntimeError(
-            "RoomOrchestrator not initialized — _init_room_orchestrator() "
-            "must run first (production: from run(); tests: autouse fixture)"
-        )
-    return _room_orchestrator.build_cross_person_excerpts(
-        speaker_id, active_sessions, conversation, best_friend_id,
-    )
 
 
 # P0.S7.1 observability — track the most recent _build_shared_context_block
@@ -5736,27 +5714,11 @@ async def conversation_turn(
                 # Multi-person format: one line per active person with emotion
                 emotion_context = "<<<EMOTIONAL CONTEXT>>>\n" + "\n".join(_emo_lines)
 
-    # Multi-person room context — legacy block.
-    # P0.S7.D-C Stage 1: flag-gated behind CROSS_PERSON_EXCERPTS_ENABLED
-    # (default False). <<<ROOM>>> (S113 P3B.1) + <<<SHARED CONTEXT>>> (P0.S7
-    # D-A) together cover what this produced. Function code stays in source
-    # for the bundled-queue work duration; Stage 2 hard-deletes after the
-    # multi-person canary validates the bundled work.
+    # Multi-person detection — `room=yes/no` sources from len(active) >= 2.
+    # The <<<ROOM>>> (S113 P3B.1) + <<<SHARED CONTEXT>>> (P0.S7 D-A) blocks
+    # carry the multi-person context; the legacy cross-person-excerpts block
+    # was removed in SB.1 D2.4.
     _all_snaps_ct = _session_store.peek_all_snapshots()
-    if config.CROSS_PERSON_EXCERPTS_ENABLED:
-        room_context = _build_cross_person_excerpts(person_id, _all_snaps_ct, _conversation_store._history, _bf_id)
-    else:
-        room_context = None
-    if room_context:
-        print(f"[Brain] Room context: {len(_all_snaps_ct)} people active")
-
-    # P0.S7.D-C D2 repoint — `room=yes/no` now sources from
-    # `len(active_sessions) >= 2`, NOT `room_context` truthiness. The field's
-    # semantic intent is "multi-person context in scope this turn" — the new
-    # blocks (<<<ROOM>>> + <<<SHARED CONTEXT>>>) cover that, but room_context
-    # is None under the Stage 1 flag-gate so the legacy source would always
-    # read "no" even in multi-person scenes. Grep tooling that reads this
-    # field for the canary's multi-person assertions stays unbroken.
     _multi_person = len(_all_snaps_ct) >= 2
     print(f"[Brain] Context: history={len(history)} turns, memory={'yes' if memory_context else 'no'}, emotion={'yes' if emotion_context else 'no'}, room={'yes' if _multi_person else 'no'}, scene={'yes' if SCENE_BLOCK_ENABLED else 'no'}, shared_context={_last_shared_context_row_count}")
 
@@ -5772,14 +5734,6 @@ async def conversation_turn(
             if _brain_orchestrator and not is_stranger and person_id
             else None
         )
-
-    # Room context prepended to prompt_addendum so the brain sees it as part
-    # of every multi-person turn and can make fully dynamic decisions.
-    # P0.S7.D-C defensive guard: both conditions checked. When the flag is
-    # off, room_context is None; the guard is redundant but explicit. When
-    # Stage 2 deletes the legacy block, the entire branch goes with it.
-    if room_context is not None and config.CROSS_PERSON_EXCERPTS_ENABLED:
-        prompt_addendum = room_context + ("\n\n" + prompt_addendum if prompt_addendum else "")
 
     # SCENE sensor block — always-on snapshot of who is visible / audible,
     # injected into the system prompt on every turn.
@@ -8178,10 +8132,9 @@ async def run():
 
                     # ── Phase 3/4 — Reconciler (shadow → primary) ────────
                     # Wrapped in try/except so a bug here can't break a
-                    # turn. ROUTING_USE_RECONCILER=True makes the
-                    # reconciler the primary router (Phase 4 cutover).
-                    # Rollback: flip ROUTING_USE_RECONCILER=False in
-                    # core/config.py.
+                    # turn. The reconciler is the primary router (Phase 4
+                    # cutover, P0.10); the cutover flag was retired in SB.1 D2,
+                    # rollback is a git revert.
                     _rc_decision = None
                     try:
                         from core.reconciler import (
@@ -8221,8 +8174,8 @@ async def run():
                         # short_hard-band turns MUST fire one of the two
                         # short-utterance mismatch rules OR the pure-noise rule
                         # (boundary cases). Anything else is a regression worth
-                        # an entry in the validation log. Whole block deleted in
-                        # the follow-up PR alongside ROUTING_USE_RECONCILER.
+                        # an entry in the validation log. The whole shadow block
+                        # is deleted in the P0.10 follow-up cleanup PR.
                         _utt = _utterance_secs or 0.0
                         if _utt < VOICE_ROUTING_NOISE_FLOOR_SECS:
                             _band = "noise"
@@ -8289,11 +8242,10 @@ async def run():
                         )
 
                     # P0.10 Block B (B2): reconciler is the sole routing
-                    # source. ROUTING_USE_RECONCILER flag stays alive in
-                    # core/config.py through the validation window (Step 11)
-                    # but no longer gates dispatch — flag deletion + the
-                    # whole shadow block + this collapsed conditional all
-                    # go together in the follow-up PR once Block E's gate
+                    # source. The reconciler cutover flag was retired in SB.1
+                    # D2 (it no longer gated dispatch); the remaining shadow
+                    # block + this collapsed conditional go together in the
+                    # P0.10 follow-up cleanup PR once Block E's gate
                     # criteria are met. Fail-safe (B2): on `_rc_decision is
                     # None` (cascade returned None — cannot happen with
                     # current 23-rule cascade per `_last_resort_ambiguous`,

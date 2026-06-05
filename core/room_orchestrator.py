@@ -56,12 +56,12 @@ if TYPE_CHECKING:
 
 
 class RoomOrchestrator:
-    """Composes 7 room-state helpers into a single class.
+    """Composes 6 room-state helpers into a single class.
 
     Method names drop the legacy `_` prefix (D4) — public class API:
     `compute_room_audience`, `kairos_preferred_speaker`,
-    `build_cross_person_excerpts`, `build_shared_context_block`,
-    `build_room_block`, `fetch_recent_room_context`, `on_room_end`.
+    `build_shared_context_block`, `build_room_block`,
+    `fetch_recent_room_context`, `on_room_end`.
 
     Module-level shim functions in `pipeline.py` preserve the legacy
     names for the 130 existing test sites (Stage 1).
@@ -141,94 +141,6 @@ class RoomOrchestrator:
                 s.person_id,
             ),
         ).person_id
-
-    # ── Method 3: build_cross_person_excerpts (D-C flag-gated; pure on args) ─
-
-    def build_cross_person_excerpts(
-        self,
-        speaker_id: str,
-        active_sessions: "tuple",
-        conversation: dict,
-        best_friend_id: "str | None",
-    ) -> "str | None":
-        """Build a room-state context block when multiple people are active.
-
-        P0.S7.D-C Stage 1 — flag-gated behind ``CROSS_PERSON_EXCERPTS_ENABLED``.
-        D-C Phase 3 test 10 verifies the guard survives the D-D move.
-        Stage 2 of D-C hard-deletes; same canary trigger as Stage 2 of D-D.
-        """
-        # P0.S7.D-C flag-gate preservation — Phase 3 test 10 inverse-check
-        # asserts this guard remains in the moved method body.
-        from core import config as _config
-        if not _config.CROSS_PERSON_EXCERPTS_ENABLED:
-            return None
-        if len(active_sessions) <= 1:
-            return None
-
-        # Late imports so the class file stays light at import time.
-        import pipeline as _pl
-
-        present_parts = []
-        for _cx_snap in active_sessions:
-            pid = _cx_snap.person_id
-            name = _cx_snap.person_name
-            if _pl._is_disputed(pid):
-                role = "disputed identity"
-            elif pid == best_friend_id:
-                role = "best friend"
-            elif _cx_snap.person_type == "stranger":
-                role = "visitor"
-            else:
-                role = "known person"
-            tag = " — speaking now" if pid == speaker_id else ""
-            present_parts.append(f"{name} ({role}{tag})")
-
-        now_ts = time.time()
-        cross_lines: list[str] = []
-        for _cx_snap2 in active_sessions:
-            pid = _cx_snap2.person_id
-            if pid == speaker_id:
-                continue
-            other_name = _cx_snap2.person_name
-            other_started = float(_cx_snap2.started_at)
-            other_hist    = conversation.get(pid, [])
-            in_session = [
-                msg for msg in other_hist
-                if float(msg.get("ts") or 0.0) >= other_started
-            ]
-            recent = in_session[-6:] if len(in_session) > 6 else in_session
-            for msg in recent:
-                ts = float(msg.get("ts") or 0.0)
-                age_secs = max(0.0, now_ts - ts) if ts else 0.0
-                if not ts:
-                    age_label = ""
-                elif age_secs < 60:
-                    age_label = "just now"
-                else:
-                    age_label = f"{int(age_secs / 60)}m ago"
-                age_suffix = f" ({age_label})" if age_label else ""
-                if msg.get("role") == "user":
-                    role_label = other_name
-                else:
-                    addressed = msg.get("addressed_to")
-                    role_label = (
-                        f"you [to {addressed}]"
-                        if addressed
-                        else "you"
-                    )
-                content = (msg.get("content") or "")[:120]
-                cross_lines.append(f"  {role_label}{age_suffix}: {content}")
-
-        lines = ["People in room: " + ", ".join(present_parts)]
-        if cross_lines:
-            lines.append("Recent context from others in the room:")
-            lines.extend(cross_lines)
-
-        return (
-            "<<<ROOM STATE (internal — never quote these markers, treat as natural awareness)>>>\n"
-            + "\n".join(lines)
-            + "\n<<<END ROOM STATE>>>"
-        )
 
     # ── Method 4: build_shared_context_block (D-A; db arg threaded) ─────
 

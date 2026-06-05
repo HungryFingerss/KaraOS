@@ -54,11 +54,11 @@ _KNOWN_PRIVACY_CRITICAL_FILES: tuple[str, ...] = (
 )
 
 
-# 30 standalone functions/methods (24 in test_pipeline.py + 3 method-level
+# 23 standalone functions/methods (17 in test_pipeline.py + 3 method-level
 # in test_brain_agent.py non-anchored classes + 3 in test_core_memory.py).
 # Tuple shape: (file_path, parent_class_name_or_None, function_name).
 _KNOWN_PRIVACY_CRITICAL_STANDALONE: tuple[tuple[str, str | None, str], ...] = (
-    # ── test_pipeline.py (24 entries) ──────────────────────────────────────
+    # ── test_pipeline.py (17 entries) ──────────────────────────────────────
     ("test_pipeline.py", None, "test_privacy_levels_exhaustive_and_frozen"),
     ("test_pipeline.py", None, "test_privacy_default_is_personal_fail_closed"),
     ("test_pipeline.py", None, "test_privacy_static_map_values_valid"),
@@ -69,20 +69,13 @@ _KNOWN_PRIVACY_CRITICAL_STANDALONE: tuple[tuple[str, str | None, str], ...] = (
     ("test_pipeline.py", None, "test_visibility_clause_composes_cleanly_with_and"),
     ("test_pipeline.py", None, "test_visibility_clause_params_align_with_placeholders"),
     ("test_pipeline.py", None, "test_search_memory_description_covers_cross_person_recall"),
-    ("test_pipeline.py", None, "test_cross_person_excerpts_disputed_best_friend_labeled_disputed"),
-    ("test_pipeline.py", None, "test_build_cross_person_excerpts_renamed"),
-    ("test_pipeline.py", None, "test_p0_s7_dc_cross_person_excerpts_enabled_flag_defaults_false"),
-    ("test_pipeline.py", None, "test_p0_s7_dc_build_cross_person_excerpts_call_site_guarded_by_flag"),
     ("test_pipeline.py", None, "test_p0_s7_dc_build_room_block_section1_renders_disputed_identity"),
     ("test_pipeline.py", None, "test_p0_s7_dc_build_room_block_section1_renders_best_friend_role"),
     ("test_pipeline.py", None, "test_p0_s7_dc_brain_context_summary_room_field_repointed_to_active_sessions"),
-    ("test_pipeline.py", None, "test_p0_s7_dc_no_room_context_prepending_when_flag_off"),
     ("test_pipeline.py", None, "test_s114_visitor_alert_dedup_updates_promoted_alerts"),
     ("test_pipeline.py", None, "test_s114_visitor_alert_dedup_skips_unrelated_alerts"),
     ("test_pipeline.py", None, "test_s116_query_knowledge_for_emits_privacy_audit_log"),
     ("test_pipeline.py", None, "test_s116_classify_privacy_level_logs_static_map_path"),
-    ("test_pipeline.py", None, "test_s111_cross_person_excerpts_filter_by_session_boundary"),
-    ("test_pipeline.py", None, "test_s111_cross_person_excerpts_render_addressee_and_age"),
     # ── test_brain_agent.py method-level (3 entries inside non-anchored classes) ──
     ("test_brain_agent.py", "TestExtractionAgent", "test_extract_system_prompt_emits_dual_attribute_for_safety_critical"),
     ("test_brain_agent.py", "TestContradictionAgent", "test_safety_critical_attribute_never_replaces"),
