@@ -11,9 +11,14 @@ setup_pipeline_stubs()
         setup_pipeline_stubs()
         from pipeline import _expire_stale_sessions
 
-    NOT applied automatically at conftest module scope — that would shadow
-    core.voice / core.audio for tests that exercise the real modules
-    (e.g. tests/test_voice.py, tests/test_voice_channel.py).
+    P1.A1 SP-1: ALSO called once at module scope below (the test_pipeline.py
+    split replaced the old root-file inline stub block with this conftest-import
+    call), so every split test_pipeline_<concern>.py file gets the stub before it
+    lazily imports pipeline. Tests that exercise the REAL core.voice (the
+    retirement-surface tests test_voice.py / test_warmup.py pass against the stub;
+    the real-voice golden tests) use the `real_voice` fixture below, which pops
+    the stub for the duration of one test. test_voice_channel.py imports
+    core.voice_channel (not stubbed by this helper), so it is unaffected.
 
 _reset_session_state_between_tests (autouse=True)
     Resets SessionStore between every test so session state never leaks
@@ -182,6 +187,16 @@ def setup_pipeline_stubs() -> None:
         sys.modules["core.audio"] = _audio_stub
 
 
+# ── P1.A1 SP-1: install the stubs at conftest IMPORT (module scope) ──────────
+# The split test_pipeline_<concern>.py files (and every other tests/ file that
+# lazily `import pipeline`) need core.voice / core.audio stubbed before pipeline
+# imports them. This call — replacing root test_pipeline.py's old inline
+# collection-time stub block (deleted in the SP-1 split) — lands the stubs when
+# pytest imports this conftest, before collecting any tests/ file. Idempotent;
+# tests needing the REAL modules use the `real_voice` fixture (it pops the stub).
+setup_pipeline_stubs()
+
+
 @pytest.fixture(autouse=True)
 def _reset_pipeline_state_between_tests():
     """Reset all Stores between every test — prevents session and pipeline state leakage.
@@ -249,6 +264,23 @@ def _reset_pipeline_state_between_tests():
     except Exception as _e:
         print(f"[conftest] store reset failed: {_e!r}")
     yield
+
+
+# ── P1.A1 SP-1: pipeline-globals save/restore (moved from root test_pipeline.py) ──
+# Autouse save/restore of the pipeline_state_store's system_name + detected_lang
+# around each test — prevents cross-test bleed of those two values. Distinct from
+# the store-reset above (which replaces the Stores but does not preserve
+# system_name/lang). Moved here so the SP-1 split files inherit it.
+@pytest.fixture(autouse=True)
+def reset_pipeline_globals():
+    """Restore pipeline module globals after each test to avoid cross-test bleed."""
+    import asyncio
+    import pipeline
+    orig_system_name   = pipeline._pipeline_state_store.peek_active_system_name()
+    orig_detected_lang = pipeline._pipeline_state_store.peek_detected_lang()
+    yield
+    asyncio.run(pipeline._pipeline_state_store.set_active_system_name(orig_system_name))
+    asyncio.run(pipeline._pipeline_state_store.set_detected_lang(orig_detected_lang))
 
 
 # ── #126 D2: shared real_voice fixture + ECAPA skip gate (extracted from #125) ──────
