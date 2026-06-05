@@ -35,7 +35,7 @@ import pytest
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 _AUDIO_SRC = (REPO_ROOT / "core" / "audio.py").read_text(encoding="utf-8")
 _AUDIO_AST = ast.parse(_AUDIO_SRC)
-_BRAIN_AGENT_SRC = (REPO_ROOT / "core" / "brain_agent.py").read_text(encoding="utf-8")
+_BRAIN_AGENT_SRC = (REPO_ROOT / "core" / "brain_agent" / "__init__.py").read_text(encoding="utf-8")
 _BRAIN_AGENT_AST = ast.parse(_BRAIN_AGENT_SRC)
 
 

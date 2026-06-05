@@ -49,7 +49,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BRAIN_AGENT_PATH = REPO_ROOT / "core" / "brain_agent.py"
+BRAIN_AGENT_PATH = REPO_ROOT / "core" / "brain_agent" / "__init__.py"
 
 
 # Methods that follow the RAISE pattern (sentinel + re-raise on failure).

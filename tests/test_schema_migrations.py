@@ -551,7 +551,7 @@ class TestTightenedRollback:
     TARGET_FILES = (
         "core/schema_migrations.py",
         "core/db.py",
-        "core/brain_agent.py",
+        "core/brain_agent/__init__.py",
     )
 
     def test_no_bare_except_swallowing_rollback_in_target_files(self):
@@ -802,7 +802,7 @@ class TestNoIdempotencyTryExceptOutsideRunner:
 
     TARGET_FILES = (
         "core/db.py",
-        "core/brain_agent.py",
+        "core/brain_agent/__init__.py",
     )
 
     def test_no_idempotency_alter_try_except_in_target_files(self):
@@ -875,7 +875,7 @@ class TestNoAlterTableOutsideMigrationModules:
 
     TARGET_FILES = (
         "core/db.py",
-        "core/brain_agent.py",
+        "core/brain_agent/__init__.py",
     )
 
     def test_no_alter_table_in_db_or_brain_agent(self):

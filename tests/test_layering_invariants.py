@@ -47,7 +47,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PIPELINE_PATH = REPO_ROOT / "pipeline.py"
-BRAIN_AGENT_PATH = REPO_ROOT / "core" / "brain_agent.py"
+BRAIN_AGENT_PATH = REPO_ROOT / "core" / "brain_agent" / "__init__.py"
 
 # Forbidden: (instance_name, attribute_name) pairs that bypass owning class API.
 # Public alternatives:

@@ -53,7 +53,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _HEAVY_WORKER = _REPO_ROOT / "core" / "heavy_worker.py"
 _HEALTH = _REPO_ROOT / "core" / "health.py"
 _CONFIG = _REPO_ROOT / "core" / "config.py"
-_BRAIN_AGENT = _REPO_ROOT / "core" / "brain_agent.py"
+_BRAIN_AGENT = _REPO_ROOT / "core" / "brain_agent" / "__init__.py"
 _PIPELINE = _REPO_ROOT / "pipeline.py"
 
 

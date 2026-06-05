@@ -192,7 +192,7 @@ def test_p0_r9_d2_refused_pools_cached(monkeypatch):
 # A7: D5 WatchdogAgent.report_vram_budget_refusal method
 # ─────────────────────────────────────────────────────────────────────────────
 def test_p0_r9_d5_watchdog_report_vram_budget_refusal():
-    src = (REPO_ROOT / "core" / "brain_agent.py").read_text(encoding="utf-8")
+    src = (REPO_ROOT / "core" / "brain_agent" / "__init__.py").read_text(encoding="utf-8")
     assert "def report_vram_budget_refusal(" in src, "method missing"
 
     # AST verification: method exists on WatchdogAgent + calls store_alert with vram_budget_refusal_ prefix

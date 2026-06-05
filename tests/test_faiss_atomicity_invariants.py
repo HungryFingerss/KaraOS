@@ -47,7 +47,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = REPO_ROOT / "core" / "db.py"
-BRAIN_AGENT_PATH = REPO_ROOT / "core" / "brain_agent.py"
+BRAIN_AGENT_PATH = REPO_ROOT / "core" / "brain_agent" / "__init__.py"
 
 # Sync paired-write methods that must follow the lock → transaction → FAISS pattern.
 # prune_old_strangers_async excluded: delegates to sql_only + rebuild_faiss_async.

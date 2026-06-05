@@ -34,7 +34,7 @@ import core.brain_agent as brain_agent_mod
 from core.brain_agent import BrainOrchestrator, GraphDB
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BRAIN_AGENT_PATH = REPO_ROOT / "core" / "brain_agent.py"
+BRAIN_AGENT_PATH = REPO_ROOT / "core" / "brain_agent" / "__init__.py"
 
 
 # ── Shared helpers (mirror tests/test_kuzu_atomicity_invariants.py shape) ─────

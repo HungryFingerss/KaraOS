@@ -36,7 +36,7 @@ pytestmark = pytest.mark.privacy_critical
 
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_BRAIN_AGENT_PY = _REPO_ROOT / "core" / "brain_agent.py"
+_BRAIN_AGENT_PY = _REPO_ROOT / "core" / "brain_agent" / "__init__.py"
 
 # Match ``privacy_level <op> 'tier'`` where ``<op>`` ∈ {=, !=, <>, IN, NOT IN}.
 # Capture the tier literal. Allows quoted-list shapes like

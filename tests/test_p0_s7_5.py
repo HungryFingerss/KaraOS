@@ -75,7 +75,7 @@ pytestmark = pytest.mark.privacy_critical
 
 _PIPELINE_PY     = pathlib.Path(__file__).resolve().parent.parent / "pipeline.py"
 _BRAIN_PY        = _PIPELINE_PY.parent / "core" / "brain.py"
-_BRAIN_AGENT_PY  = _PIPELINE_PY.parent / "core" / "brain_agent.py"
+_BRAIN_AGENT_PY  = _PIPELINE_PY.parent / "core" / "brain_agent" / "__init__.py"
 _ROOM_ORCH_PY    = _PIPELINE_PY.parent / "core" / "room_orchestrator.py"
 
 
