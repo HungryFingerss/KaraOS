@@ -327,9 +327,11 @@ def test_p0_s7_db_every_create_edge_caller_passes_privacy_level():
     public-tier).
     """
     import pathlib
-    from core import brain_agent
+    from core.brain_agent.memory import graph as _graph_mod
 
-    src = pathlib.Path(brain_agent.__file__).read_text(encoding="utf-8")
+    # P1.A1 SP-2 C3: GraphDB + _create_edge (def + call sites) moved to
+    # core/brain_agent/memory/graph.py; scan that module, not the package __init__.
+    src = pathlib.Path(_graph_mod.__file__).read_text(encoding="utf-8")
     tree = ast.parse(src)
 
     _violations = []

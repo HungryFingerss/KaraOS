@@ -43,6 +43,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _BRAIN_AGENT_FILES = [
     _REPO_ROOT / "core" / "brain_agent" / "__init__.py",
     _REPO_ROOT / "core" / "brain_agent" / "privacy.py",
+    _REPO_ROOT / "core" / "brain_agent" / "memory" / "graph.py",
 ]
 
 # Match ``privacy_level <op> 'tier'`` where ``<op>`` ∈ {=, !=, <>, IN, NOT IN}.

@@ -95,11 +95,11 @@ _INDIRECT_BOUNDARIES_ALLOWLIST: dict[tuple[str, int], str] = {
     # ── core/brain_agent __init__.py (3) + privacy.py (1) ─────────────────────────────────
     ("core/brain_agent/privacy.py", 164):
         "_ask_privacy_llm — entity/attribute/value triples (already-wrapped upstream extraction) (+2 #123)",
-    ("core/brain_agent/__init__.py", 3863):
+    ("core/brain_agent/__init__.py", 3429):
         "extract_assistant_room_turn — assistant's own prior output, not user-typed (+10 #123)",
-    ("core/brain_agent/__init__.py", 5036):
+    ("core/brain_agent/__init__.py", 4602):
         "BriefingAgent.generate — structured event-derived prompt (gate-validated names + system templates) (+10 #123)",
-    ("core/brain_agent/__init__.py", 5104):
+    ("core/brain_agent/__init__.py", 4670):
         "ConversationInsightAgent — conversation summary, not raw turns (+10 #123)",
 }
 
