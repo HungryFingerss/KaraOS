@@ -51,6 +51,7 @@ def _collect_production_files() -> list[Path]:
     for p in sorted((REPO_ROOT / "core").rglob("*.py")):
         if "_minifasnet" not in p.parts:
             files.append(p)
+    files.extend(sorted((REPO_ROOT / "runtime").rglob("*.py")))  # P1.A1 SP-4 engine package
     boot = REPO_ROOT / "bootstrap" / "classifier"
     if boot.exists():
         files.extend(sorted(boot.rglob("*.py")))

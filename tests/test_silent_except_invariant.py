@@ -41,7 +41,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-SCANNED_DIRS: list[Path] = [REPO_ROOT / "core"]
+SCANNED_DIRS: list[Path] = [REPO_ROOT / "core", REPO_ROOT / "runtime"]  # runtime/ = P1.A1 SP-4 engine package
 
 SCANNED_ROOT_FILES: list[str] = [
     "pipeline.py",

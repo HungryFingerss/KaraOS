@@ -32,20 +32,23 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Re-derived from the migration script's SITES list to keep tests in sync.
 A1_MIGRATED_SITES: tuple[tuple[str, int], ...] = (
     # 13 explicit Phase 0 + 14 paired writers + 1 cross-file = 28 sites (locked at Plan v2 §1.8)
-    ("pipeline.py", 1006), ("pipeline.py", 2885), ("pipeline.py", 2886),
-    ("pipeline.py", 2915), ("pipeline.py", 3426), ("pipeline.py", 3444),  # 3396→3444 #5 Slice-A LINE-REF-DRIFT refresh (cloud subtraction shifted by _bv_now SPLIT)
-    ("pipeline.py", 5867), ("pipeline.py", 7413),  # 7369→7413 #5 Slice-A refresh (SELF_UPDATE_COOLDOWN); SB.1 D1 dropped pipeline.py:5745 (_yolo_last_ran #6 deadline-math, deleted with the YOLO stack)
-    ("pipeline.py", 7753), ("pipeline.py", 8580), ("pipeline.py", 8589),  # Canary4 refresh; SB.1 D2 refreshed 8628→8580 (−48: cross-person-excerpts + flag-residue deletion shifted the face_in_frame deadline-math)
-    ("core/brain_agent/orchestrator.py", 357),  # 6908→6450 P1.A1 SP-2 C4 agents (5557->3104); SP-3 _ensure_graph_sync -> orchestrator.py (__init__:3104 -> orchestrator:357); C3 graph (5991->5557); C2 privacy/context; C1 package-ify; prior: SB.1 D1 (Kuzu _rebuild_secs up, YOLO-stack deletion)
-    ("pipeline.py", 1030), ("pipeline.py", 2879), ("pipeline.py", 2919),
-    ("pipeline.py", 2939), ("pipeline.py", 3533), ("pipeline.py", 3494),
-    ("pipeline.py", 3536), ("pipeline.py", 3538), ("pipeline.py", 6858),
-    ("pipeline.py", 6859), ("pipeline.py", 7573), ("pipeline.py", 7666),  # 7521→7573 #5 Slice-A LINE-REF-DRIFT refresh (BRIEFING_MIN_ABSENCE)
-    ("pipeline.py", 7807), ("pipeline.py", 7831),
-    ("core/cache_store.py", 87),
+    # P1.A1 SP-4 LINE-REF-DRIFT mass-refresh: pipeline.py shrank 8925→8592 (−333) when the 13 pure
+    # leaves moved to runtime/{text,state_enums,context_blocks}.py. Every pipeline.py anchor below the
+    # moved regions shifted; lines re-derived deterministically via the facade-ify line-map (old→new).
+    ("pipeline.py", 755), ("pipeline.py", 2562), ("pipeline.py", 2563),
+    ("pipeline.py", 2592), ("pipeline.py", 3103), ("pipeline.py", 3121),  # SP-4 refresh: 1006/2885/2886/2915/3426/3444
+    ("pipeline.py", 5534), ("pipeline.py", 7080),  # SP-4 refresh: 5867/7413 (deep anchors, −333 shift)
+    ("pipeline.py", 7420), ("pipeline.py", 8247), ("pipeline.py", 8256),  # SP-4 refresh: 7753/8580/8589
+    ("core/brain_agent/orchestrator.py", 357),  # UNCHANGED by SP-4 (orchestrator.py untouched); 6908→6450 P1.A1 SP-2 C4 agents (5557->3104); SP-3 _ensure_graph_sync -> orchestrator.py (__init__:3104 -> orchestrator:357); C3 graph (5991->5557); C2 privacy/context; C1 package-ify; prior: SB.1 D1
+    ("pipeline.py", 773), ("pipeline.py", 2556), ("pipeline.py", 2596),  # SP-4 refresh: 1030/2879/2919
+    ("pipeline.py", 2616), ("pipeline.py", 3210), ("pipeline.py", 3171),  # SP-4 refresh: 2939/3533/3494
+    ("pipeline.py", 3213), ("pipeline.py", 3215), ("pipeline.py", 6525),  # SP-4 refresh: 3536/3538/6858
+    ("pipeline.py", 6526), ("pipeline.py", 7240), ("pipeline.py", 7333),  # SP-4 refresh: 6859/7573/7666
+    ("pipeline.py", 7474), ("pipeline.py", 7498),  # SP-4 refresh: 7807/7831
+    ("core/cache_store.py", 87),  # UNCHANGED by SP-4
     # Developer Pass-3 grep refinement (+6 sites; banked as `Plan-v1-Pass-2-grep-undercount`)
-    ("pipeline.py", 599), ("pipeline.py", 601), ("pipeline.py", 7395),
-    ("pipeline.py", 7389), ("pipeline.py", 7393), ("pipeline.py", 7424),  # 7379→7424 #5 Slice-B LINE-REF-DRIFT refresh (session/dispute clock split shifted the SELF_UPDATE_COOLDOWN region ~+45)
+    ("pipeline.py", 570), ("pipeline.py", 572), ("pipeline.py", 7062),  # SP-4 refresh: 599/601/7395
+    ("pipeline.py", 7056), ("pipeline.py", 7060), ("pipeline.py", 7091),  # SP-4 refresh: 7389/7393/7424
 )
 
 

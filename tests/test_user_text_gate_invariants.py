@@ -1,7 +1,8 @@
 """
 P0.3 — _user_text_gate_passes structural invariants (fast-tier, DLL-safe).
 
-Reads pipeline.py as raw text and inspects the function body for:
+Reads runtime/text.py as raw text (P1.A1 SP-4 relocated the helper there;
+pipeline.py re-exports it byte-identically) and inspects the function body for:
   Invariant 1: _nfkc_lower called ≥3 times (all three inputs normalized)
   Invariant 2: "_nv_lower in _lt" present (contiguous substring check)
   Invariant 3: "_remainder" NOT present (v1 buggy variable removed)
@@ -23,14 +24,14 @@ from unittest.mock import MagicMock
 import pytest
 
 _ROOT = Path(__file__).resolve().parent.parent
-PIPELINE_PATH = _ROOT / "pipeline.py"
+TEXT_PATH = _ROOT / "runtime" / "text.py"  # P1.A1 SP-4: helper relocated here
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _get_gate_source() -> str:
-    """Extract the source lines of _user_text_gate_passes from pipeline.py."""
-    source = PIPELINE_PATH.read_text(encoding="utf-8")
+    """Extract the source lines of _user_text_gate_passes from runtime/text.py."""
+    source = TEXT_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source)
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "_user_text_gate_passes":
@@ -39,7 +40,7 @@ def _get_gate_source() -> str:
             start = node.lineno - 1
             end = node.end_lineno
             return "\n".join(lines[start:end])
-    raise AssertionError("_user_text_gate_passes not found in pipeline.py")
+    raise AssertionError("_user_text_gate_passes not found in runtime/text.py")
 
 
 # ── Invariant 1: NFKC applied to all three inputs ────────────────────────────
