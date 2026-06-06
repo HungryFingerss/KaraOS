@@ -221,6 +221,11 @@ def test_each_event_type_has_exactly_one_producer_location():
         if "event_log" in p.parts:
             continue
         scan_targets.append(p)
+    # P1.A1 SP-6.1: producer hooks (e.g. _emit_session_lifecycle_safe, the
+    # `session_lifecycle` producer) relocated from pipeline.py into runtime/
+    # engine modules — include them so the N=1 lower bound stays satisfied.
+    for p in (_REPO_ROOT / "runtime").rglob("*.py"):
+        scan_targets.append(p)
 
     counts: dict[str, int] = {t: 0 for t in EVENT_TYPES}
     locations: dict[str, list[str]] = {t: [] for t in EVENT_TYPES}

@@ -39,6 +39,34 @@ import runtime.wiring as _wiring
 
 _ROOM_ORCH_PY = pathlib.Path(__file__).resolve().parent.parent / "core" / "room_orchestrator.py"
 _PIPELINE_PY  = pathlib.Path(__file__).resolve().parent.parent / "pipeline.py"
+# P1.A1 SP-6.1: _on_room_end shim relocated pipeline.py → runtime/session.py
+# (re-exported in pipeline.py so callers stay byte-identical).
+_SESSION_PY   = pathlib.Path(__file__).resolve().parent.parent / "runtime" / "session.py"
+
+
+def _resolve_shim_node(name: str):
+    """Resolve a P0.S7.D-D shim's FunctionDef + source, following the SP-6.1
+    relocation. A shim is either defined directly in pipeline.py OR
+    re-exported there via ``from runtime.session import ...`` (its body then
+    living in runtime/session.py). Returns ``(node | None, label, src)``."""
+    pipeline_src = _PIPELINE_PY.read_text(encoding="utf-8")
+    pipeline_tree = ast.parse(pipeline_src)
+    for n in pipeline_tree.body:
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name:
+            return n, "pipeline.py", pipeline_src
+    _reexported = any(
+        isinstance(n, ast.ImportFrom)
+        and (n.module or "").startswith("runtime.session")
+        and any((a.asname or a.name) == name for a in n.names)
+        for n in pipeline_tree.body
+    )
+    if _reexported:
+        session_src = _SESSION_PY.read_text(encoding="utf-8")
+        session_tree = ast.parse(session_src)
+        for n in session_tree.body:
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name:
+                return n, "runtime/session.py", session_src
+    return None, None, None
 
 
 # ── Phase 1 tests — class structure + autouse fixture ───────────────────────
@@ -189,25 +217,22 @@ def test_p0_s7_dd_module_level_shims_exist_for_all_6_helpers():
     """
     import pipeline
 
-    src = _PIPELINE_PY.read_text(encoding="utf-8")
-    tree = ast.parse(src)
-
-    _module_funcs = {
-        n.name: n for n in tree.body
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-    _missing = [n for n in _SHIM_NAMES if n not in _module_funcs]
+    # Each shim is defined in pipeline.py OR re-exported from runtime.session
+    # (P1.A1 SP-6.1 relocated _on_room_end into the session engine module).
+    _missing = [n for n in _SHIM_NAMES if _resolve_shim_node(n)[0] is None]
     assert not _missing, (
         f"Pipeline.py missing required shim functions: {_missing}. "
-        f"Stage 1 contract requires all 6 legacy names exist as shims."
+        f"Stage 1 contract requires all 6 legacy names exist as shims "
+        f"(directly OR re-exported from runtime.session per SP-6.1)."
     )
     # Each shim must reference _room_orchestrator (the dispatch target).
     for _name in _SHIM_NAMES:
-        _fn_node = _module_funcs[_name]
+        _fn_node, _label, _ = _resolve_shim_node(_name)
         _fn_src = ast.unparse(_fn_node)
         assert "_room_orchestrator" in _fn_src, (
-            f"Shim function {_name!r} does not reference _room_orchestrator "
-            f"— Stage 1 contract requires dispatch to the class instance"
+            f"Shim function {_name!r} ({_label}) does not reference "
+            f"_room_orchestrator — Stage 1 contract requires dispatch to "
+            f"the class instance"
         )
         # Each shim must be callable from pipeline module scope.
         assert callable(getattr(pipeline, _name)), (
@@ -386,23 +411,21 @@ def test_p0_s7_dd_no_room_helper_body_remains_at_module_level():
     Legacy bodies were 30-90 LOC; bodies that grow beyond this ceiling
     almost certainly retained legacy code.
     """
-    src = _PIPELINE_PY.read_text(encoding="utf-8")
-    tree = ast.parse(src)
-
+    # Resolve each shim wherever it lives (pipeline.py OR runtime/session.py
+    # post-SP-6.1) so the ceiling check stays non-vacuous after relocation.
     _violations: list[str] = []
-    for n in tree.body:
-        if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if n.name not in _HELPER_TO_METHOD:
-            continue
-        # Count non-blank body lines (rough proxy for "is this a shim?").
-        _body_lines = n.end_lineno - n.lineno + 1 if n.end_lineno else 0
+    for _name in _HELPER_TO_METHOD:
+        _node, _label, _ = _resolve_shim_node(_name)
+        if _node is None:
+            continue  # existence is covered by the shims-exist test
+        _body_lines = _node.end_lineno - _node.lineno + 1 if _node.end_lineno else 0
         if _body_lines > 30:
             _violations.append(
-                f"Helper {n.name}() at line {n.lineno} is {_body_lines} "
-                f"lines — exceeds shim ceiling (30). Stage 1 contract "
-                f"requires the body to live in RoomOrchestrator.{_HELPER_TO_METHOD[n.name]} "
-                f"with pipeline.py keeping only a thin dispatch shim."
+                f"Helper {_name}() in {_label} at line {_node.lineno} is "
+                f"{_body_lines} lines — exceeds shim ceiling (30). Stage 1 "
+                f"contract requires the body to live in "
+                f"RoomOrchestrator.{_HELPER_TO_METHOD[_name]} with only a "
+                f"thin dispatch shim."
             )
     assert not _violations, (
         "P0.S7.D-D Stage 1 inverse-check failed:\n  "
@@ -424,16 +447,11 @@ def test_p0_s7_dd_class_method_signatures_match_legacy_shim_signatures():
     """
     from core.room_orchestrator import RoomOrchestrator
 
-    pipeline_src = _PIPELINE_PY.read_text(encoding="utf-8")
-    pipeline_tree = ast.parse(pipeline_src)
-    pipeline_fns = {
-        n.name: n for n in pipeline_tree.body
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-
     _violations: list[str] = []
     for _shim_name, _method_name in _HELPER_TO_METHOD.items():
-        _shim_node = pipeline_fns.get(_shim_name)
+        # Resolve wherever the shim lives (pipeline.py OR runtime/session.py
+        # post-SP-6.1); signature contract holds regardless of home module.
+        _shim_node, _label, _ = _resolve_shim_node(_shim_name)
         assert _shim_node is not None, f"shim {_shim_name} missing"
         _shim_params = [a.arg for a in _shim_node.args.args] + [
             a.arg for a in _shim_node.args.kwonlyargs

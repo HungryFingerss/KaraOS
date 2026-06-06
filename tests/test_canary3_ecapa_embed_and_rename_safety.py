@@ -72,8 +72,11 @@ async def test_gt1_ecapa_subprocess_returns_embedding(real_voice):
 async def test_gt1b_accumulate_voice_grows_gallery(real_voice, tmp_path):
     """GT1b: _accumulate_voice with a face-witnessed session + real ≥1.5s audio grows
     voice_embedding_count by 1 ([Voice] Profile updated, not embed returned None).
-    RED before Part A, GREEN after. The `real_voice` fixture re-points pipeline.voice_mod
-    to the real module so _accumulate_voice reaches the real embed (not the stub's None)."""
+    RED before Part A, GREEN after. The `real_voice` fixture re-points the `voice_mod` alias
+    on BOTH pipeline and runtime.session (P1.A1 SP-6.1 relocated _accumulate_voice to the
+    latter, whose __globals__ is runtime.session.__dict__, so its embed read resolves through
+    runtime.session.voice_mod) to the real module so _accumulate_voice reaches the real embed
+    (not the stub's None)."""
     import numpy as np
     from core.db import FaceDB
     import pipeline as _pl

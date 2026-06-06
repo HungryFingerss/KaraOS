@@ -32,6 +32,7 @@ from core.session_state import SessionStore
 from core.track_store import TrackStore
 from core.vision_frame_store import VisionFrameStore
 from core.voice_gallery_store import VoiceGalleryStore
+from core.vision import LipTracker
 from runtime.state_enums import PipelineState, CloudState
 
 
@@ -56,6 +57,11 @@ _room_orchestrator: "RoomOrchestrator | None" = None
 _CLASSIFIER_CACHE_TTL_SECS = 5.0
 _CLASSIFIER_CACHE_MAX_SIZE = 64
 _classifier_cache_store: "CacheStore" = CacheStore("classifier", ttl=_CLASSIFIER_CACHE_TTL_SECS, max_entries=_CLASSIFIER_CACHE_MAX_SIZE)
+
+# P1.A1 SP-6.1 — relocated from pipeline.py. Never-rebound singleton (LipTracker
+# .update()/.reset() in-place); cycle-safe neutral home shared by runtime.session
+# + runtime.vision_loop, neither of which then imports the other.
+lip_tracker = LipTracker()
 
 
 def set_brain_orchestrator(value):

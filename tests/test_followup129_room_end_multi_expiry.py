@@ -56,7 +56,10 @@ async def test_gt0_multi_expiry_fires_room_end_once_and_clears(monkeypatch):
 
     # Spy the async-fired room-end hook (isolates from the real RoomOrchestrator + DB).
     spy = AsyncMock()
-    monkeypatch.setattr(_pl, "_on_room_end", spy)
+    # P1.A1 SP-6.1: _on_room_end + _close_session both relocated to runtime.session;
+    # _close_session calls _on_room_end intra-module → patch the runtime.session binding,
+    # not the pipeline re-export (which the intra-module bare call never consults).
+    monkeypatch.setattr("runtime.session._on_room_end", spy)
 
     # Open A + B into ONE room (second open inherits the first's minted room id).
     _pl._open_session("a_1", "Alice", "face", "known", engagement_gate_passed=True)
@@ -95,7 +98,10 @@ async def test_gt1_single_expiry_fires_room_end_once(monkeypatch):
     import pipeline as _pl
 
     spy = AsyncMock()
-    monkeypatch.setattr(_pl, "_on_room_end", spy)
+    # P1.A1 SP-6.1: _on_room_end + _close_session both relocated to runtime.session;
+    # _close_session calls _on_room_end intra-module → patch the runtime.session binding,
+    # not the pipeline re-export (which the intra-module bare call never consults).
+    monkeypatch.setattr("runtime.session._on_room_end", spy)
 
     _pl._open_session("solo_1", "Solo", "face", "known", engagement_gate_passed=True)
     assert _pl._pipeline_state_store.peek_active_room_session() is not None
@@ -118,7 +124,7 @@ async def test_gt2_full_cleanup_fires_on_full_close(monkeypatch):
     cleanup fires. This read is async-fired (create_task), so the drain is required."""
     import pipeline as _pl
 
-    monkeypatch.setattr(_pl, "_on_room_end", AsyncMock())  # isolate from real RoomOrchestrator
+    monkeypatch.setattr("runtime.session._on_room_end", AsyncMock())  # isolate (SP-6.1: intra-module binding)
     set_lang_spy = AsyncMock()
     monkeypatch.setattr(_pl._pipeline_state_store, "set_detected_lang", set_lang_spy)
 

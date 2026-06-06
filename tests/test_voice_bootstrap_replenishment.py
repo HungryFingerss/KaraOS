@@ -36,22 +36,24 @@ import pathlib
 import re
 
 # ---------------------------------------------------------------------------
-# Read pipeline.py once at module load — no import, no DLL issue.
+# Read runtime/session.py once at module load — no import, no DLL issue.
+# P1.A1 SP-6.1: _accumulate_voice relocated pipeline.py → runtime/session.py
+# (verbatim move); the replenishment-gate source lives there now.
 # ---------------------------------------------------------------------------
 
-_PIPELINE_PATH = pathlib.Path(__file__).parent.parent / "pipeline.py"
+_PIPELINE_PATH = pathlib.Path(__file__).parent.parent / "runtime" / "session.py"
 _PIPELINE_SRC = _PIPELINE_PATH.read_text(encoding="utf-8")
 
 
 def _extract_accumulate_voice_src() -> str:
-    """Return the full source text of _accumulate_voice from pipeline.py."""
+    """Return the full source text of _accumulate_voice from runtime/session.py."""
     match = re.search(
         r"(async def _accumulate_voice\b.*?)(?=\nasync def |\ndef |\nclass |\Z)",
         _PIPELINE_SRC,
         re.DOTALL,
     )
     assert match is not None, (
-        "_accumulate_voice not found in pipeline.py — function was renamed or removed?"
+        "_accumulate_voice not found in runtime/session.py — function was renamed or removed?"
     )
     return match.group(1)
 

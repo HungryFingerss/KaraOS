@@ -322,30 +322,46 @@ def real_voice():
     Why this exists: the autouse `_reset_pipeline_state_between_tests` installs a `core.voice`
     stub whose `embed = AsyncMock(return_value=None)`. A real-voice-behavior test against that
     stub is vacuous (tests a mock hardcoded to None; permanent false-RED). This fixture pops
-    the stub, imports the real `core.voice`, and — load-bearing — re-points `pipeline.voice_mod`
-    to it (tests reach embed through the `pipeline.py: from core import voice as voice_mod`
-    alias, a SEPARATE binding from sys.modules["core.voice"], so re-importing the module alone
-    is NOT enough).
+    the stub, imports the real `core.voice`, and — load-bearing — re-points the `voice_mod`
+    alias to it on EVERY module that hosts one (tests reach embed through the
+    `from core import voice as voice_mod` alias, a SEPARATE binding from sys.modules["core.voice"],
+    so re-importing the module alone is NOT enough). P1.A1 SP-6.1 relocated the voice_mod-reading
+    `_accumulate_voice` from pipeline.py to runtime/session.py, so BOTH modules' aliases must be
+    re-pointed (see the _vm_hosts comment below).
 
-    PI-1 hardening: try/finally restores the stub + the alias even if setup raises (so a
+    PI-1 hardening: try/finally restores the stub + every alias even if setup raises (so a
     setup-time assert can't leak the popped stub into sibling tests). The `_load_ecapa_patched`
     assert is MANDATORY + fail-loud — it guards against silently re-introducing the exact
     vacuity (real module never actually loaded)."""
     _require_real_ecapa_or_skip()  # the single call site for the ECAPA gate
     import importlib
     import pipeline
+    import runtime.session as _rt_session  # already in sys.modules via pipeline's SP-6.1 re-export
+
+    # P1.A1 SP-6.1: _accumulate_voice relocated pipeline.py → runtime/session.py. A function
+    # reads its module-globals through its DEFINING module's __dict__, so the re-exported
+    # pipeline._accumulate_voice reads `voice_mod` via runtime.session.__dict__ — the single
+    # pipeline.voice_mod re-point no longer reaches it (the GT1b CUDA-only regression). Re-point
+    # voice_mod on EVERY module hosting a `from core import voice as voice_mod` alias a test
+    # exercises: pipeline keeps live readers in run()/_warmup_models (belt-and-braces); runtime
+    # .session hosts the relocated _accumulate_voice. SP-6.2/6.3/6.4 append their modules below.
+    # The hasattr filter keeps restore leak-free — only modules that actually carry voice_mod are
+    # saved/set/restored (never setattr(m,'voice_mod',None) on a module that lacks the alias).
+    _vm_hosts = tuple(m for m in (pipeline, _rt_session) if hasattr(m, "voice_mod"))
 
     _stub = sys.modules.get("core.voice")        # capture the stub BEFORE any mutation
-    _orig_vm = getattr(pipeline, "voice_mod", None)
+    _saved_vm = [(m, m.voice_mod) for m in _vm_hosts]
     try:
         sys.modules.pop("core.voice", None)
         real = importlib.import_module("core.voice")
         assert hasattr(real, "_load_ecapa_patched"), \
             "real core.voice not loaded — stub still active (fixture vacuity guard)"
-        pipeline.voice_mod = real                # load-bearing: tests reach embed via this alias
+        for m in _vm_hosts:
+            m.voice_mod = real                   # load-bearing: relocated + pipeline readers reach embed via this alias
         yield real
-    finally:                                     # PI-1: always restores, even on setup raise
-        pipeline.voice_mod = _orig_vm
+    finally:                                     # PI-1: always restores every alias, even on setup raise
+        for m, _orig in _saved_vm:
+            m.voice_mod = _orig
         if _stub is not None:
             sys.modules["core.voice"] = _stub
         else:

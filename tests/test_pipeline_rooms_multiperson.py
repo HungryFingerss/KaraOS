@@ -529,12 +529,13 @@ def test_s113_on_room_end_fires_exactly_once_when_last_person_leaves():
     import pipeline, time
     now = time.time()
     fires: list[str] = []
-    original = pipeline._on_room_end
+    import runtime.session as _session_mod  # SP-6.1: _on_room_end relocated here
+    original = _session_mod._on_room_end
 
     async def _spy(room_session_id, *args, **kwargs):
         fires.append(room_session_id)
 
-    pipeline._on_room_end = _spy
+    _session_mod._on_room_end = _spy
     try:
         asyncio.run(pipeline._pipeline_state_store.set_active_room_session("r_abc"))
         _wiring._face_db_ref = None
@@ -556,7 +557,7 @@ def test_s113_on_room_end_fires_exactly_once_when_last_person_leaves():
             "room session pointer must clear once the room empties"
         )
     finally:
-        pipeline._on_room_end = original
+        _session_mod._on_room_end = original
         asyncio.run(pipeline._pipeline_state_store.set_active_room_session(None))
 
 
@@ -568,12 +569,13 @@ def test_s113_on_room_end_does_not_fire_while_other_sessions_live():
     import pipeline, time
     now = time.time()
     fires: list[str] = []
-    original = pipeline._on_room_end
+    import runtime.session as _session_mod  # SP-6.1: _on_room_end relocated here
+    original = _session_mod._on_room_end
 
     async def _spy(room_session_id, *args, **kwargs):
         fires.append(room_session_id)
 
-    pipeline._on_room_end = _spy
+    _session_mod._on_room_end = _spy
     try:
         import asyncio as _aio
         pipeline._session_store._sessions.clear()
@@ -594,7 +596,7 @@ def test_s113_on_room_end_does_not_fire_while_other_sessions_live():
             "room session stays alive while Bob is still present"
         )
     finally:
-        pipeline._on_room_end = original
+        _session_mod._on_room_end = original
         asyncio.run(pipeline._pipeline_state_store.set_active_room_session(None))
         pipeline._session_store._sessions.clear()
 

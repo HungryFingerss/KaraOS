@@ -261,7 +261,7 @@ def test_close_session_pops_rejection_store_for_owned_tracks():
     """Source-inspection: _close_session calls _anti_spoof_rejection_store.pop
     for every track that belonged to the closing session — both
     identity-bound tracks AND the stranger track."""
-    src = _read("pipeline.py")
+    src = _read("runtime/session.py")  # P1.A1 SP-6.1: _close_session relocated here
     # Locate _close_session body via the marker.
     fn_start = src.index("def _close_session(person_id: str)")
     fn_end = src.index("def ", fn_start + 1)

@@ -25,6 +25,8 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).parent.parent
 _PIPELINE_PY = _REPO_ROOT / "pipeline.py"
+# P1.A1 SP-6.1: _is_disputed() relocated pipeline.py → runtime/session.py.
+_SESSION_PY = _REPO_ROOT / "runtime" / "session.py"
 _CORE_DIR = _REPO_ROOT / "core"
 
 # core/config.py is excluded entirely — its "disputed" occurrences are enum/constant
@@ -129,18 +131,32 @@ def test_no_raw_disputed_comparisons_outside_is_disputed():
     """
     all_failures: list[str] = []
 
-    # ── pipeline.py — exclude _is_disputed() body ──────────────────────────
+    # ── pipeline.py — _is_disputed() relocated to runtime/session.py at
+    #    P1.A1 SP-6.1; scan pipeline.py with no exclusion (helper not here). ──
     pipeline_src = _PIPELINE_PY.read_text(encoding="utf-8")
-    is_disp_range = _find_is_disputed_range(pipeline_src)
-    assert is_disp_range is not None, (
-        "_is_disputed() not found in pipeline.py — was it renamed or deleted?"
-    )
+    pipeline_is_disp = _find_is_disputed_range(pipeline_src)  # None post-SP-6.1
     all_failures.extend(
         _scan_source(
             pipeline_src,
             "pipeline.py",
-            exclude_range=is_disp_range,
+            exclude_range=pipeline_is_disp,  # no-op exclusion when None
             ast_allowed=_ast_allowlist_lines(pipeline_src),
+        )
+    )
+
+    # ── runtime/session.py — exclude _is_disputed() body (its new home) ─────
+    session_src = _SESSION_PY.read_text(encoding="utf-8")
+    session_is_disp = _find_is_disputed_range(session_src)
+    assert (pipeline_is_disp is not None) or (session_is_disp is not None), (
+        "_is_disputed() not found in pipeline.py OR runtime/session.py — "
+        "was it renamed or deleted? (relocated to runtime/session.py at SP-6.1)"
+    )
+    all_failures.extend(
+        _scan_source(
+            session_src,
+            "runtime/session.py",
+            exclude_range=session_is_disp,
+            ast_allowed=_ast_allowlist_lines(session_src),
         )
     )
 

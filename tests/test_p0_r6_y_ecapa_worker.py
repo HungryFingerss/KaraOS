@@ -54,6 +54,9 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _HEAVY_WORKER = _REPO_ROOT / "core" / "heavy_worker.py"
 _VOICE = _REPO_ROOT / "core" / "voice.py"
 _PIPELINE = _REPO_ROOT / "pipeline.py"
+# P1.A1 SP-6.1: _accumulate_voice (a voice_mod.{identify,embed} caller) relocated
+# pipeline.py → runtime/session.py, splitting the await-call sites across both.
+_SESSION = _REPO_ROOT / "runtime" / "session.py"
 
 
 # ---------------------------------------------------------------------------
@@ -446,65 +449,68 @@ def test_p0_r6_y_d3_anchor_5_caller_migration_count() -> None:
     wrapper patterns at any of the 5 sites fires this anchor (the
     inverse-count assertion becomes non-zero).
     """
-    source = _PIPELINE.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-
-    # Positive: count Await(Call(Attribute(voice_mod, {embed,identify,diarize}))) nodes
+    # Scan BOTH pipeline.py and runtime/session.py — SP-6.1 split the 5 caller
+    # sites across the two modules (3 stay in pipeline.py, 2 moved with
+    # _accumulate_voice into runtime/session.py). The migration contract is the
+    # SUM across both engine modules, not the pipeline.py-only count.
     direct_await_calls = 0
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Await):
-            continue
-        if not isinstance(node.value, ast.Call):
-            continue
-        func = node.value.func
-        if (
-            isinstance(func, ast.Attribute)
-            and isinstance(func.value, ast.Name)
-            and func.value.id == "voice_mod"
-            and func.attr in ("embed", "identify", "diarize")
-        ):
-            direct_await_calls += 1
+    wrapper_violations: list[str] = []
+    for _src_path in (_PIPELINE, _SESSION):
+        source = _src_path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        _label = _src_path.name
+
+        # Positive: count Await(Call(Attribute(voice_mod, {embed,identify,diarize})))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Await):
+                continue
+            if not isinstance(node.value, ast.Call):
+                continue
+            func = node.value.func
+            if (
+                isinstance(func, ast.Attribute)
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "voice_mod"
+                and func.attr in ("embed", "identify", "diarize")
+            ):
+                direct_await_calls += 1
+
+        # Inverse: no `run_in_executor` Call passing voice_mod.embed/identify/diarize
+        # as the function argument (the wrapper patterns Plan v3 §5 (f) forbids).
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (
+                isinstance(func, ast.Attribute)
+                and func.attr == "run_in_executor"
+            ):
+                continue
+            if len(node.args) < 2:
+                continue
+            second_arg = node.args[1]
+            if (
+                isinstance(second_arg, ast.Attribute)
+                and isinstance(second_arg.value, ast.Name)
+                and second_arg.value.id == "voice_mod"
+                and second_arg.attr in ("embed", "identify", "diarize")
+            ):
+                wrapper_violations.append(f"{_label}:{node.lineno}")
 
     assert direct_await_calls >= 5, (
         f"D3 regression (positive count): expected at least 5 "
-        f"`await voice_mod.{{embed,identify,diarize}}(...)` calls in "
-        f"pipeline.py per Plan v1 §1.2 (sites 2274 + 2304 + 7148 + 7414 + "
-        f"7450). Found {direct_await_calls}. Reverting any site to the "
-        f"`run_in_executor(..., voice_mod.X, ...)` wrapper pattern would "
-        f"drop this count below 5."
+        f"`await voice_mod.{{embed,identify,diarize}}(...)` calls across "
+        f"pipeline.py + runtime/session.py per Plan v1 §1.2 (sites 2274 + "
+        f"2304 + 7148 + 7414 + 7450; SP-6.1 split 2 into runtime/session.py "
+        f"with _accumulate_voice). Found {direct_await_calls}. Reverting any "
+        f"site to the `run_in_executor(..., voice_mod.X, ...)` wrapper "
+        f"pattern would drop this count below 5."
     )
 
-    # Inverse: no `run_in_executor` Call passing voice_mod.embed/identify/diarize
-    # as the function argument (those are the wrapper patterns Plan v3 §5 (f)
-    # forbids).
-    wrapper_violations = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        if not (
-            isinstance(func, ast.Attribute)
-            and func.attr == "run_in_executor"
-        ):
-            continue
-        # Second positional arg (after executor) is the callable; check if
-        # it's voice_mod.embed/identify/diarize. Signature:
-        # `loop.run_in_executor(executor, func, *args)`.
-        if len(node.args) < 2:
-            continue
-        second_arg = node.args[1]
-        if (
-            isinstance(second_arg, ast.Attribute)
-            and isinstance(second_arg.value, ast.Name)
-            and second_arg.value.id == "voice_mod"
-            and second_arg.attr in ("embed", "identify", "diarize")
-        ):
-            wrapper_violations.append(node.lineno)
-
     assert not wrapper_violations, (
-        f"D3 regression (inverse check): pipeline.py contains "
+        f"D3 regression (inverse check): "
         f"`run_in_executor(..., voice_mod.{{embed,identify,diarize}}, ...)` "
-        f"wrapper patterns at lines {wrapper_violations}. Per Plan v1 §1.2 "
+        f"wrapper patterns at {wrapper_violations}. Per Plan v1 §1.2 "
         f"post-migration, all 5 caller sites must use direct "
         f"`await voice_mod.X(...)` shape. The wrapper pattern was the "
         f"pre-migration shape that blocked the asyncio loop on a thread "
