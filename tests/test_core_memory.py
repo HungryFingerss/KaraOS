@@ -79,7 +79,7 @@ def test_format_core_memory_block_safety_annotation():
 # ── Test 3: get_core_memory_for returns [] when flag disabled ─────────────────
 
 def test_get_core_memory_for_disabled(brain_db, monkeypatch):
-    monkeypatch.setattr("core.brain_agent.CORE_MEMORY_ENABLED", False)
+    monkeypatch.setattr("core.brain_agent.memory.store.CORE_MEMORY_ENABLED", False)
     _insert_fact(brain_db, "jagan_abc", "Jagan", "lives_in", "Tirupati", 0.9, "personal")
     result = brain_db.get_core_memory_for("jagan_abc", None, "Jagan")
     assert result == []
@@ -89,7 +89,7 @@ def test_get_core_memory_for_disabled(brain_db, monkeypatch):
 
 @pytest.mark.privacy_critical
 def test_get_core_memory_for_privacy_cross_person_blocked(brain_db, monkeypatch):
-    monkeypatch.setattr("core.brain_agent.CORE_MEMORY_ENABLED", True)
+    monkeypatch.setattr("core.brain_agent.memory.store.CORE_MEMORY_ENABLED", True)
     # Lexi's personal fact stored under Lexi's person_id
     _insert_fact(brain_db, "lexi_xyz", "Lexi", "lives_in", "Chennai", 0.9, "personal")
     # Requester is Jagan (non-best-friend, best_friend_id=None → non-owner)
@@ -103,7 +103,7 @@ def test_get_core_memory_for_privacy_cross_person_blocked(brain_db, monkeypatch)
 
 @pytest.mark.privacy_critical
 def test_get_core_memory_for_best_friend_sees_personal(brain_db, monkeypatch):
-    monkeypatch.setattr("core.brain_agent.CORE_MEMORY_ENABLED", True)
+    monkeypatch.setattr("core.brain_agent.memory.store.CORE_MEMORY_ENABLED", True)
     _insert_fact(brain_db, "lexi_xyz", "Lexi", "lives_in", "Chennai", 0.9, "personal")
     # Jagan is best_friend
     result = brain_db.get_core_memory_for("jagan_abc", "jagan_abc", "Lexi")
@@ -115,7 +115,7 @@ def test_get_core_memory_for_best_friend_sees_personal(brain_db, monkeypatch):
 
 @pytest.mark.privacy_critical
 def test_get_core_memory_for_attribute_whitelist(brain_db, monkeypatch):
-    monkeypatch.setattr("core.brain_agent.CORE_MEMORY_ENABLED", True)
+    monkeypatch.setattr("core.brain_agent.memory.store.CORE_MEMORY_ENABLED", True)
     # Insert a whitelisted attribute and a non-whitelisted one
     _insert_fact(brain_db, "jagan_abc", "Jagan", "lives_in", "Tirupati", 0.9, "personal")
     _insert_fact(brain_db, "jagan_abc", "Jagan", "current_mood", "happy", 0.9, "personal")
@@ -128,8 +128,8 @@ def test_get_core_memory_for_attribute_whitelist(brain_db, monkeypatch):
 # ── Test 7: filters out facts below CORE_MEMORY_MIN_CONFIDENCE ────────────────
 
 def test_get_core_memory_for_confidence_floor(brain_db, monkeypatch):
-    monkeypatch.setattr("core.brain_agent.CORE_MEMORY_ENABLED", True)
-    monkeypatch.setattr("core.brain_agent.CORE_MEMORY_MIN_CONFIDENCE", 0.50)
+    monkeypatch.setattr("core.brain_agent.memory.store.CORE_MEMORY_ENABLED", True)
+    monkeypatch.setattr("core.brain_agent.memory.store.CORE_MEMORY_MIN_CONFIDENCE", 0.50)
     _insert_fact(brain_db, "jagan_abc", "Jagan", "lives_in", "Tirupati", 0.30, "personal")
     _insert_fact(brain_db, "jagan_abc", "Jagan", "works_at", "TCS", 0.80, "personal")
     result = brain_db.get_core_memory_for("jagan_abc", "jagan_abc", "Jagan")

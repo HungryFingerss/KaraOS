@@ -40,6 +40,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SCAN_TARGETS = [
     "core/brain.py",
     "core/brain_agent/__init__.py",
+    "core/brain_agent/orchestrator.py",
     "core/brain_agent/privacy.py",
     "core/brain_agent/agents/extraction.py",
     "core/brain_agent/agents/briefing.py",

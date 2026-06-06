@@ -30,11 +30,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import core.brain_agent as brain_agent_mod
+import core.brain_agent.orchestrator as brain_agent_mod  # SP-3: _ensure_graph_sync + GRAPH_SCHEMA_VERSION live here
 from core.brain_agent import BrainOrchestrator, GraphDB
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BRAIN_AGENT_PATH = REPO_ROOT / "core" / "brain_agent" / "__init__.py"
+BRAIN_AGENT_PATH = REPO_ROOT / "core" / "brain_agent" / "orchestrator.py"
 
 
 # ── Shared helpers (mirror tests/test_kuzu_atomicity_invariants.py shape) ─────

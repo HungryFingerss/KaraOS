@@ -42,6 +42,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 # tier literal escapes the drift-protection invariant.
 _BRAIN_AGENT_FILES = [
     _REPO_ROOT / "core" / "brain_agent" / "__init__.py",
+    _REPO_ROOT / "core" / "brain_agent" / "memory" / "store.py",
     _REPO_ROOT / "core" / "brain_agent" / "privacy.py",
     _REPO_ROOT / "core" / "brain_agent" / "memory" / "graph.py",
     _REPO_ROOT / "core" / "brain_agent" / "agents" / "extraction.py",

@@ -27,7 +27,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _AUDIT_PY = _REPO_ROOT / "core" / "audit.py"
 _AUDIT_PERSON_PY = _REPO_ROOT / "audit_person.py"
-_BRAIN_AGENT_PY = _REPO_ROOT / "core" / "brain_agent" / "__init__.py"
+_BRAIN_AGENT_PY = _REPO_ROOT / "core" / "brain_agent" / "memory" / "store.py"
 _INVERSE_TEST_PY = _REPO_ROOT / "tests" / "test_faiss_atomicity_invariants.py"
 _DELETE_PERSON_PY = _REPO_ROOT / "delete_person.py"
 

@@ -201,9 +201,9 @@ def test_update_alert_uses_regex_not_literal_substring():
     call is gone (4th instance of this pattern across the sibling
     arc — see `feedback_adjacent_string_literal_normalizer.md`).
     """
-    from core import brain_agent
+    from core.brain_agent.memory import store as _store_mod  # SP-3: BrainDB moved here
 
-    src = inspect.getsource(brain_agent)
+    src = inspect.getsource(_store_mod)
     tree = ast.parse(src)
 
     target_fn = None
@@ -215,7 +215,7 @@ def test_update_alert_uses_regex_not_literal_substring():
             target_fn = node
             break
     assert target_fn is not None, (
-        "update_visitor_alert_for_promoted_person not found in brain_agent.py"
+        "update_visitor_alert_for_promoted_person not found in memory/store.py"
     )
 
     # (a) at least one `re.sub` call in the body
