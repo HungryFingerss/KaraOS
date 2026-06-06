@@ -21,259 +21,70 @@ import tempfile
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
-# Tee stdout+stderr to terminal_output.md so long sessions aren't lost to terminal scroll.
-# P1.5: prior session's log is renamed to a timestamped archive before the new
-# session starts; fresh per session, but all history preserved for the
-# golden-intent harvest script (tests/harvest_golden.py). Line-buffered so
-# nothing is lost on crash.
-import datetime as _dt
-import pathlib as _pathlib
-import queue as _log_queue_mod
-import threading as _log_thread_mod
+# Terminal-output log harness (Tee + drain + archive/rotate + log-state globals) lives in
+# runtime/log_capture.py as of P1.A1 SP-4.1. The boot-time side-effects (archive, open log
+# file, start drain thread, install Tee) stay HERE in the __main__ guard because they must run
+# only for `python pipeline.py`, never on subprocess re-import (Windows multiprocessing.spawn).
+import threading as _log_thread_mod  # used only by the __main__ boot guard below
 
-_LOG_PATH = _pathlib.Path(__file__).parent / "terminal_output.md"
+import runtime.log_capture as log_capture  # noqa: F401  — boot guard attribute-rebinds log_capture's rebound globals
+from runtime.log_capture import (  # noqa: F401  — bare-name re-exports for callers (dream-loop _check/_prune, etc.)
+    _LOG_PATH,
+    _log_q,
+    _archive_terminal_output,
+    _check_terminal_output_size_cap,
+    _prune_old_terminal_archives,
+    _log_drain,
+    _Tee,
+)
 
-
-def _archive_terminal_output(log_path: _pathlib.Path = _LOG_PATH) -> "_pathlib.Path | None":
-    """P1.5 data-accumulation hook: rename an existing terminal_output.md to a
-    timestamped archive file so fresh sessions start clean AND historical logs
-    are preserved for the golden-intent harvest script.
-
-    Naming: ``terminal_output_YYYY-MM-DD_HHMMSS.md`` — timestamped from the
-    file's mtime (when the PRIOR session wrote its last byte), not from now,
-    so the archive name reflects the actual session boundary. Collision-safe:
-    if the target already exists a trailing ``_1``, ``_2`` etc. is appended.
-
-    Returns the archive path, or ``None`` if there was no file to archive.
-    Safe to call on first run (no-op when log_path missing) and on zero-byte
-    files (still archives so the harvest can audit 'prior session produced no
-    output').
-
-    Reverses Session 24's A6 (open mode "a" → "w") but preserves the same
-    property (all prior logs retrievable) — just distributed across files
-    rather than concatenated in one."""
-    if not log_path.exists():
-        return None
-    mtime = _dt.datetime.fromtimestamp(log_path.stat().st_mtime)
-    stem = f"terminal_output_{mtime.strftime('%Y-%m-%d_%H%M%S')}"
-    candidate = log_path.parent / f"{stem}.md"
-    suffix = 1
-    while candidate.exists():
-        candidate = log_path.parent / f"{stem}_{suffix}.md"
-        suffix += 1
-    # Windows holds the file when a prior pipeline.py process didn't fully
-    # release the handle (orphaned hung process, IDE still tailing the file,
-    # antivirus scan in progress). The rename then raises WinError 32 and
-    # the bare exception kills module import. Catch + log + skip the
-    # archive — preserving session continuity is more important than
-    # archive hygiene; the user can rename the file manually after the
-    # blocking process is killed.
-    try:
-        log_path.rename(candidate)
-    except (OSError, PermissionError) as e:
-        print(
-            f"[Pipeline] WARN: could not archive {log_path.name} "
-            f"({type(e).__name__}: {e!r}). Continuing without archive — "
-            f"investigate which process is holding the file.",
-            flush=True,
-        )
-        return None
-    return candidate
-
-
-# P0.S12 D2 — Module-level placeholders so subprocess re-imports of pipeline.py
-# get None-valued names rather than NameError on attribute access. The
-# _log_drain function (defined below) references _LOG_FILE at CALL time
-# (not def time), so the None value here is invisible — _log_drain is only
-# ever invoked from the daemon thread which is only started in main.
-# Real values assigned in the `if __name__ == "__main__":` guard below.
-_archived_log: "_pathlib.Path | None" = None
-_LOG_FILE: "Any" = None  # opened by D1 main-only block; None in subprocess
-
-
-def _check_terminal_output_size_cap(log_path: _pathlib.Path = _LOG_PATH) -> bool:
-    """P0.R13 D2 — rotate terminal_output.md when size exceeds TERMINAL_OUTPUT_SIZE_CAP_MB.
-
-    Q2 (a) RATIFIED 100MB default; Q4 (a) RATIFIED disk-monitor-poll cadence.
-
-    Closes current log, renames to timestamped archive (matches startup
-    archive shape via `_archive_terminal_output`), opens fresh log file.
-    Returns True if rotation fired; False if under cap OR rotation failed.
-
-    Called from dream-loop / disk-monitor poll cadence so size check is
-    amortized over session (NOT per-print which would dominate hot path).
-    """
-    global _LOG_FILE
-    try:
-        if not log_path.exists():
-            return False
-        size_mb = log_path.stat().st_size / (1024 * 1024)
-        from core.config import TERMINAL_OUTPUT_SIZE_CAP_MB  # noqa: PLC0415
-        if size_mb < TERMINAL_OUTPUT_SIZE_CAP_MB:
-            return False
-        # Close current file before rename (Windows file-lock semantics).
-        try:
-            _LOG_FILE.flush()
-            _LOG_FILE.close()
-        except Exception:
-            pass  # CLEANUP: best-effort flush before rotation
-        # Rotate via same archive shape as startup.
-        _archive_terminal_output(log_path)
-        _LOG_FILE = open(log_path, "w", encoding="utf-8", buffering=1)
-        print(
-            f"[Pipeline] terminal_output.md rotated at {size_mb:.1f}MB "
-            f"(cap={TERMINAL_OUTPUT_SIZE_CAP_MB}MB)",
-            flush=True,
-        )
-        return True
-    except Exception as e:
-        print(f"[Pipeline] terminal_output rotation failed: {e!r}", flush=True)
-        return False
-
-
-def _prune_old_terminal_archives(
-    retention_days: "int | None" = None,
-    log_dir: "_pathlib.Path | None" = None,
-) -> int:
-    """P0.R13 D2 — delete terminal_output_*.md archive files older than retention_days.
-
-    Q3 (a) RATIFIED 30-day archive retention default.
-
-    Pattern: ``terminal_output_YYYY-MM-DD_HHMMSS*.md`` (matches
-    ``_archive_terminal_output`` naming scheme). Returns count deleted.
-    Per-file unlink failures swallowed (best-effort cleanup; single corrupt
-    file shouldn't break the cleanup pass for the rest).
-    """
-    if retention_days is None:
-        from core.config import TERMINAL_OUTPUT_ARCHIVE_RETENTION_DAYS  # noqa: PLC0415
-        retention_days = TERMINAL_OUTPUT_ARCHIVE_RETENTION_DAYS
-    if log_dir is None:
-        log_dir = _LOG_PATH.parent
-    cutoff_ts = time.time() - retention_days * 86400
-    deleted = 0
-    try:
-        for path in log_dir.glob("terminal_output_*.md"):
-            try:
-                if path.stat().st_mtime < cutoff_ts:
-                    path.unlink()
-                    deleted += 1
-            except Exception:
-                pass  # CLEANUP: skip individual archive prune failures
-    except Exception:
-        pass  # CLEANUP: glob failure
-    return deleted
-
-# Non-blocking log queue: print() puts messages here; a daemon thread drains them.
-# This prevents terminal I/O from ever stalling the asyncio event loop.
-_log_q: "_log_queue_mod.SimpleQueue[tuple[object, str]]" = _log_queue_mod.SimpleQueue()
-
-# P0.B4 D1 (Bundle 4 observability) — observability counters for log drain liveness.
-_log_drain_count: int = 0  # observability counter — successful drains
-_log_drain_last_at: float = 0.0  # WALLCLOCK: observability — last successful drain timestamp
-_log_drain_error_count: int = 0  # observability counter — exception count
-
-def _log_drain() -> None:
-    """Daemon thread — writes queued log messages to terminal + log file.
-
-    P0.B4 D1 (Bundle 4 observability) — outer-loop try/except catches:
-      - _log_q.get() failures (the load-bearing silent-death failure mode per Skeptic-1 BUG-3)
-      - _log_drain_count / _log_drain_last_at counter update failures (exotic)
-      - any unforeseen exception sites
-    Inner try/except blocks (stream.write + _LOG_FILE.write) preserved per P0.4 discipline.
-    """
-    global _log_drain_count, _log_drain_last_at, _log_drain_error_count
-    while True:
-        try:
-            stream, data = _log_q.get()
-            try:
-                stream.write(data)
-                stream.flush()
-            except Exception:
-                pass  # OPTIONAL: raising kills the daemon and silences all subsequent logging
-            try:
-                _LOG_FILE.write(data)
-                _LOG_FILE.flush()
-            except Exception:
-                pass  # OPTIONAL: raising kills the daemon and silences all subsequent logging
-            _log_drain_count += 1
-            _log_drain_last_at = time.time()  # WALLCLOCK: observability timestamp
-        except Exception as e:
-            # P0.B4 D1 outer-loop wrap: DO NOT swallow silently. Emit to stderr directly
-            # (bypassing _Tee which routes through _log_q — would create an infinite loop).
-            _log_drain_error_count += 1
-            import sys as _sys
-            try:
-                _sys.__stderr__.write(f"[Log] _log_drain exception: {type(e).__name__}: {e}\n")
-                _sys.__stderr__.flush()
-            except Exception:
-                pass  # OPTIONAL: stderr unavailable; nothing more we can do
-            # Continue the loop — drain thread stays alive
-
-class _Tee:
-    def __init__(self, stream):
-        self._s = stream
-    def write(self, data: str) -> int:
-        if data:
-            _log_q.put((self._s, data))
-        return len(data) if data else 0
-    def flush(self):
-        pass  # background thread handles all flushing
-    def __getattr__(self, name):
-        return getattr(self._s, name)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# P0.S12 — Module-level side-effect guard (Windows-spawn-mode safe boot block)
-# ─────────────────────────────────────────────────────────────────────────────
+# ───── P0.S12 — Module-level side-effect guard (Windows-spawn-mode safe boot block) ─────
 #
-# Canary 2026-05-27 (terminal_output_2026-05-27_115642.md lines 37/42/47/60/120)
-# surfaced repeated `PermissionError 13` from _archive_terminal_output() firing
-# in heavy-worker subprocess re-imports of this module.
+# Canary 2026-05-27 (terminal_output_2026-05-27_115642.md) surfaced repeated PermissionError 13
+# from _archive_terminal_output() firing in heavy-worker subprocess re-imports of this module:
+# on Windows, multiprocessing uses `spawn` which RE-IMPORTS the main module in every child.
+# This guard gates the 5 Tier-1 side-effects behind `__main__` so they never fire on re-import.
 #
-# Root cause (P0.S12 Phase 0 §3.1, grep-verified): on Windows, multiprocessing
-# uses `spawn` start-method which RE-IMPORTS the main module in every child
-# process. Without this guard, module-level side-effects (archive rename, log
-# file open, daemon thread start, Tee install, success-log print) fire in
-# every child — corrupting the parent's terminal_output.md handle and emitting
-# PermissionError noise on every spawn.
+# P1.A1 SP-4.1: the harness symbols moved to runtime/log_capture.py. The REBOUND log-state
+# (_LOG_FILE, _archived_log, _log_drain_thread, the 3 drain counters) is attribute-set on
+# log_capture's namespace below — NOT pipeline-local — because _log_drain + _check (running in
+# log_capture) and core.health (reading the drain counters) all resolve them in log_capture's
+# namespace. A `from log_capture import _LOG_FILE; _LOG_FILE = ...` would snapshot a pipeline
+# local and leave _log_drain staring at None. The boot-rebind is canary-gated: the suite asserts
+# this guard does NOT run on import, so green can never prove the rebind works at runtime — only
+# the P1.A1 hardware canary can.
 #
-# This guard gates 5 Tier 1 sites (subprocess-harmful) behind `__main__`:
-#   - _archive_terminal_output() call (the original PermissionError surface)
-#   - _LOG_FILE = open(_LOG_PATH, "w", ...) (truncating-mode handle competition)
-#   - _log_drain_thread.start() (orphan daemon in subprocess)
-#   - sys.stdout = _Tee(sys.stdout) + sys.stderr = _Tee(sys.stderr) (subprocess-local Tee)
+# 5 Tier-1 sites, byte-for-byte ORDERING preserved (_LOG_FILE set BEFORE the thread + Tee read it):
+#   - log_capture._archive_terminal_output() call (the original PermissionError surface)
+#   - log_capture._LOG_FILE = open(...) (truncating-mode handle competition)
+#   - log_capture._log_drain_thread.start() (orphan daemon in subprocess)
+#   - sys.stdout = log_capture._Tee(sys.stdout) + sys.stderr = log_capture._Tee(sys.stderr)
 #   - "Prior session log archived" success print (subprocess-duplicate)
 #
-# Tier 2 side-effects (sys.stdout/stderr.reconfigure, warnings filter) stay
-# UNGUARDED at module top — they're idempotent and subprocess inheritance
-# benefits from them. Tier 3 (_log_q SimpleQueue) stays unguarded — subprocess
-# gets its own empty queue, harmless.
-#
-# DO NOT move any Tier 2 / Tier 3 site inside this guard without rationale.
-# DO NOT move any Tier 1 site outside this guard without re-evaluating
-# subprocess re-import behavior on Windows. See test_p0_s12_*.py D4 anchors.
-# ─────────────────────────────────────────────────────────────────────────────
+# DO NOT move any Tier-1 site outside this guard without re-evaluating Windows spawn re-import.
+# DO NOT convert the rebound attribute-sets to from-import + bare assignment. See test_p0_s12_*.py.
+# ────────────────────────────────────────
 if __name__ == "__main__":
-    _archived_log = _archive_terminal_output()
+    log_capture._archived_log = log_capture._archive_terminal_output()
 
-    _LOG_FILE = open(
-        _LOG_PATH,
+    log_capture._LOG_FILE = open(
+        log_capture._LOG_PATH,
         # P1.5: fresh per session now — prior session's content is preserved in
         # the timestamped archive returned by _archive_terminal_output above.
         "w", encoding="utf-8", buffering=1,
     )
 
-    _log_drain_thread = _log_thread_mod.Thread(target=_log_drain, daemon=True, name="log-writer")
-    _log_drain_thread.start()
+    log_capture._log_drain_thread = _log_thread_mod.Thread(
+        target=log_capture._log_drain, daemon=True, name="log-writer")
+    log_capture._log_drain_thread.start()
 
-    sys.stdout = _Tee(sys.stdout)
-    sys.stderr = _Tee(sys.stderr)
+    sys.stdout = log_capture._Tee(sys.stdout)
+    sys.stderr = log_capture._Tee(sys.stderr)
 
     # P1.5: announce the archive AFTER the tee is wired so the message lands in
-    # both terminal AND the new log file (harvest script can correlate archives
-    # to session boundaries).
-    if _archived_log is not None:
-        print(f"[Pipeline] Prior session log archived → {_archived_log.name}")
+    # both terminal AND the new log file (harvest script correlates archives to sessions).
+    if log_capture._archived_log is not None:
+        print(f"[Pipeline] Prior session log archived → {log_capture._archived_log.name}")
 
 import time
 import uuid

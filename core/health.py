@@ -108,9 +108,9 @@ class HealthSnapshot:
     # operator-actionable alert.
     audio_degraded: "dict[str, bool]" = field(default_factory=dict)
     # P0.B4 D2 (Bundle 4 observability) — log drain liveness observability.
-    # `log_drain_alive` trips False iff pipeline._log_drain_thread is dead OR
+    # `log_drain_alive` trips False iff log_capture._log_drain_thread is dead OR
     # _log_drain_last_at hasn't advanced within LOG_DRAIN_STALENESS_SECS.
-    # `log_drain_count` / `log_drain_error_count` mirror the pipeline.py module-
+    # `log_drain_count` / `log_drain_error_count` mirror the runtime/log_capture.py module-
     # level counters so the dashboard can surface throughput + error rate.
     # Boot-time race tolerance: never-spawned thread + never-drained timestamp
     # both treated as alive (avoid false alerts before _log_drain spawns).
@@ -315,20 +315,23 @@ def gather_health_snapshot(
         audio_degraded = {}
 
     # P0.B4 D2 — log drain liveness observability.
-    # Late `import pipeline` to avoid circular import at module load. Boot-time
-    # race tolerance: not-yet-spawned thread + never-drained timestamp both
-    # treated as alive (avoids false alerts before pipeline.run() spawns the
-    # daemon). Once drained at least once, staleness check fires.
+    # P1.A1 SP-4.1: the drain thread + counters live in runtime/log_capture.py now
+    # (moved out of pipeline.py). Late import avoids any import-order surprise. The
+    # rebound globals (_log_drain_thread / _log_drain_count / _last_at / _error_count)
+    # are attribute-set on log_capture's namespace by pipeline.py's __main__ boot guard,
+    # so they MUST be read from log_capture, not pipeline (a re-export would snapshot
+    # stale zeros). Boot-time race tolerance: not-yet-spawned thread + never-drained
+    # timestamp both treated as alive (avoids false alerts before the daemon spawns).
     log_drain_alive = True
     log_drain_count = 0
     log_drain_error_count = 0
     try:
-        import pipeline as _pipeline_health  # noqa: PLC0415
+        import runtime.log_capture as _log_capture_health  # noqa: PLC0415
         from core.config import LOG_DRAIN_STALENESS_SECS as _LOG_STALENESS  # noqa: PLC0415
-        _thread = getattr(_pipeline_health, "_log_drain_thread", None)
-        _last_at = getattr(_pipeline_health, "_log_drain_last_at", 0.0)
-        log_drain_count = getattr(_pipeline_health, "_log_drain_count", 0)
-        log_drain_error_count = getattr(_pipeline_health, "_log_drain_error_count", 0)
+        _thread = getattr(_log_capture_health, "_log_drain_thread", None)
+        _last_at = getattr(_log_capture_health, "_log_drain_last_at", 0.0)
+        log_drain_count = getattr(_log_capture_health, "_log_drain_count", 0)
+        log_drain_error_count = getattr(_log_capture_health, "_log_drain_error_count", 0)
         _thread_alive = _thread.is_alive() if _thread is not None else True
         # WALLCLOCK: observability staleness check
         _fresh = (time.time() - _last_at) < _LOG_STALENESS if _last_at > 0 else True

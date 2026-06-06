@@ -146,6 +146,57 @@ class TestGatherHealthSnapshot:
         conn.close()
         brain_db_conn.close()
 
+    def test_health_reads_log_drain_counters_from_log_capture(self, tmp_path, monkeypatch):
+        """P1.A1 SP-4.1 — health reads the drain counters from runtime/log_capture.py
+        (their new home), NOT pipeline.py.
+
+        In tests the drain thread never runs, so _log_drain_count is 0 whether health
+        reads it correctly (from log_capture) OR via a stale getattr(pipeline, ..., 0)
+        default after a broken repoint — both yield 0. ONLY a non-zero attribute-set on
+        log_capture can distinguish a correct repoint from a broken one. This pulls the
+        health repoint out of the canary-blind set into suite-covered: set the counter
+        to 7 on log_capture; assert the snapshot reflects 7. A wrong/missing repoint
+        returns the getattr default 0 and this test fails.
+        """
+        import sqlite3
+        import runtime.log_capture as _lc
+
+        monkeypatch.setattr(_lc, "_log_drain_count", 7)
+        monkeypatch.setattr(_lc, "_log_drain_error_count", 3)
+
+        conn = sqlite3.connect(str(tmp_path / "faces.db"))
+        conn.execute("CREATE TABLE persons (id TEXT, type TEXT)")
+        conn.execute("CREATE TABLE embeddings (id TEXT)")
+        conn.execute("CREATE TABLE voice_embeddings (person_id TEXT, id INTEGER PRIMARY KEY)")
+        conn.commit()
+        fake_db = MagicMock(); fake_db._conn = conn
+        brain_db_conn = sqlite3.connect(str(tmp_path / "brain.db"))
+        brain_db_conn.execute("CREATE TABLE knowledge (id INTEGER PRIMARY KEY, invalidated_at TEXT)")
+        brain_db_conn.execute("CREATE TABLE shadow_persons (id TEXT, enrollment_status TEXT)")
+        brain_db_conn.execute("CREATE TABLE watchdog_alerts (id INTEGER PRIMARY KEY, resolved INTEGER DEFAULT 0)")
+        brain_db_conn.commit()
+        fake_brain_db = MagicMock(); fake_brain_db._conn = brain_db_conn
+        fake_orchestrator = MagicMock(); fake_orchestrator._brain_db = fake_brain_db
+
+        with patch("core.classifier_graph._classifier_db", None):
+            snap = gather_health_snapshot(
+                db=fake_db,
+                brain_orchestrator=fake_orchestrator,
+                active_sessions=[],
+                cloud_state="ONLINE",
+                last_dream_run_at=None,
+            )
+
+        assert snap.log_drain_count == 7, (
+            "health must read _log_drain_count from runtime.log_capture "
+            f"(got {snap.log_drain_count}; a broken repoint reads pipeline's getattr default 0)"
+        )
+        assert snap.log_drain_error_count == 3, (
+            f"health must read _log_drain_error_count from runtime.log_capture (got {snap.log_drain_error_count})"
+        )
+        conn.close()
+        brain_db_conn.close()
+
 
 class TestFormatHealthLine:
     def test_under_200_chars(self):

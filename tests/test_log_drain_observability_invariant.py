@@ -1,7 +1,10 @@
-"""Bundle 4 D3 — AST invariant: pipeline.py:_log_drain body has outer-loop try/except
+"""Bundle 4 D3 — AST invariant: _log_drain body has outer-loop try/except
 that does NOT swallow silently. Catches the silent-death failure mode per Skeptic-1 BUG-3.
 
 Single-function scope (NOT file-wide). Distinct from Bundle 3 D2/D4 STANDARD-scope.
+
+P1.A1 SP-4.1: _log_drain relocated pipeline.py -> runtime/log_capture.py (byte-identical);
+this scanner reads log_capture.py now.
 """
 
 # SPDX-License-Identifier: Apache-2.0
@@ -11,21 +14,21 @@ import ast
 import pathlib
 
 
-PIPELINE_PATH = pathlib.Path(__file__).parent.parent / "pipeline.py"
+LOG_CAPTURE_PATH = pathlib.Path(__file__).parent.parent / "runtime" / "log_capture.py"
 
 
 def _find_log_drain_function(source: str) -> ast.FunctionDef:
-    """Locate _log_drain FunctionDef in pipeline.py."""
+    """Locate _log_drain FunctionDef in runtime/log_capture.py."""
     tree = ast.parse(source)
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "_log_drain":
             return node
-    raise AssertionError("_log_drain function not found in pipeline.py")
+    raise AssertionError("_log_drain function not found in runtime/log_capture.py")
 
 
 def test_log_drain_has_outer_loop_try_except() -> None:
     """Outer-loop try/except wraps the while True body — catches _log_q.get() silent-death."""
-    source = PIPELINE_PATH.read_text(encoding="utf-8")
+    source = LOG_CAPTURE_PATH.read_text(encoding="utf-8")
     func = _find_log_drain_function(source)
     while_node = next(
         n for n in ast.walk(func) if isinstance(n, ast.While)
@@ -40,7 +43,7 @@ def test_log_drain_has_outer_loop_try_except() -> None:
 
 def test_log_drain_except_handler_does_not_swallow() -> None:
     """Outer except handler body MUST NOT be just `pass` — must emit observability signal."""
-    source = PIPELINE_PATH.read_text(encoding="utf-8")
+    source = LOG_CAPTURE_PATH.read_text(encoding="utf-8")
     func = _find_log_drain_function(source)
     while_node = next(n for n in ast.walk(func) if isinstance(n, ast.While))
     outer_try = while_node.body[0]
@@ -53,7 +56,7 @@ def test_log_drain_except_handler_does_not_swallow() -> None:
 
 def test_log_drain_except_handler_emits_to_stderr() -> None:
     """Outer except handler MUST contain _sys.__stderr__ substring (stderr bypass)."""
-    source = PIPELINE_PATH.read_text(encoding="utf-8")
+    source = LOG_CAPTURE_PATH.read_text(encoding="utf-8")
     func = _find_log_drain_function(source)
     while_node = next(n for n in ast.walk(func) if isinstance(n, ast.While))
     outer_try = while_node.body[0]

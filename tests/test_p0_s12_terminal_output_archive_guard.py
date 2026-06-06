@@ -1,27 +1,24 @@
 """P0.S12 — terminal_output.md PermissionError on multiprocessing.spawn re-import.
 
-6 anchors per Plan v1 §3 LOCK at exact mid 6 (inclusive ±15% band [5.1, 6.9]):
+P1.A1 SP-4.1 REPOINT: the log harness moved pipeline.py -> runtime/log_capture.py.
+The __main__ boot guard stays in pipeline.py but now ATTRIBUTE-REBINDS log_capture's
+rebound globals (log_capture._LOG_FILE = ..., etc.) — the only correct shape, since
+_log_drain + _check (running in log_capture's namespace) and core.health (reading the
+drain counters) all resolve them there. A from-import + bare assignment would snapshot
+a pipeline-local and leave _log_drain staring at None.
 
-  A1 — D1 source-inspection: `if __name__ == "__main__":` block exists in pipeline.py
-       AND contains all 5 Tier 1 site signatures (archive call, _LOG_FILE open,
-       daemon thread start, _Tee install, success print).
-  A2 — D2 source-inspection: module-level `_LOG_FILE = None` placeholder exists
-       BEFORE the __main__ guard.
-  A3 — D3 source-inspection: inline doc block at the guard mentions all anchors
-       (P0.S12, Windows-spawn-mode, terminal_output_2026-05-27, 5-bullet Tier 1).
-  A4 — BEHAVIORAL subprocess spawn re-import: `multiprocessing.get_context("spawn")`
-       runs `_subprocess_import_target`; subprocess imports pipeline + asserts
-       _LOG_FILE is None + _archived_log is None + exits 0; parent terminal_output.md
-       handle stays valid.
-  A5 — BEHAVIORAL _log_drain function still importable in subprocess context.
-       NameError on _LOG_FILE fires only when CALLED, not at import — daemon thread
-       only started in main.
-  A6 — AST forward-property tripwire: walk pipeline.py AST; assert all 5 Tier 1
-       statements (Call of _archive_terminal_output, Assign of _LOG_FILE = open(...),
-       Call of _log_drain_thread.start, Assign of sys.stdout = _Tee(...), conditional
-       print) live as descendants of the `if __name__ == "__main__":` If node — NOT
-       at module top level. Catches future refactors that accidentally move a Tier 1
-       site back outside the guard.
+  A1 — guard contains all 5 Tier-1 log_capture.X signatures (archive, _LOG_FILE open,
+       thread start, Tee install, success print), byte-for-byte ORDERING preserved.
+  A2 — _LOG_FILE / _archived_log None placeholders live in runtime/log_capture.py now.
+  A3 — inline doc block at the guard mentions all anchors (P0.S12, Windows-spawn-mode,
+       canary log, 5-bullet, DO-NOT-MOVE, the SP-4.1 attribute-rebind rationale).
+  A4 — BEHAVIORAL spawn re-import: subprocess imports pipeline + asserts
+       log_capture._LOG_FILE / _archived_log are None (guard did NOT run on import).
+  A5 — BEHAVIORAL _log_drain still importable via `from pipeline import _log_drain`
+       (re-export survives the move).
+  A6 — AST forward-property tripwire (FORALL): EVERY Tier-1 statement (log_capture.X
+       attribute shape) lives as a descendant of the `if __name__ == "__main__":` If
+       node. Injecting a Tier-1 site OUTSIDE the guard fires this.
 
 Spec: tests/p0_s12_terminal_output_archive_guard_plan_v1.md
 """
@@ -40,10 +37,11 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PIPELINE_PATH = _REPO_ROOT / "pipeline.py"
+_LOG_CAPTURE_PATH = _REPO_ROOT / "runtime" / "log_capture.py"
 
 
 # ───────────────────────────────────────────────────────────────────────
-# Shared helpers — locate the __main__ guard If node + Tier 1 sites
+# Shared helpers
 # ───────────────────────────────────────────────────────────────────────
 
 
@@ -52,7 +50,8 @@ def _load_pipeline_ast() -> ast.Module:
 
 
 def _find_main_guard_if_node(tree: ast.Module) -> ast.If | None:
-    """Return the `if __name__ == "__main__":` If node at module top level."""
+    """Return the FIRST module-top-level `if __name__ == "__main__":` If node
+    (the P0.S12 boot guard — NOT the entry-point block at file end)."""
     for node in tree.body:
         if not isinstance(node, ast.If):
             continue
@@ -70,80 +69,79 @@ def _find_main_guard_if_node(tree: ast.Module) -> ast.If | None:
     return None
 
 
+def _dotted(node: ast.AST) -> str | None:
+    """Return the dotted-attribute string for a Name/Attribute chain, else None.
+    e.g. `log_capture._LOG_FILE` -> 'log_capture._LOG_FILE'."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _dotted(node.value)
+        return f"{base}.{node.attr}" if base is not None else None
+    return None
+
+
 # ───────────────────────────────────────────────────────────────────────
-# A1 — D1 source-inspection
+# A1 — D1 source-inspection (log_capture.X guard signatures)
 # ───────────────────────────────────────────────────────────────────────
 
 
 def test_a1_main_guard_contains_all_five_tier1_signatures():
-    """D1 — `if __name__ == "__main__":` block must exist in pipeline.py AND
-    contain all 5 Tier 1 site signatures.
+    """D1 — the __main__ guard contains all 5 Tier-1 log_capture.X signatures.
 
-    A1 STRENGTHENED at Phase 5 regression (a) — substring `_archive_terminal_output()`
-    matched against the D3 doc block's enumeration bullet even when the
-    real Call site was removed. Tightened to slice the guard body via AST
-    `ast.unparse` so substrings are checked in production code, NOT comment
-    text. Same family-shape as P0.R8 A2 + P0.R10 A6 + P0.R12-R15 A3 + P0.S11 A5
-    strengthenings under `### Induction-surfaces-invariant-gaps` operational rule 3.
-    """
+    AST-precise: locate the guard If node, unparse its body, verify signatures
+    in production code (NOT comment text)."""
     src = _PIPELINE_PATH.read_text(encoding="utf-8")
     assert 'if __name__ == "__main__":' in src, (
         "pipeline.py must contain `if __name__ == \"__main__\":` guard"
     )
-
-    # AST-precise: locate the P0.S12 D1 guard If node, unparse its body,
-    # then verify Tier 1 signatures exist in the production code (NOT comment text).
     tree = _load_pipeline_ast()
     guard = _find_main_guard_if_node(tree)
     assert guard is not None, "module-level `if __name__ == \"__main__\":` guard not found"
     body_src = "\n".join(ast.unparse(node) for node in guard.body)
 
-    # 5 Tier 1 signatures — all must appear in the guard's UNPARSED body
-    assert "_archive_terminal_output()" in body_src, (
-        "Tier 1.1: _archive_terminal_output() call missing from guard body"
+    assert "log_capture._archive_terminal_output()" in body_src, (
+        "Tier 1.1: log_capture._archive_terminal_output() call missing from guard body"
     )
-    assert "_LOG_FILE = open(" in body_src, (
-        "Tier 1.2: _LOG_FILE = open(...) assignment missing from guard body"
+    assert "log_capture._LOG_FILE = open(" in body_src, (
+        "Tier 1.2: log_capture._LOG_FILE = open(...) missing from guard body"
     )
-    assert "_log_drain_thread.start()" in body_src, (
-        "Tier 1.3: _log_drain_thread.start() missing from guard body"
+    assert "log_capture._log_drain_thread.start()" in body_src, (
+        "Tier 1.3: log_capture._log_drain_thread.start() missing from guard body"
     )
-    assert "sys.stdout = _Tee(" in body_src, (
-        "Tier 1.4: sys.stdout = _Tee(...) missing from guard body"
+    assert "sys.stdout = log_capture._Tee(" in body_src, (
+        "Tier 1.4: sys.stdout = log_capture._Tee(...) missing from guard body"
     )
     assert "Prior session log archived" in body_src, (
         "Tier 1.5: success print missing from guard body"
     )
+    # Tier-1 ORDERING (byte-for-byte P0.S12 non-negotiable): _LOG_FILE opened BEFORE the
+    # drain thread starts AND before the Tee is installed (both read log_capture._LOG_FILE
+    # at runtime). Folded into A1 (not a separate test) to honor the SP-4.1 conservation gate.
+    i_open = body_src.index("log_capture._LOG_FILE = open(")
+    i_thread = body_src.index("log_capture._log_drain_thread.start()")
+    i_tee = body_src.index("sys.stdout = log_capture._Tee(")
+    assert i_open < i_thread, "_LOG_FILE must be opened BEFORE the drain thread starts"
+    assert i_open < i_tee, "_LOG_FILE must be opened BEFORE the Tee is installed"
 
 
 # ───────────────────────────────────────────────────────────────────────
-# A2 — D2 source-inspection (placeholders BEFORE guard)
+# A2 — D2 placeholders now live in runtime/log_capture.py
 # ───────────────────────────────────────────────────────────────────────
 
 
 def test_a2_d2_placeholders_exist_before_main_guard():
-    """D2 — Module-level `_LOG_FILE = None` and `_archived_log = None`
-    placeholders MUST exist BEFORE the __main__ guard so subprocess
-    re-imports get None-valued names rather than NameError.
-    """
-    src = _PIPELINE_PATH.read_text(encoding="utf-8")
-    # rindex (not index) because the literal `if __name__ == "__main__":`
-    # appears earlier in the D2 comment text ("Real values assigned in the
-    # `if __name__ == "__main__":` guard below."). rindex finds the ACTUAL
-    # guard line, not the comment occurrence.
-    guard_idx = src.rindex('if __name__ == "__main__":')
-    before_guard = src[:guard_idx]
+    """D2 — `_LOG_FILE = None` + `_archived_log = None` placeholders.
 
-    # Both D2 placeholder assignments present BEFORE the guard
-    assert "_LOG_FILE: \"Any\" = None" in before_guard or \
-           '_LOG_FILE: "Any" = None' in before_guard, (
-        "D2: _LOG_FILE: \"Any\" = None placeholder missing BEFORE guard"
+    SP-4.1: these moved pipeline.py -> runtime/log_capture.py (the harness's new home);
+    the test now reads log_capture.py. Same D2 purpose — subprocess re-imports get
+    None-valued names rather than NameError on attribute access. (Name kept ID-stable.)"""
+    src = _LOG_CAPTURE_PATH.read_text(encoding="utf-8")
+    assert '_LOG_FILE: "Any" = None' in src, (
+        "D2: _LOG_FILE: \"Any\" = None placeholder missing from runtime/log_capture.py"
     )
-    assert '_archived_log: "_pathlib.Path | None" = None' in before_guard, (
-        "D2: _archived_log placeholder missing BEFORE guard"
+    assert '_archived_log: "_pathlib.Path | None" = None' in src, (
+        "D2: _archived_log placeholder missing from runtime/log_capture.py"
     )
-    # Spec-anchor comment present
-    assert "P0.S12 D2" in before_guard, "D2 comment must reference spec anchor"
 
 
 # ───────────────────────────────────────────────────────────────────────
@@ -152,42 +150,29 @@ def test_a2_d2_placeholders_exist_before_main_guard():
 
 
 def test_a3_d3_doc_block_at_main_guard():
-    """D3 — Inline doc block at the __main__ guard MUST mention all anchors:
-    P0.S12, Windows-spawn-mode, terminal_output_2026-05-27, 5-bullet Tier 1
-    enumeration, and DO-NOT-MOVE rules for Tier 2/3 isolation.
-
-    Locate the P0.S12 D1 guard by anchoring on the doc-block header line
-    (NOT by rindex on the guard literal — pipeline.py has TWO real
-    `if __name__ == "__main__":` blocks: the P0.S12 D1 guard around Tier 1
-    sites + the entry-point block at file end that runs asyncio.run(run())).
-    """
+    """D3 — inline doc block at the guard mentions all anchors + the SP-4.1 rationale."""
     src = _PIPELINE_PATH.read_text(encoding="utf-8")
-    # The D3 doc block opens with a distinctive header line; find it directly.
-    doc_header = "# P0.S12 — Module-level side-effect guard (Windows-spawn-mode safe boot block)"
+    doc_header = "P0.S12 — Module-level side-effect guard (Windows-spawn-mode safe boot block)"
     assert doc_header in src, "D3 doc block header missing from pipeline.py"
     doc_start = src.index(doc_header)
-    # The guard line that this doc precedes is the FIRST `if __name__ == "__main__":`
-    # after the doc header.
     guard_idx = src.index('if __name__ == "__main__":', doc_start)
     doc_window = src[doc_start:guard_idx]
 
     assert "P0.S12" in doc_window, "D3 doc must reference P0.S12 spec anchor"
-    assert "Windows-spawn-mode" in doc_window, (
-        "D3 doc must explain Windows-spawn-mode root cause"
-    )
-    assert "terminal_output_2026-05-27" in doc_window, (
-        "D3 doc must name the canary source-of-truth log file"
-    )
-    # 5-bullet Tier 1 enumeration — all 5 names must appear
-    assert "_archive_terminal_output()" in doc_window, "5-bullet: archive call"
-    assert "_LOG_FILE = open" in doc_window, "5-bullet: log file open"
-    assert "_log_drain_thread.start()" in doc_window, "5-bullet: daemon start"
-    assert "_Tee" in doc_window, "5-bullet: Tee install"
+    assert "Windows-spawn-mode" in doc_window, "D3 doc must explain Windows-spawn-mode root cause"
+    assert "terminal_output_2026-05-27" in doc_window, "D3 doc must name the canary source log"
+    # 5-bullet Tier-1 enumeration (log_capture.X forms)
+    assert "log_capture._archive_terminal_output()" in doc_window, "5-bullet: archive call"
+    assert "log_capture._LOG_FILE = open" in doc_window, "5-bullet: log file open"
+    assert "log_capture._log_drain_thread.start()" in doc_window, "5-bullet: daemon start"
+    assert "log_capture._Tee" in doc_window, "5-bullet: Tee install"
     assert "Prior session log archived" in doc_window, "5-bullet: success print"
-    # DO-NOT-MOVE rules
-    assert "DO NOT move" in doc_window, (
-        "D3 doc must include DO-NOT-MOVE Tier 1/2/3 rules"
+    assert "DO NOT move" in doc_window, "D3 doc must include DO-NOT-MOVE rules"
+    # SP-4.1 attribute-rebind rationale + canary-gated note
+    assert "attribute-set" in doc_window or "attribute-rebind" in doc_window, (
+        "D3 doc must explain the rebound-globals attribute-set rationale"
     )
+    assert "canary-gated" in doc_window, "D3 doc must state the boot-rebind is canary-gated"
 
 
 # ───────────────────────────────────────────────────────────────────────
@@ -196,12 +181,7 @@ def test_a3_d3_doc_block_at_main_guard():
 
 
 def _stub_sounddevice_in_subprocess() -> None:
-    """Stub sounddevice in subprocess sys.modules BEFORE importing pipeline.
-
-    sounddevice is not installable on Windows dev (driver dependency); pipeline
-    imports core.audio which imports sounddevice. Stubbing lets the subprocess
-    test exercise the spawn-mode D1 guard without infra dependency.
-    """
+    """Stub sounddevice in subprocess sys.modules BEFORE importing pipeline."""
     import sys as _sys
     import types as _types
     from unittest.mock import MagicMock as _MagicMock
@@ -218,218 +198,136 @@ def _stub_sounddevice_in_subprocess() -> None:
 
 
 def _subprocess_import_target() -> int:
-    """Spawn subprocess target: import pipeline + assert D2 placeholders are None.
-
-    Must be at module level (not nested) so multiprocessing.spawn can pickle it
-    by name. Returns 0 on clean assertion pass; raises AssertionError otherwise
-    (subprocess exits with non-zero code via the multiprocessing.Process
-    exception-propagation mechanism).
-    """
+    """Spawn subprocess target: import pipeline (guard must NOT run on import) +
+    assert log_capture's rebound placeholders are still None."""
     import sys as _sys
     _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     _stub_sounddevice_in_subprocess()
-    import pipeline as _pl
-    assert _pl._LOG_FILE is None, (
-        f"_LOG_FILE should be None in subprocess but got {_pl._LOG_FILE!r}"
+    import pipeline  # noqa: F401 — triggers the re-export + log_capture import; guard gated
+    import runtime.log_capture as _lc
+    assert _lc._LOG_FILE is None, (
+        f"log_capture._LOG_FILE should be None on subprocess import but got {_lc._LOG_FILE!r}"
     )
-    assert _pl._archived_log is None, (
-        f"_archived_log should be None in subprocess but got {_pl._archived_log!r}"
+    assert _lc._archived_log is None, (
+        f"log_capture._archived_log should be None on subprocess import but got {_lc._archived_log!r}"
     )
     return 0
 
 
 @pytest.mark.slow
 def test_a4_spawn_subprocess_imports_pipeline_without_side_effects():
-    """D1 behavioral — subprocess spawn re-import of pipeline.py does NOT
-    fire Tier 1 sites (archive call, _LOG_FILE open, daemon thread start,
-    Tee install, success print). Parent's terminal_output.md handle stays
-    valid (size unchanged across the subprocess spawn).
-    """
+    """D1 behavioral — subprocess spawn re-import of pipeline.py does NOT fire the
+    Tier-1 sites; log_capture's _LOG_FILE / _archived_log placeholders stay None."""
     ctx = multiprocessing.get_context("spawn")
     proc = ctx.Process(target=_subprocess_import_target)
     proc.start()
     proc.join(timeout=30)
     assert proc.exitcode == 0, (
         f"subprocess exited with code {proc.exitcode}; expected 0 "
-        "(D2 placeholders should hold; Tier 1 sites should NOT fire)"
+        "(placeholders should hold None; Tier-1 sites should NOT fire on import)"
     )
 
 
 # ───────────────────────────────────────────────────────────────────────
-# A5 — BEHAVIORAL _log_drain importable in subprocess
+# A5 — BEHAVIORAL _log_drain importable (re-export survives the move)
 # ───────────────────────────────────────────────────────────────────────
 
 
 def _subprocess_log_drain_importable_target() -> int:
-    """Spawn subprocess target: verify _log_drain is importable post-D1.
-
-    The function lives at module level (not inside the __main__ guard) so it
-    must be importable in subprocess context. NameError on _LOG_FILE only
-    fires if _log_drain is actually CALLED — which subprocess never does
-    because _log_drain_thread.start() is gated.
-    """
     import sys as _sys
     _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     _stub_sounddevice_in_subprocess()
-    from pipeline import _log_drain
-    assert callable(_log_drain), "_log_drain must be importable + callable"
+    from pipeline import _log_drain  # re-exported from runtime.log_capture
+    assert callable(_log_drain), "_log_drain must be importable + callable via pipeline re-export"
     return 0
 
 
 @pytest.mark.slow
 def test_a5_log_drain_importable_in_subprocess_context():
-    """D1 behavioral — _log_drain function definition stays at module level
-    (NOT inside __main__ guard), so subprocess can import it. The function
-    references _LOG_FILE at CALL time, not def time, so import succeeds even
-    when _LOG_FILE is None.
-    """
+    """D1 behavioral — `from pipeline import _log_drain` still works (SP-4.1 re-export)."""
     ctx = multiprocessing.get_context("spawn")
     proc = ctx.Process(target=_subprocess_log_drain_importable_target)
     proc.start()
     proc.join(timeout=30)
     assert proc.exitcode == 0, (
-        f"subprocess could not import _log_drain (exit {proc.exitcode}); "
-        "D1 must keep _log_drain def at module level"
+        f"subprocess could not import _log_drain via pipeline re-export (exit {proc.exitcode})"
     )
 
 
 # ───────────────────────────────────────────────────────────────────────
-# A6 — AST forward-property tripwire
+# A6 — AST forward-property tripwire (FORALL — every Tier-1 site inside the guard)
 # ───────────────────────────────────────────────────────────────────────
+
+
+def _ids_inside(node: ast.AST) -> set[int]:
+    return {id(n) for n in ast.walk(node)}
 
 
 def test_a6_all_tier1_statements_live_inside_main_guard():
-    """D1 forward-property — walk pipeline.py AST; verify all 5 Tier 1
-    statements live as DESCENDANTS of the `if __name__ == "__main__":` If
-    node (NOT at module top level). Catches future refactors that
-    accidentally move a Tier 1 site back outside the guard.
-    """
+    """D1 forward-property (FORALL) — EVERY Tier-1 statement (log_capture.X attribute
+    shape) lives as a descendant of the `if __name__ == "__main__":` guard. Injecting
+    a Tier-1 site OUTSIDE the guard (or in the wrong namespace) fires this."""
     tree = _load_pipeline_ast()
     guard = _find_main_guard_if_node(tree)
     assert guard is not None, "module-level `if __name__ == \"__main__\":` guard not found"
+    inside = _ids_inside(guard)
 
-    # Collect all statements inside the guard body (recursive walk)
-    inside_guard: set[int] = set()
-    for node in ast.walk(guard):
-        inside_guard.add(id(node))
-
-    def _is_inside_guard(node: ast.AST) -> bool:
-        return id(node) in inside_guard
-
-    # Tier 1.1 — _archive_terminal_output() call assigned to _archived_log
-    # (search for an Assign whose target is Name("_archived_log") AND value is
-    # a Call of _archive_terminal_output — the actual deferred-effect site;
-    # NOT the D2 None placeholder which is also an Assign to _archived_log).
-    found_archive_call = False
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
-            continue
-        if not (len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
-                and node.targets[0].id == "_archived_log"):
-            continue
-        if not isinstance(node.value, ast.Call):
-            continue
-        func = node.value.func
-        if isinstance(func, ast.Name) and func.id == "_archive_terminal_output":
-            assert _is_inside_guard(node), (
-                "Tier 1.1: _archived_log = _archive_terminal_output() must "
-                "live INSIDE __main__ guard (D1 invariant)"
+    def _assert_forall(matches: list[ast.AST], label: str) -> None:
+        assert matches, f"{label}: no matching Tier-1 site found anywhere in pipeline.py"
+        for node in matches:
+            assert id(node) in inside, (
+                f"{label}: a matching Tier-1 site lives OUTSIDE the __main__ guard "
+                "(D1 invariant — every Tier-1 side-effect must be guarded)"
             )
-            found_archive_call = True
-            break
-    assert found_archive_call, (
-        "Tier 1.1: did not find _archived_log = _archive_terminal_output() assignment"
-    )
 
-    # Tier 1.2 — _LOG_FILE = open(...) (the real assignment with a Call value,
-    # NOT the D2 None placeholder).
-    found_log_file_open = False
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
-            continue
-        if not (len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
-                and node.targets[0].id == "_LOG_FILE"):
-            continue
-        if not isinstance(node.value, ast.Call):
-            continue
-        func = node.value.func
-        if isinstance(func, ast.Name) and func.id == "open":
-            # Only the top-level _LOG_FILE = open(_LOG_PATH, "w", ...) at the
-            # boot block counts; the rotation helper's _LOG_FILE = open(log_path,...)
-            # inside _check_terminal_output_size_cap is a separate site.
-            # Distinguish by checking whether the assignment is at module-level
-            # OR inside the __main__ guard.
-            if _is_inside_guard(node):
-                found_log_file_open = True
-                break
-    assert found_log_file_open, (
-        "Tier 1.2: _LOG_FILE = open(...) must live INSIDE __main__ guard "
-        "(at least one matching assignment); not found"
-    )
+    # Tier 1.1 — log_capture._archived_log = log_capture._archive_terminal_output()
+    t11 = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Assign) and len(n.targets) == 1
+        and _dotted(n.targets[0]) == "log_capture._archived_log"
+        and isinstance(n.value, ast.Call)
+        and _dotted(n.value.func) == "log_capture._archive_terminal_output"
+    ]
+    _assert_forall(t11, "Tier 1.1 archive call")
 
-    # Tier 1.3 — _log_drain_thread.start() method call
-    found_thread_start = False
-    for node in ast.walk(guard):
-        if not isinstance(node, ast.Call):
-            continue
-        if not isinstance(node.func, ast.Attribute):
-            continue
-        if node.func.attr != "start":
-            continue
-        if not isinstance(node.func.value, ast.Name):
-            continue
-        if node.func.value.id == "_log_drain_thread":
-            found_thread_start = True
-            break
-    assert found_thread_start, (
-        "Tier 1.3: _log_drain_thread.start() must live INSIDE __main__ guard"
-    )
+    # Tier 1.2 — log_capture._LOG_FILE = open(...)
+    t12 = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Assign) and len(n.targets) == 1
+        and _dotted(n.targets[0]) == "log_capture._LOG_FILE"
+        and isinstance(n.value, ast.Call) and _dotted(n.value.func) == "open"
+    ]
+    _assert_forall(t12, "Tier 1.2 _LOG_FILE open")
 
-    # Tier 1.4 — sys.stdout = _Tee(sys.stdout) assignment (search inside guard)
-    found_tee_install = False
-    for node in ast.walk(guard):
-        if not isinstance(node, ast.Assign):
-            continue
-        if not (len(node.targets) == 1 and isinstance(node.targets[0], ast.Attribute)):
-            continue
-        target = node.targets[0]
-        if not (isinstance(target.value, ast.Name) and target.value.id == "sys"):
-            continue
-        if target.attr not in ("stdout", "stderr"):
-            continue
-        # Value is a Call of _Tee
-        if not isinstance(node.value, ast.Call):
-            continue
-        func = node.value.func
-        if isinstance(func, ast.Name) and func.id == "_Tee":
-            found_tee_install = True
-            break
-    assert found_tee_install, (
-        "Tier 1.4: sys.stdout/stderr = _Tee(...) must live INSIDE __main__ guard"
-    )
+    # Tier 1.3 — log_capture._log_drain_thread.start()
+    t13 = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and _dotted(n.func) == "log_capture._log_drain_thread.start"
+    ]
+    _assert_forall(t13, "Tier 1.3 thread start")
 
-    # Tier 1.5 — success print() of "[Pipeline] Prior session log archived"
-    found_success_print = False
-    for node in ast.walk(guard):
-        if not isinstance(node, ast.Call):
-            continue
-        if not (isinstance(node.func, ast.Name) and node.func.id == "print"):
-            continue
-        # Inspect args for the success substring
+    # Tier 1.4 — sys.stdout/stderr = log_capture._Tee(...)
+    t14 = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Assign) and len(n.targets) == 1
+        and _dotted(n.targets[0]) in ("sys.stdout", "sys.stderr")
+        and isinstance(n.value, ast.Call) and _dotted(n.value.func) == "log_capture._Tee"
+    ]
+    _assert_forall(t14, "Tier 1.4 Tee install")
+
+    # Tier 1.5 — print("[Pipeline] ... Prior session log archived ...")
+    def _print_has_archived(node: ast.AST) -> bool:
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "print"):
+            return False
         for arg in node.args:
             if isinstance(arg, ast.JoinedStr):
-                for value in arg.values:
-                    if isinstance(value, ast.Constant) and isinstance(value.value, str):
-                        if "Prior session log archived" in value.value:
-                            found_success_print = True
-                            break
-            elif isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                if "Prior session log archived" in arg.value:
-                    found_success_print = True
-                    break
-        if found_success_print:
-            break
-    assert found_success_print, (
-        "Tier 1.5: success print of 'Prior session log archived' must live "
-        "INSIDE __main__ guard"
-    )
+                for v in arg.values:
+                    if isinstance(v, ast.Constant) and isinstance(v.value, str) and "Prior session log archived" in v.value:
+                        return True
+            elif isinstance(arg, ast.Constant) and isinstance(arg.value, str) and "Prior session log archived" in arg.value:
+                return True
+        return False
+
+    t15 = [n for n in ast.walk(tree) if _print_has_archived(n)]
+    _assert_forall(t15, "Tier 1.5 success print")

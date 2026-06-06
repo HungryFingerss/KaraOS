@@ -230,7 +230,7 @@ def test_p0_r12_d1_dream_loop_calls_prune():
 # A4: D2 size cap + archive prune helpers exist (source)
 # ─────────────────────────────────────────────────────────────────────────────
 def test_p0_r13_d2_size_cap_rotation_helper_exists():
-    src = (REPO_ROOT / "pipeline.py").read_text(encoding="utf-8")
+    src = (REPO_ROOT / "runtime" / "log_capture.py").read_text(encoding="utf-8")  # P1.A1 SP-4.1
     assert "def _check_terminal_output_size_cap(" in src
     assert "def _prune_old_terminal_archives(" in src
 
@@ -258,14 +258,17 @@ def test_p0_r13_d2_size_cap_triggers_rotation_at_threshold(monkeypatch, tmp_path
     fake_log = tmp_path / "terminal_output.md"
     fake_log.write_text("dummy content", encoding="utf-8")
 
-    # Monkeypatch the global _LOG_FILE so close() doesn't break the real one
-    import pipeline as pipeline_mod
-    real_log_file = pipeline_mod._LOG_FILE
+    # Monkeypatch the global _LOG_FILE so close() doesn't break the real one.
+    # P1.A1 SP-4.1: the helper + _LOG_FILE live in runtime/log_capture.py now; the helper
+    # rebinds _LOG_FILE via `global` in log_capture's namespace, so patch it THERE — patching
+    # pipeline would miss it (the monkeypatch-namespace-shift).
+    import runtime.log_capture as log_capture_mod
+    real_log_file = log_capture_mod._LOG_FILE
     # Create a no-op stand-in
     class _FakeFile:
         def flush(self): pass
         def close(self): pass
-    monkeypatch.setattr(pipeline_mod, "_LOG_FILE", _FakeFile())
+    monkeypatch.setattr(log_capture_mod, "_LOG_FILE", _FakeFile())
 
     # Monkeypatch stat() on the path to return over-cap size
     from core.config import TERMINAL_OUTPUT_SIZE_CAP_MB
@@ -281,7 +284,7 @@ def test_p0_r13_d2_size_cap_triggers_rotation_at_threshold(monkeypatch, tmp_path
     monkeypatch.setattr(pathlib.Path, "stat", _fake_stat)
 
     # Call the helper — should rotate
-    result = pipeline_mod._check_terminal_output_size_cap(fake_log)
+    result = log_capture_mod._check_terminal_output_size_cap(fake_log)
     assert result is True, "Expected rotation True at over-cap size"
     # Verify the original file was renamed (no longer at fake_log) AND a fresh one created
     # _archive_terminal_output renames the file then helper opens a fresh one
@@ -296,11 +299,11 @@ def test_p0_r13_d2_size_cap_triggers_rotation_at_threshold(monkeypatch, tmp_path
             return _Stat()
         return real_stat(self, *args, **kwargs)
     monkeypatch.setattr(pathlib.Path, "stat", _fake_stat_under)
-    result2 = pipeline_mod._check_terminal_output_size_cap(fake_log)
+    result2 = log_capture_mod._check_terminal_output_size_cap(fake_log)
     assert result2 is False, "Expected no rotation under cap"
 
-    # Restore real _LOG_FILE
-    pipeline_mod._LOG_FILE = real_log_file
+    # Restore real _LOG_FILE (monkeypatch also restores; explicit for clarity)
+    log_capture_mod._LOG_FILE = real_log_file
 
 
 # ─────────────────────────────────────────────────────────────────────────────

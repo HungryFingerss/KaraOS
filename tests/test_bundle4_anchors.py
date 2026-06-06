@@ -31,9 +31,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 def test_a1_log_drain_function_has_outer_loop_try_wrap() -> None:
     """A1 — `_log_drain` function body has outer-loop try/except wrapping while True."""
-    text = (REPO_ROOT / "pipeline.py").read_text(encoding="utf-8")
+    text = (REPO_ROOT / "runtime" / "log_capture.py").read_text(encoding="utf-8")  # P1.A1 SP-4.1
     idx = text.find("def _log_drain")
-    assert idx >= 0, "_log_drain not found in pipeline.py"
+    assert idx >= 0, "_log_drain not found in runtime/log_capture.py"
     body = text[idx:idx + 2500]
     assert "P0.B4 D1" in body, "_log_drain missing P0.B4 D1 annotation"
     assert "while True:" in body, "_log_drain missing while True loop"
@@ -46,8 +46,8 @@ def test_a1_log_drain_function_has_outer_loop_try_wrap() -> None:
 
 
 def test_a1_three_observability_module_level_vars_landed() -> None:
-    """A1 — 3 module-level observability vars present in pipeline.py."""
-    text = (REPO_ROOT / "pipeline.py").read_text(encoding="utf-8")
+    """A1 — 3 module-level observability vars present in runtime/log_capture.py (P1.A1 SP-4.1)."""
+    text = (REPO_ROOT / "runtime" / "log_capture.py").read_text(encoding="utf-8")
     assert "_log_drain_count: int = 0" in text, "missing _log_drain_count: int = 0"
     assert "_log_drain_last_at: float = 0.0" in text, "missing _log_drain_last_at: float = 0.0"
     assert "_log_drain_error_count: int = 0" in text, "missing _log_drain_error_count: int = 0"
@@ -76,12 +76,12 @@ def test_a2_health_snapshot_log_drain_fields_landed() -> None:
 
 
 def test_a2_gather_health_snapshot_populates_log_drain_fields() -> None:
-    """A2 — gather_health_snapshot populates log_drain_alive via late `import pipeline`."""
+    """A2 — gather_health_snapshot populates log_drain_alive via late `import runtime.log_capture` (P1.A1 SP-4.1)."""
     text = (REPO_ROOT / "core" / "health.py").read_text(encoding="utf-8")
     idx = text.find("def gather_health_snapshot")
     assert idx >= 0
     body = text[idx:]
-    assert "import pipeline" in body, "gather_health_snapshot must late-import pipeline"
+    assert "import runtime.log_capture" in body, "gather_health_snapshot must late-import runtime.log_capture"
     assert "_log_drain_last_at" in body, "gather_health_snapshot must read _log_drain_last_at"
     assert "_log_drain_count" in body, "gather_health_snapshot must read _log_drain_count"
     assert "_log_drain_error_count" in body, (
