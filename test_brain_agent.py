@@ -49,6 +49,7 @@ from core.brain_agent import (
     _parse_json,
 )
 from core.config import PREF_AUTO_CONFIRM_THRESHOLD
+import runtime.wiring as _wiring
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────
@@ -6630,7 +6631,7 @@ class TestMemorySearchDisputeSkip:
         pipeline._active_sessions = {
             "p1": {"person_type": "known"},
         }
-        pipeline._brain_orchestrator = None   # force an empty-knowledge path
+        _wiring._brain_orchestrator = None   # force an empty-knowledge path
         try:
             fn = pipeline._make_memory_search_fn("p1", db=None)
             result = await fn("Alice", "any query")

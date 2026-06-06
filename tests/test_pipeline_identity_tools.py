@@ -19,6 +19,7 @@ import pytest
 import numpy as np
 import time as _time_mod
 import numpy as _np
+import runtime.wiring as _wiring
 
 
 async def test_update_system_name_rejected_when_user_did_not_assign():
@@ -424,7 +425,7 @@ async def test_promotion_clears_waiting_for_name():
 
     mock_db = MagicMock()
     mock_brain = MagicMock()
-    pipeline._brain_orchestrator = mock_brain
+    _wiring._brain_orchestrator = mock_brain
 
     await _execute_tool(
         "update_person_name", {"name": "Ajay"},
@@ -441,7 +442,7 @@ async def test_promotion_clears_waiting_for_name():
     # and db.update_person_type; verify the DB write happened.
     mock_db.update_person_type.assert_called_once_with("stranger_003", "known")
 
-    pipeline._brain_orchestrator = None
+    _wiring._brain_orchestrator = None
 
 
 async def test_auto_confirm_promotion_runs_full_chain():
@@ -472,7 +473,7 @@ async def test_auto_confirm_promotion_runs_full_chain():
     }
     mock_brain.on_identity_confirmed = MagicMock()
     mock_brain.notify                = MagicMock()
-    pipeline._brain_orchestrator = mock_brain
+    _wiring._brain_orchestrator = mock_brain
 
     mock_db = MagicMock()
     mock_db.log_turn = MagicMock()
@@ -523,7 +524,7 @@ async def test_auto_confirm_promotion_runs_full_chain():
     finally:
         # ── Restore globals ───────────────────────────────────────────────────
         await pipeline._pipeline_state_store.set_cloud_state(orig_cloud_state)
-        pipeline._brain_orchestrator    = orig_brain_orch
+        _wiring._brain_orchestrator    = orig_brain_orch
         await pipeline._pipeline_state_store.set_detected_lang(orig_detected_lang)
         await pipeline._pipeline_state_store.set_active_system_name(orig_system_name)
 
@@ -552,7 +553,7 @@ async def test_history_override_update_system_name():
          patch("pipeline.speak",        new=AsyncMock()), \
          patch("pipeline._set_state"), \
          patch("pipeline._execute_tool", new=AsyncMock(return_value="handled")), \
-         patch("pipeline._brain_orchestrator", None), \
+         patch("runtime.wiring._brain_orchestrator", None), \
          patch("pipeline.autocompact_history",
                new=AsyncMock(side_effect=lambda h, *a, **kw: h)):
         await pipeline.conversation_turn("call yourself Kara", "p1", "Jagan", db=None)
@@ -588,7 +589,7 @@ async def test_history_override_update_person_name():
          patch("pipeline.speak",        new=AsyncMock()), \
          patch("pipeline._set_state"), \
          patch("pipeline._execute_tool", new=AsyncMock(return_value="handled")), \
-         patch("pipeline._brain_orchestrator", None), \
+         patch("runtime.wiring._brain_orchestrator", None), \
          patch("pipeline.autocompact_history",
                new=AsyncMock(side_effect=lambda h, *a, **kw: h)):
         await pipeline.conversation_turn("my name is Jay", "p1", "Jay", db=None)
@@ -623,7 +624,7 @@ async def test_history_override_not_fired_for_set_language():
          patch("pipeline.speak_stream", new=fake_speak), \
          patch("pipeline._set_state"), \
          patch("pipeline._execute_tool", new=AsyncMock(return_value="handled")), \
-         patch("pipeline._brain_orchestrator", None), \
+         patch("runtime.wiring._brain_orchestrator", None), \
          patch("pipeline.autocompact_history",
                new=AsyncMock(side_effect=lambda h, *a, **kw: h)):
         await pipeline.conversation_turn(
@@ -664,7 +665,7 @@ async def test_layer4_stop_audio_called_for_action_tool():
          patch("pipeline.speak",        new=AsyncMock()), \
          patch("pipeline._set_state"), \
          patch("pipeline._execute_tool", new=AsyncMock(return_value="handled")), \
-         patch("pipeline._brain_orchestrator", None), \
+         patch("runtime.wiring._brain_orchestrator", None), \
          patch("pipeline.autocompact_history",
                new=AsyncMock(side_effect=lambda h, *a, **kw: h)), \
          patch("pipeline.stop_audio", side_effect=lambda: stop_calls.append(1)) as mock_stop:
@@ -696,7 +697,7 @@ async def test_layer4_stop_audio_not_called_for_non_action_tool():
          patch("pipeline.speak_stream", new=fake_speak), \
          patch("pipeline._set_state"), \
          patch("pipeline._execute_tool", new=AsyncMock(return_value="handled")), \
-         patch("pipeline._brain_orchestrator", None), \
+         patch("runtime.wiring._brain_orchestrator", None), \
          patch("pipeline.autocompact_history",
                new=AsyncMock(side_effect=lambda h, *a, **kw: h)), \
          patch("pipeline.stop_audio") as mock_stop:
@@ -726,7 +727,7 @@ async def test_layer4_stop_audio_not_called_when_no_tool_calls():
     with patch("pipeline.ask_stream",   new=fake_stream), \
          patch("pipeline.speak_stream", new=fake_speak), \
          patch("pipeline._set_state"), \
-         patch("pipeline._brain_orchestrator", None), \
+         patch("runtime.wiring._brain_orchestrator", None), \
          patch("pipeline.autocompact_history",
                new=AsyncMock(side_effect=lambda h, *a, **kw: h)), \
          patch("pipeline.stop_audio") as mock_stop:
@@ -764,7 +765,7 @@ async def test_auto_confirm_retroactively_fixes_history():
     }
     mock_brain.on_identity_confirmed = MagicMock()
     mock_brain.notify                = MagicMock()
-    pipeline._brain_orchestrator = mock_brain
+    _wiring._brain_orchestrator = mock_brain
 
     mock_db = MagicMock()
     mock_db.log_turn           = MagicMock()
@@ -799,7 +800,7 @@ async def test_auto_confirm_retroactively_fixes_history():
 
     finally:
         await pipeline._pipeline_state_store.set_cloud_state(orig_cloud_state)
-        pipeline._brain_orchestrator    = orig_brain_orch
+        _wiring._brain_orchestrator    = orig_brain_orch
         await pipeline._pipeline_state_store.set_detected_lang(orig_detected_lang)
         await pipeline._pipeline_state_store.set_active_system_name(orig_system_name)
 
@@ -907,7 +908,7 @@ async def test_update_person_name_on_best_friend_session_flips_to_disputed():
     # Mock the orchestrator so mark_disputed is observable
     orig_orch = pipeline._brain_orchestrator
     mock_orch = MagicMock()
-    pipeline._brain_orchestrator = mock_orch
+    _wiring._brain_orchestrator = mock_orch
     try:
         await _execute_tool(
             "update_person_name", {"name": "Benkat"},
@@ -917,7 +918,7 @@ async def test_update_person_name_on_best_friend_session_flips_to_disputed():
         # Drain the event loop so create_task(transition_to_disputed) runs.
         await asyncio.sleep(0)
     finally:
-        pipeline._brain_orchestrator = orig_orch
+        _wiring._brain_orchestrator = orig_orch
 
     # CRITICAL: best_friend's DB row must NOT be renamed.
     mock_db.update_person_name.assert_not_called()

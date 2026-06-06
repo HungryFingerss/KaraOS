@@ -19,6 +19,7 @@ import pytest
 import numpy as np
 import time as _time_mod
 import numpy as _np
+import runtime.wiring as _wiring
 
 
 def test_vision_report_none_when_no_detections():
@@ -146,7 +147,7 @@ async def test_in_session_history_trimmed_at_limit():
     await pipeline._conversation_store.set_history("p1", list(pre_history))
     await pipeline._pipeline_state_store.recover_online_no_flag()
     pipeline._per_person_agent_store.reset()
-    pipeline._brain_orchestrator    = None
+    _wiring._brain_orchestrator    = None
     await pipeline._pipeline_state_store.set_detected_lang("en")
     await pipeline._pipeline_state_store.set_active_system_name("Kara")
     pipeline._shutdown_event        = asyncio.Event()
@@ -173,7 +174,7 @@ async def test_in_session_history_trimmed_at_limit():
             f"In-session history grew to {n_turns} turns, exceeding limit of {CONVERSATION_HISTORY_LIMIT}"
     finally:
         await pipeline._pipeline_state_store.set_cloud_state(orig_cloud)
-        pipeline._brain_orchestrator    = orig_brain
+        _wiring._brain_orchestrator    = orig_brain
         await pipeline._pipeline_state_store.set_detected_lang(orig_lang)
         await pipeline._pipeline_state_store.set_active_system_name(orig_sysname)
         pipeline._shutdown_event        = orig_shutdown

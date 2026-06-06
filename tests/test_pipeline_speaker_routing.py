@@ -19,6 +19,7 @@ import pytest
 import numpy as np
 import time as _time_mod
 import numpy as _np
+import runtime.wiring as _wiring
 
 
 async def test_stranger_session_waits_for_name_by_default():
@@ -247,11 +248,11 @@ def test_primary_person_id_tie_breaks_by_pid():
     ts = 1000.0
     asyncio.run(store.open_session("alice", "Alice", "known", "face", now=ts))
     asyncio.run(store.open_session("bob", "Bob", "known", "face", now=ts))
-    pipeline._session_store = store
+    _wiring._session_store = store
     try:
         result = pipeline._primary_person_id()
     finally:
-        pipeline._session_store = orig
+        _wiring._session_store = orig
 
     assert result == "bob"   # "bob" > "alice" lexicographically
 
@@ -267,11 +268,11 @@ def test_primary_person_id_no_tie_uses_recency():
     store = SessionStore()
     asyncio.run(store.open_session("zzz", "Zzz", "known", "face", now=100.0))
     asyncio.run(store.open_session("aaa", "Aaa", "known", "face", now=200.0))
-    pipeline._session_store = store
+    _wiring._session_store = store
     try:
         result = pipeline._primary_person_id()
     finally:
-        pipeline._session_store = orig
+        _wiring._session_store = orig
 
     assert result == "aaa"   # newer timestamp wins over lexicographic order
 

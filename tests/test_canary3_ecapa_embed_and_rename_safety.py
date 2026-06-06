@@ -32,6 +32,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import runtime.wiring as _wiring
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -148,7 +149,7 @@ async def test_gt2_voice_only_claim_does_not_rename_established_best_friend():
     mock_db.voice_embedding_count.return_value = 0
 
     orig_orch = _pl._brain_orchestrator
-    _pl._brain_orchestrator = MagicMock()
+    _wiring._brain_orchestrator = MagicMock()
     try:
         await _execute_tool(
             "update_person_name", {"name": "Lexi"},
@@ -157,7 +158,7 @@ async def test_gt2_voice_only_claim_does_not_rename_established_best_friend():
         )
         await asyncio.sleep(0)  # flush transition_to_disputed create_task
     finally:
-        _pl._brain_orchestrator = orig_orch
+        _wiring._brain_orchestrator = orig_orch
 
     mock_db.update_person_name.assert_not_called()
     assert _pl._session_store.peek_snapshot(pid).person_type == "disputed", (

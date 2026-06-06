@@ -19,6 +19,7 @@ import pytest
 import numpy as np
 import time as _time_mod
 import numpy as _np
+import runtime.wiring as _wiring
 
 
 def _fake_frame():
@@ -200,7 +201,7 @@ async def test_enrollment_mishear_widened_accepts_deny_identity_intent():
 
     orig_orch = pipeline._brain_orchestrator
     mock_orch = MagicMock()
-    pipeline._brain_orchestrator = mock_orch
+    _wiring._brain_orchestrator = mock_orch
     try:
         result = await _execute_tool(
             "update_person_name", {"name": "Jagan"},
@@ -213,7 +214,7 @@ async def test_enrollment_mishear_widened_accepts_deny_identity_intent():
             },
         )
     finally:
-        pipeline._brain_orchestrator = orig_orch
+        _wiring._brain_orchestrator = orig_orch
 
     assert result == "handled"
     mock_db.update_person_name.assert_called_once_with("jawan_abc", "Jagan")
@@ -245,7 +246,7 @@ async def test_enrollment_mishear_widened_accepts_confirm_identity():
 
     orig_orch = pipeline._brain_orchestrator
     mock_orch = MagicMock()
-    pipeline._brain_orchestrator = mock_orch
+    _wiring._brain_orchestrator = mock_orch
     try:
         result = await _execute_tool(
             "update_person_name", {"name": "Jagan"},
@@ -258,7 +259,7 @@ async def test_enrollment_mishear_widened_accepts_confirm_identity():
             },
         )
     finally:
-        pipeline._brain_orchestrator = orig_orch
+        _wiring._brain_orchestrator = orig_orch
 
     assert result == "handled"
     mock_db.update_person_name.assert_called_once_with("jawan_abc", "Jagan")
@@ -279,7 +280,7 @@ async def test_enrollment_mishear_widened_rejects_ungrounded_extracted_value():
     mock_db.voice_embedding_count.return_value = 0
 
     orig_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = MagicMock()
+    _wiring._brain_orchestrator = MagicMock()
     try:
         # user_text does NOT contain "Attacker" → ungrounded
         await _execute_tool(
@@ -293,7 +294,7 @@ async def test_enrollment_mishear_widened_rejects_ungrounded_extracted_value():
             },
         )
     finally:
-        pipeline._brain_orchestrator = orig_orch
+        _wiring._brain_orchestrator = orig_orch
 
     # Widened path did NOT fire; falls through to normal gate.
     mock_db.update_person_name.assert_not_called()
@@ -321,7 +322,7 @@ async def test_enrollment_mishear_escape_hatch_renames_fresh_best_friend():
 
     orig_orch = pipeline._brain_orchestrator
     mock_orch = MagicMock()
-    pipeline._brain_orchestrator = mock_orch
+    _wiring._brain_orchestrator = mock_orch
     try:
         result = await _execute_tool(
             "update_person_name", {"name": "Jagan"},
@@ -329,7 +330,7 @@ async def test_enrollment_mishear_escape_hatch_renames_fresh_best_friend():
             user_text="No, my name is Jagan",
         )
     finally:
-        pipeline._brain_orchestrator = orig_orch
+        _wiring._brain_orchestrator = orig_orch
 
     assert result == "handled"
     # Rename fires on the real DB row.
@@ -364,7 +365,7 @@ async def test_enrollment_mishear_escape_hatch_skips_when_voice_mature():
     mock_db.voice_embedding_count.return_value = 20  # MATURE voice — not enrollment
 
     orig_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = MagicMock()
+    _wiring._brain_orchestrator = MagicMock()
     try:
         await _execute_tool(
             "update_person_name", {"name": "Attacker"},
@@ -372,7 +373,7 @@ async def test_enrollment_mishear_escape_hatch_skips_when_voice_mature():
             user_text="my name is Attacker",
         )
     finally:
-        pipeline._brain_orchestrator = orig_orch
+        _wiring._brain_orchestrator = orig_orch
 
     # Voice mature → dispute path fires, DB row untouched.
     mock_db.update_person_name.assert_not_called()
@@ -396,7 +397,7 @@ async def test_enrollment_mishear_escape_hatch_skips_when_session_stale():
     mock_db.voice_embedding_count.return_value = 0
 
     orig_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = MagicMock()
+    _wiring._brain_orchestrator = MagicMock()
     try:
         await _execute_tool(
             "update_person_name", {"name": "Attacker"},
@@ -404,7 +405,7 @@ async def test_enrollment_mishear_escape_hatch_skips_when_session_stale():
             user_text="my name is Attacker",
         )
     finally:
-        pipeline._brain_orchestrator = orig_orch
+        _wiring._brain_orchestrator = orig_orch
 
     # Stale session → dispute path, not rename.
     mock_db.update_person_name.assert_not_called()

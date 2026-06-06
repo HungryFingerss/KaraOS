@@ -42,6 +42,7 @@ if "core.audio" not in sys.modules:
     sys.modules["core.audio"] = _audio_stub
 
 import pipeline
+import runtime.wiring as _wiring
 from pipeline import _execute_tool
 
 
@@ -57,7 +58,7 @@ async def test_report_identity_mismatch_prior_type_defaults_to_stranger():
 
     mock_db = MagicMock()
     prev_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = None
+    _wiring._brain_orchestrator = None
 
     try:
         sidecar = {
@@ -79,7 +80,7 @@ async def test_report_identity_mismatch_prior_type_defaults_to_stranger():
         # set_cached_prefix) scheduled via asyncio.get_running_loop() run.
         await asyncio.sleep(0)
     finally:
-        pipeline._brain_orchestrator = prev_orch
+        _wiring._brain_orchestrator = prev_orch
 
     snap = pipeline._session_store.peek_snapshot("p1")
     captured = snap.prior_person_type if snap is not None else None
@@ -100,7 +101,7 @@ async def test_report_identity_mismatch_prior_type_preserves_existing_value():
 
     mock_db = MagicMock()
     prev_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = None
+    _wiring._brain_orchestrator = None
 
     try:
         sidecar = {
@@ -121,7 +122,7 @@ async def test_report_identity_mismatch_prior_type_preserves_existing_value():
         # Yield so create_task'd coroutines run.
         await asyncio.sleep(0)
     finally:
-        pipeline._brain_orchestrator = prev_orch
+        _wiring._brain_orchestrator = prev_orch
 
     snap = pipeline._session_store.peek_snapshot("p2")
     captured = snap.prior_person_type if snap is not None else None

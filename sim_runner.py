@@ -61,6 +61,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import pipeline
+import runtime.wiring as _wiring
 from pipeline import (
     conversation_turn,
     PipelineState,
@@ -707,7 +708,7 @@ async def initialize() -> FaceDB:
     await loop.run_in_executor(None, EmotionAgent()._ensure_loaded)
     print("[Sim] Emotion model ready")
 
-    pipeline._brain_orchestrator = BrainOrchestrator(
+    _wiring._brain_orchestrator = BrainOrchestrator(
         pipeline._shutdown_event,
         brain_db_path=SIM_BRAIN_PATH,
         graph_db_path=SIM_GRAPH_PATH,

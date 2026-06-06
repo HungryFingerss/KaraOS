@@ -19,6 +19,7 @@ import pytest
 import numpy as np
 import time as _time_mod
 import numpy as _np
+import runtime.wiring as _wiring
 
 
 def test_dispute_auto_clear_on_three_consecutive_strong_voice_matches():
@@ -36,7 +37,7 @@ def test_dispute_auto_clear_on_three_consecutive_strong_voice_matches():
         asyncio.run(pipeline._session_store.append_voice_conf(pid, conf=conf))
     pipeline._persons_in_frame = {}
     orig_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = None
+    _wiring._brain_orchestrator = None
     try:
         pipeline._expire_stale_sessions()
         snap = pipeline._session_store.peek_snapshot(pid)
@@ -47,7 +48,7 @@ def test_dispute_auto_clear_on_three_consecutive_strong_voice_matches():
         assert snap.prior_person_type is None
     finally:
         pipeline._persons_in_frame = {}
-        pipeline._brain_orchestrator = orig_orch
+        _wiring._brain_orchestrator = orig_orch
 
 
 def test_dispute_auto_clear_restores_best_friend_not_known():
@@ -64,7 +65,7 @@ def test_dispute_auto_clear_restores_best_friend_not_known():
         asyncio.run(pipeline._session_store.append_voice_conf(pid, conf=conf))
     pipeline._persons_in_frame = {}
     orig_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = None
+    _wiring._brain_orchestrator = None
     try:
         pipeline._expire_stale_sessions()
         snap = pipeline._session_store.peek_snapshot(pid)
@@ -72,7 +73,7 @@ def test_dispute_auto_clear_restores_best_friend_not_known():
         assert snap.person_type == "best_friend"
     finally:
         pipeline._persons_in_frame = {}
-        pipeline._brain_orchestrator = orig_orch
+        _wiring._brain_orchestrator = orig_orch
 
 
 def test_dispute_auto_clear_requires_three_consecutive_not_two():
@@ -87,7 +88,7 @@ def test_dispute_auto_clear_requires_three_consecutive_not_two():
     for conf in [0.75, 0.80]:  # only 2 strong matches — must NOT clear
         asyncio.run(pipeline._session_store.append_voice_conf(pid, conf=conf))
     orig_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = None
+    _wiring._brain_orchestrator = None
     try:
         pipeline._expire_stale_sessions()
         snap = pipeline._session_store.peek_snapshot(pid)
@@ -96,7 +97,7 @@ def test_dispute_auto_clear_requires_three_consecutive_not_two():
             "only 2 strong matches must NOT clear dispute — need 3 consecutive"
         )
     finally:
-        pipeline._brain_orchestrator = orig_orch
+        _wiring._brain_orchestrator = orig_orch
 
 
 def test_dispute_auto_clear_rejects_mixed_weak_matches():
@@ -110,14 +111,14 @@ def test_dispute_auto_clear_rejects_mixed_weak_matches():
     for conf in [0.80, 0.50, 0.80]:  # mid below floor
         asyncio.run(pipeline._session_store.append_voice_conf(pid, conf=conf))
     orig_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = None
+    _wiring._brain_orchestrator = None
     try:
         pipeline._expire_stale_sessions()
         snap = pipeline._session_store.peek_snapshot(pid)
         assert snap is not None
         assert snap.person_type == "disputed"
     finally:
-        pipeline._brain_orchestrator = orig_orch
+        _wiring._brain_orchestrator = orig_orch
 
 
 def test_dispute_auto_clear_on_face_in_frame_with_strong_conf():
@@ -134,7 +135,7 @@ def test_dispute_auto_clear_on_face_in_frame_with_strong_conf():
         pid, conf=0.85, ts=now, anti_spoof_live=True, anti_spoof_score=0.9))
     asyncio.run(pipeline._presence_store.upsert_face_recognition(pid, "Jagan", 0.85, now))
     orig_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = None
+    _wiring._brain_orchestrator = None
     try:
         pipeline._expire_stale_sessions()
         snap = pipeline._session_store.peek_snapshot(pid)
@@ -146,7 +147,7 @@ def test_dispute_auto_clear_on_face_in_frame_with_strong_conf():
         assert snap.dispute_set_at is None
     finally:
         asyncio.run(pipeline._presence_store.remove(pid))
-        pipeline._brain_orchestrator = orig_orch
+        _wiring._brain_orchestrator = orig_orch
 
 
 def test_dispute_auto_clear_voice_only_requires_higher_threshold():
@@ -176,7 +177,7 @@ def test_dispute_auto_clear_voice_only_requires_higher_threshold():
         asyncio.run(pipeline._session_store.append_voice_conf(pid, conf=conf))
     # NO face corroboration — presence store left empty
     orig_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = None
+    _wiring._brain_orchestrator = None
     try:
         pipeline._expire_stale_sessions()
         snap = pipeline._session_store.peek_snapshot(pid)
@@ -186,7 +187,7 @@ def test_dispute_auto_clear_voice_only_requires_higher_threshold():
             "0.72/0.78/0.75 must stay disputed when no face is present"
         )
     finally:
-        pipeline._brain_orchestrator = orig_orch
+        _wiring._brain_orchestrator = orig_orch
 
 
 def test_dispute_auto_clear_voice_only_at_solo_threshold():
@@ -202,7 +203,7 @@ def test_dispute_auto_clear_voice_only_at_solo_threshold():
         asyncio.run(pipeline._session_store.append_voice_conf(pid, conf=conf))
     # NO face in frame — presence store left empty
     orig_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = None
+    _wiring._brain_orchestrator = None
     try:
         pipeline._expire_stale_sessions()
         snap = pipeline._session_store.peek_snapshot(pid)
@@ -211,7 +212,7 @@ def test_dispute_auto_clear_voice_only_at_solo_threshold():
             f"3 consecutive ≥ SOLO_MIN must clear dispute; got {snap.person_type!r}"
         )
     finally:
-        pipeline._brain_orchestrator = orig_orch
+        _wiring._brain_orchestrator = orig_orch
 
 
 def test_dispute_auto_clear_voice_with_face_uses_lower_min():
@@ -233,7 +234,7 @@ def test_dispute_auto_clear_voice_with_face_uses_lower_min():
     # Face IS in frame with confident face_match_conf
     asyncio.run(pipeline._presence_store.upsert_face_recognition(pid, "Jagan", 0.80, now))
     orig_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = None
+    _wiring._brain_orchestrator = None
     try:
         pipeline._expire_stale_sessions()
         snap = pipeline._session_store.peek_snapshot(pid)
@@ -244,7 +245,7 @@ def test_dispute_auto_clear_voice_with_face_uses_lower_min():
         )
     finally:
         asyncio.run(pipeline._presence_store.remove(pid))
-        pipeline._brain_orchestrator = orig_orch
+        _wiring._brain_orchestrator = orig_orch
 
 
 def test_dispute_auto_clear_defaults_to_stranger_when_prior_missing():
@@ -267,7 +268,7 @@ def test_dispute_auto_clear_defaults_to_stranger_when_prior_missing():
         asyncio.run(pipeline._session_store.append_voice_conf(pid, conf=conf))
     pipeline._persons_in_frame = {}
     orig_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = None
+    _wiring._brain_orchestrator = None
     try:
         pipeline._expire_stale_sessions()
         snap = pipeline._session_store.peek_snapshot(pid)
@@ -278,7 +279,7 @@ def test_dispute_auto_clear_defaults_to_stranger_when_prior_missing():
         )
     finally:
         pipeline._persons_in_frame = {}
-        pipeline._brain_orchestrator = orig_orch
+        _wiring._brain_orchestrator = orig_orch
 
 
 def test_dispute_auto_clear_thresholds_in_config():
@@ -320,7 +321,7 @@ async def test_dispute_rename_block_increments_counter():
     pid = "jagan_n3a"
     now = _t.time()
     orig_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = MagicMock()
+    _wiring._brain_orchestrator = MagicMock()
     try:
         await pipeline._session_store.open_session(pid, "Jagan", "known", "face", now=now)
         await pipeline._session_store.transition_to_disputed(pid, None, "speaker claims not Jagan", now=now)
@@ -338,7 +339,7 @@ async def test_dispute_rename_block_increments_counter():
         await asyncio.sleep(0)
         assert pipeline._session_store.peek_snapshot(pid).disputed_block_count == 2
     finally:
-        pipeline._brain_orchestrator = orig_orch
+        _wiring._brain_orchestrator = orig_orch
 
 
 async def test_dispute_rename_burst_fires_watchdog_at_threshold():
@@ -355,7 +356,7 @@ async def test_dispute_rename_burst_fires_watchdog_at_threshold():
     await pipeline._conversation_store.set_history(pid, [])
     orig_orch = pipeline._brain_orchestrator
     mock_orch = MagicMock()
-    pipeline._brain_orchestrator = mock_orch
+    _wiring._brain_orchestrator = mock_orch
     try:
         import asyncio as _asyncio
         mock_db = MagicMock()
@@ -390,7 +391,7 @@ async def test_dispute_rename_burst_fires_watchdog_at_threshold():
         assert pipeline._session_store.peek_snapshot(pid).disputed_block_count == DISPUTE_RENAME_BLOCK_THRESHOLD + 1
         assert mock_orch.report_dispute_rename_burst.call_count == 1
     finally:
-        pipeline._brain_orchestrator = orig_orch
+        _wiring._brain_orchestrator = orig_orch
 
 
 async def test_dispute_rename_burst_severity_critical_for_best_friend(tmp_path):
@@ -418,7 +419,7 @@ async def test_dispute_rename_burst_severity_critical_for_best_friend(tmp_path):
     await pipeline._session_store.transition_to_disputed(pid_bf, None, "speaker claims not Jagan", now=now_bf)
     await pipeline._conversation_store.set_history(pid_bf, [])
     orig_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = orch
+    _wiring._brain_orchestrator = orch
     try:
         mock_db = MagicMock()
         for _ in range(DISPUTE_RENAME_BLOCK_THRESHOLD):
@@ -437,7 +438,7 @@ async def test_dispute_rename_burst_severity_critical_for_best_friend(tmp_path):
         assert "Jagan" in row[2]
         assert "Attacker" in row[2]
     finally:
-        pipeline._brain_orchestrator = orig_orch
+        _wiring._brain_orchestrator = orig_orch
         brain_db.close()
 
 

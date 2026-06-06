@@ -34,6 +34,7 @@ import pathlib
 import textwrap
 
 import pytest
+import runtime.wiring as _wiring
 
 
 _ROOM_ORCH_PY = pathlib.Path(__file__).resolve().parent.parent / "core" / "room_orchestrator.py"
@@ -230,7 +231,7 @@ def test_p0_s7_dd_shim_raises_if_room_orchestrator_uninitialized():
 
     _saved = pipeline._room_orchestrator
     try:
-        pipeline._room_orchestrator = None
+        _wiring._room_orchestrator = None
         # compute_room_audience — pure-on-args, simplest signature.
         with pytest.raises(RuntimeError, match="_init_room_orchestrator"):
             pipeline._compute_room_audience(["a"], "a")
@@ -246,7 +247,7 @@ def test_p0_s7_dd_shim_raises_if_room_orchestrator_uninitialized():
         with pytest.raises(RuntimeError, match="_init_room_orchestrator"):
             pipeline._kairos_preferred_speaker("bf_001")
     finally:
-        pipeline._room_orchestrator = _saved
+        _wiring._room_orchestrator = _saved
 
 
 def test_p0_s7_dd_init_room_orchestrator_called_in_run_before_first_shim_caller():

@@ -19,6 +19,7 @@ import pytest
 import numpy as np
 import time as _time_mod
 import numpy as _np
+import runtime.wiring as _wiring
 
 
 async def test_voice_only_stranger_not_waiting():
@@ -861,7 +862,7 @@ async def test_open_session_hydration_prefers_live_db_over_stale_cache(tmp_path)
                                source="voice_self_match", confidence=0.7)
     prev_ref = pipeline._face_db_ref
     try:
-        pipeline._face_db_ref = db
+        _wiring._face_db_ref = db
         await pipeline._voice_gallery_store.set_gallery("hydrate_p1", np.ones(192, dtype=np.float32), 10)  # STALE — out-of-process delete happened
         pipeline._open_session("hydrate_p1", "Alice", "voice", person_type="known")
         await asyncio.sleep(0)
@@ -875,7 +876,7 @@ async def test_open_session_hydration_prefers_live_db_over_stale_cache(tmp_path)
             "Stale cache entry must be repaired to match the DB"
         )
     finally:
-        pipeline._face_db_ref = prev_ref
+        _wiring._face_db_ref = prev_ref
         await pipeline._voice_gallery_store.pop_gallery("hydrate_p1")
         db._conn.close()
 
@@ -916,7 +917,7 @@ def test_voice_entry_expiry_is_silent_when_session_already_closed():
     snippet = src[idx:idx + 500]
     # The session lookup must precede the log, and the log must be inside
     # an `if _sess is not None:` guard.
-    assert "_snap_voice_lp = _session_store.peek_snapshot" in snippet
+    assert "_snap_voice_lp = _wiring._session_store.peek_snapshot" in snippet
     assert "if _snap_voice_lp is not None:" in snippet
     # The log line must come after the guard — confirm ordering by scanning.
     guard_idx = snippet.find("if _snap_voice_lp is not None:")

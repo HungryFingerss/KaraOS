@@ -19,6 +19,7 @@ import pytest
 import numpy as np
 import time as _time_mod
 import numpy as _np
+import runtime.wiring as _wiring
 
 
 async def test_cloud_retry_loop_continues_after_recovery():
@@ -43,7 +44,7 @@ async def test_cloud_retry_loop_continues_after_recovery():
     shutdown = asyncio.Event()  # not set — loop should run freely
 
     await pipeline._pipeline_state_store.transition_to_sick(_time_mod.time() - 10)
-    pipeline._brain_orchestrator = None
+    _wiring._brain_orchestrator = None
 
     with patch("pipeline.CLOUD_RETRY_INTERVAL", 0.05), \
          patch("pipeline.ping_together", side_effect=fake_ping), \
@@ -75,7 +76,7 @@ async def test_cloud_retry_loop_continues_after_recovery():
     await pipeline._pipeline_state_store.set_cloud_state(orig_state)
     await pipeline._pipeline_state_store.set_cloud_recovered(orig_recovered)
     await pipeline._pipeline_state_store.set_cloud_failed_at(orig_failed_at)
-    pipeline._brain_orchestrator = None
+    _wiring._brain_orchestrator = None
 
 
 async def test_cloud_retry_loop_skips_ping_when_online():
@@ -89,7 +90,7 @@ async def test_cloud_retry_loop_skips_ping_when_online():
     shutdown = asyncio.Event()  # not set
 
     await pipeline._pipeline_state_store.recover_online_no_flag()
-    pipeline._brain_orchestrator = None
+    _wiring._brain_orchestrator = None
 
     ping_called = False
 

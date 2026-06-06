@@ -22,6 +22,7 @@ import numpy as _np
 from tests._pipeline_helpers import (
     _s3b1_sess,
 )
+import runtime.wiring as _wiring
 
 
 async def test_s112_room_session_minted_on_first_open_into_empty_room():
@@ -536,7 +537,7 @@ def test_s113_on_room_end_fires_exactly_once_when_last_person_leaves():
     pipeline._on_room_end = _spy
     try:
         asyncio.run(pipeline._pipeline_state_store.set_active_room_session("r_abc"))
-        pipeline._face_db_ref = None
+        _wiring._face_db_ref = None
 
         import asyncio as _aio
         async def _drive():
@@ -579,7 +580,7 @@ def test_s113_on_room_end_does_not_fire_while_other_sessions_live():
         _aio.run(pipeline._session_store.open_session("a_1", "Alice", "known", "face", now=now))
         _aio.run(pipeline._session_store.open_session("b_1", "Bob", "known", "face", now=now))
         asyncio.run(pipeline._pipeline_state_store.set_active_room_session("r_xyz"))
-        pipeline._face_db_ref = None
+        _wiring._face_db_ref = None
         async def _drive():
             pipeline._close_session("a_1")   # Bob still in store → no hook
             await _aio.sleep(0)
@@ -893,7 +894,7 @@ def test_s3b1_room_started_at_lifecycle(tmp_path):
     # Fresh state.
     asyncio.run(pipeline._pipeline_state_store.set_active_room_session(None))
     asyncio.run(pipeline._pipeline_state_store.set_active_room_started_at(None))
-    pipeline._face_db_ref = None
+    _wiring._face_db_ref = None
     pipeline._per_person_agent_store.reset()
 
     pipeline._open_session("a_1", "Alice", "face", "known",
@@ -1005,7 +1006,7 @@ def test_s3b2_pipeline_has_silent_skip_branch():
     src = inspect.getsource(pipeline.conversation_turn)
     assert "ROOM_STAY_SILENT_ON_USER_TO_USER" in src, "config flag not read"
     assert "direct_address_to_person" in src, "intent label literal missing"
-    assert "len(_session_store.peek_all_snapshots()) >= 2" in src, (
+    assert "len(_wiring._session_store.peek_all_snapshots()) >= 2" in src, (
         "multi-person gate missing — single-person rooms MUST skip the classifier"
     )
     assert "User-to-user detected" in src, (
@@ -1070,7 +1071,7 @@ async def test_s3b2_behavioral_silent_skip_fires_on_user_to_user(monkeypatch, tm
         def get_context(self, *a, **k): return None
         def score_stranger_identity(self, *a, **k): return None
     orch_stub = _OrchStub()
-    pipeline._brain_orchestrator = orch_stub
+    _wiring._brain_orchestrator = orch_stub
 
     now = time.time()
     pipeline._session_store._sessions.clear()
@@ -1096,7 +1097,7 @@ async def test_s3b2_behavioral_silent_skip_fires_on_user_to_user(monkeypatch, tm
     assert orch_stub.notified >= 1, "notify() must fire so extraction runs"
     # Cleanup.
     pipeline._conversation_store.reset()
-    pipeline._brain_orchestrator = None
+    _wiring._brain_orchestrator = None
     pipeline._session_store._sessions.clear()
 
 
@@ -1135,7 +1136,7 @@ async def test_s3b2_behavioral_system_name_collision_falls_through(monkeypatch):
     await pipeline._conversation_store.set_history("a_1", [])
     await pipeline._pipeline_state_store.recover_online_no_flag()
     await pipeline._pipeline_state_store.set_active_system_name("Kara")  # AI is also Kara
-    pipeline._brain_orchestrator = None
+    _wiring._brain_orchestrator = None
 
     class _DBStub:
         def get_best_friend(self): return None
@@ -1168,8 +1169,8 @@ def test_s3b2_flag_off_falls_through(monkeypatch):
     # needing to re-execute the function.
     src = inspect.getsource(pipeline.conversation_turn)
     # Source should USE the flag's name and apply short-circuit logic.
-    assert "if _STAY_SILENT and len(_session_store.peek_all_snapshots()) >= 2" in src or \
-           "_STAY_SILENT and len(_session_store.peek_all_snapshots()) >= 2" in src, (
+    assert "if _STAY_SILENT and len(_wiring._session_store.peek_all_snapshots()) >= 2" in src or \
+           "_STAY_SILENT and len(_wiring._session_store.peek_all_snapshots()) >= 2" in src, (
                "flag must short-circuit via 'and' before multi-person gate"
            )
 
@@ -1907,7 +1908,7 @@ def test_s3b6_on_room_end_dispatches_synthesize_room(monkeypatch):
             captured["called"] = True
             captured["args"] = (room_session_id, speaker_pids, started_at)
 
-    pipeline._brain_orchestrator = _OrchStub()
+    _wiring._brain_orchestrator = _OrchStub()
     try:
         async def _drive():
             await pipeline._on_room_end(
@@ -1924,7 +1925,7 @@ def test_s3b6_on_room_end_dispatches_synthesize_room(monkeypatch):
         assert room_id == "room_W"
         assert list(pids) == ["j_1", "l_1"]
     finally:
-        pipeline._brain_orchestrator = None
+        _wiring._brain_orchestrator = None
 
 
 def test_s3b6_on_room_end_skips_synthesize_for_single_speaker(monkeypatch):
@@ -1938,7 +1939,7 @@ def test_s3b6_on_room_end_skips_synthesize_for_single_speaker(monkeypatch):
         async def synthesize_room(self, **kwargs):
             captured["called"] = True
 
-    pipeline._brain_orchestrator = _OrchStub()
+    _wiring._brain_orchestrator = _OrchStub()
     try:
         async def _drive():
             await pipeline._on_room_end(
@@ -1950,4 +1951,4 @@ def test_s3b6_on_room_end_skips_synthesize_for_single_speaker(monkeypatch):
             "single-speaker room must not fire synthesize_room"
         )
     finally:
-        pipeline._brain_orchestrator = None
+        _wiring._brain_orchestrator = None

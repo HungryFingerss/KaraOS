@@ -26,6 +26,7 @@ import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import runtime.wiring as _wiring
 
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -65,7 +66,7 @@ async def _seed_state(speech_secs_ago: float, tts_secs_ago: float, *,
 
     mock_orch = MagicMock()
     mock_orch.get_pending_question.return_value = {"id": "q1", "text": "How are you?"}
-    pipeline._brain_orchestrator = mock_orch
+    _wiring._brain_orchestrator = mock_orch
 
     return orig_speech_at, orig_kairos_at, orig_tts_end, orig_orch, mock_orch
 
@@ -76,7 +77,7 @@ async def _restore_state(orig_speech_at, orig_kairos_at, orig_tts_end, orig_orch
     await pipeline._pipeline_state_store.set_last_user_speech_at(orig_speech_at)
     await pipeline._pipeline_state_store.set_last_kairos_at(orig_kairos_at)
     _audio_mod._tts_end_time_monotonic = orig_tts_end
-    pipeline._brain_orchestrator = orig_orch
+    _wiring._brain_orchestrator = orig_orch
 
 
 # ────────────────────────────────────────────────────────────────────────────

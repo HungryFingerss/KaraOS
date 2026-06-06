@@ -19,6 +19,7 @@ import pytest
 import numpy as np
 import time as _time_mod
 import numpy as _np
+import runtime.wiring as _wiring
 
 
 async def test_execute_tool_shutdown_returns_signal():
@@ -149,7 +150,7 @@ async def test_execute_tool_update_person_name_promotes_stranger():
 
     mock_db = MagicMock()
     mock_brain = MagicMock()
-    pipeline._brain_orchestrator = mock_brain
+    _wiring._brain_orchestrator = mock_brain
 
     await _execute_tool(
         "update_person_name", {"name": "Ajay"},
@@ -166,7 +167,7 @@ async def test_execute_tool_update_person_name_promotes_stranger():
     assert snap is not None and snap.person_type == "known"
     assert snap.person_name == "Ajay"
 
-    pipeline._brain_orchestrator = None
+    _wiring._brain_orchestrator = None
 
 
 def _mk_divergence_capture_orch():
@@ -195,7 +196,7 @@ async def test_execute_tool_update_person_name_classifier_allows_fires_tool():
     mock_db = MagicMock()
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = mock_orch
+    _wiring._brain_orchestrator = mock_orch
     try:
         sidecar = {
             "turn_intent":     "assign_own_name",
@@ -220,7 +221,7 @@ async def test_execute_tool_update_person_name_classifier_allows_fires_tool():
         assert kwargs["structured_intent"] == "assign_own_name"
         assert kwargs["structured_confidence"] == pytest.approx(0.95)
     finally:
-        pipeline._brain_orchestrator = _prev_orch
+        _wiring._brain_orchestrator = _prev_orch
 
 
 async def test_execute_tool_update_person_name_classifier_rejects_blocks_tool():
@@ -237,7 +238,7 @@ async def test_execute_tool_update_person_name_classifier_rejects_blocks_tool():
     mock_db = MagicMock()
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = mock_orch
+    _wiring._brain_orchestrator = mock_orch
     try:
         sidecar = {
             "turn_intent":     "assign_own_name",
@@ -261,7 +262,7 @@ async def test_execute_tool_update_person_name_classifier_rejects_blocks_tool():
         assert kwargs["gate_decision"].startswith("reject:")
         assert "0.20" in kwargs["gate_decision"]
     finally:
-        pipeline._brain_orchestrator = _prev_orch
+        _wiring._brain_orchestrator = _prev_orch
 
 
 async def test_execute_tool_update_person_name_classifier_unavail_fallback_to_regex():
@@ -284,7 +285,7 @@ async def test_execute_tool_update_person_name_classifier_unavail_fallback_to_re
     mock_db = MagicMock()
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = mock_orch
+    _wiring._brain_orchestrator = mock_orch
     try:
         result = await _execute_tool(
             "update_person_name", {"name": "Jagan"},
@@ -299,7 +300,7 @@ async def test_execute_tool_update_person_name_classifier_unavail_fallback_to_re
         assert kwargs["gate_decision"] == "regex_fallback_allow"
         assert kwargs["structured_intent"] is None  # classifier unavail
     finally:
-        pipeline._brain_orchestrator = _prev_orch
+        _wiring._brain_orchestrator = _prev_orch
 
 
 async def test_execute_tool_update_person_name_classifier_unavail_fallback_disabled_allows_with_warning(monkeypatch):
@@ -320,7 +321,7 @@ async def test_execute_tool_update_person_name_classifier_unavail_fallback_disab
     mock_db = MagicMock()
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = mock_orch
+    _wiring._brain_orchestrator = mock_orch
     try:
         result = await _execute_tool(
             "update_person_name", {"name": "Jagan"},
@@ -335,7 +336,7 @@ async def test_execute_tool_update_person_name_classifier_unavail_fallback_disab
         kwargs = mock_brain_db.log_intent_divergence.call_args.kwargs
         assert kwargs["gate_decision"] == "both_unavailable_allow_with_warning"
     finally:
-        pipeline._brain_orchestrator = _prev_orch
+        _wiring._brain_orchestrator = _prev_orch
 
 
 async def test_execute_tool_update_system_name_classifier_allows_fires_tool():
@@ -351,7 +352,7 @@ async def test_execute_tool_update_system_name_classifier_allows_fires_tool():
     mock_db = MagicMock()
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = mock_orch
+    _wiring._brain_orchestrator = mock_orch
     try:
         sidecar = {
             "turn_intent":     "assign_system_name",
@@ -371,7 +372,7 @@ async def test_execute_tool_update_system_name_classifier_allows_fires_tool():
         assert kwargs["tool_proposed"] == "update_system_name"
         assert kwargs["gate_decision"] == "allow"
     finally:
-        pipeline._brain_orchestrator = _prev_orch
+        _wiring._brain_orchestrator = _prev_orch
         await pipeline._pipeline_state_store.set_active_system_name("Atlas")
 
 
@@ -386,7 +387,7 @@ async def test_execute_tool_update_system_name_classifier_rejects_on_grounding_f
     mock_db = MagicMock()
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = mock_orch
+    _wiring._brain_orchestrator = mock_orch
     try:
         sidecar = {
             "turn_intent":     "assign_system_name",
@@ -406,7 +407,7 @@ async def test_execute_tool_update_system_name_classifier_rejects_on_grounding_f
         assert kwargs["gate_decision"].startswith("reject:")
         assert "not grounded" in kwargs["gate_decision"]
     finally:
-        pipeline._brain_orchestrator = _prev_orch
+        _wiring._brain_orchestrator = _prev_orch
 
 
 async def test_execute_tool_report_identity_mismatch_classifier_allows():
@@ -420,7 +421,7 @@ async def test_execute_tool_report_identity_mismatch_classifier_allows():
     mock_db = MagicMock()
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = mock_orch
+    _wiring._brain_orchestrator = mock_orch
     try:
         sidecar = {
             "turn_intent":     "deny_identity",
@@ -442,7 +443,7 @@ async def test_execute_tool_report_identity_mismatch_classifier_allows():
         assert kwargs["tool_proposed"] == "report_identity_mismatch"
         assert kwargs["gate_decision"] == "allow"
     finally:
-        pipeline._brain_orchestrator = _prev_orch
+        _wiring._brain_orchestrator = _prev_orch
 
 
 async def test_execute_tool_report_identity_mismatch_classifier_rejects_question():
@@ -457,7 +458,7 @@ async def test_execute_tool_report_identity_mismatch_classifier_rejects_question
     mock_db = MagicMock()
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = mock_orch
+    _wiring._brain_orchestrator = mock_orch
     try:
         sidecar = {
             "turn_intent":     "casual_conversation",
@@ -479,7 +480,7 @@ async def test_execute_tool_report_identity_mismatch_classifier_rejects_question
         assert kwargs["gate_decision"].startswith("reject:")
         assert "expected=deny_identity" in kwargs["gate_decision"]
     finally:
-        pipeline._brain_orchestrator = _prev_orch
+        _wiring._brain_orchestrator = _prev_orch
 
 
 async def test_execute_tool_shutdown_classifier_allows_fires():
@@ -492,7 +493,7 @@ async def test_execute_tool_shutdown_classifier_allows_fires():
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = mock_orch
+    _wiring._brain_orchestrator = mock_orch
     try:
         sidecar = {
             "turn_intent":     "request_shutdown",
@@ -510,7 +511,7 @@ async def test_execute_tool_shutdown_classifier_allows_fires():
         assert kwargs["tool_proposed"] == "shutdown"
         assert kwargs["gate_decision"] == "allow"
     finally:
-        pipeline._brain_orchestrator = _prev_orch
+        _wiring._brain_orchestrator = _prev_orch
 
 
 async def test_execute_tool_shutdown_ambiguous_farewell_both_gates_reject():
@@ -526,7 +527,7 @@ async def test_execute_tool_shutdown_ambiguous_farewell_both_gates_reject():
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = mock_orch
+    _wiring._brain_orchestrator = mock_orch
     try:
         sidecar = {
             "turn_intent":     "casual_conversation",
@@ -547,7 +548,7 @@ async def test_execute_tool_shutdown_ambiguous_farewell_both_gates_reject():
         assert kwargs["gate_decision"].startswith("reject:")
         assert "expected=request_shutdown" in kwargs["gate_decision"]
     finally:
-        pipeline._brain_orchestrator = _prev_orch
+        _wiring._brain_orchestrator = _prev_orch
 
 
 async def test_execute_tool_shutdown_classifier_unavail_falls_through_to_3_regex_chain():
@@ -562,7 +563,7 @@ async def test_execute_tool_shutdown_classifier_unavail_falls_through_to_3_regex
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
     mock_orch, mock_brain_db = _mk_divergence_capture_orch()
     _prev_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = mock_orch
+    _wiring._brain_orchestrator = mock_orch
     try:
         # Allow path: strict phrase, classifier unavail.
         result = await _execute_tool(
@@ -590,7 +591,7 @@ async def test_execute_tool_shutdown_classifier_unavail_falls_through_to_3_regex
         kwargs2 = mock_brain_db.log_intent_divergence.call_args.kwargs
         assert kwargs2["gate_decision"] == "regex_fallback_reject"
     finally:
-        pipeline._brain_orchestrator = _prev_orch
+        _wiring._brain_orchestrator = _prev_orch
 
 
 async def test_execute_tool_auto_confirm_classifier_rejects_holds_promotion():
@@ -624,7 +625,7 @@ async def test_execute_tool_update_system_name_updates_global():
     from pipeline import _execute_tool
     await pipeline._session_store.open_session("p1", "Jagan", "best_friend", "face", now=__import__("time").time())
     await pipeline._pipeline_state_store.set_active_system_name("Dog")
-    pipeline._brain_orchestrator = None
+    _wiring._brain_orchestrator = None
     mock_db = MagicMock()
     await _execute_tool(
         "update_system_name", {"name": "Rex"},
@@ -1057,7 +1058,7 @@ async def test_rejected_shutdown_response_overridden_to_neutral():
     await pipeline._conversation_store.set_history("p_sd", [])
     await pipeline._pipeline_state_store.recover_online_no_flag()
     pipeline._per_person_agent_store.reset()
-    pipeline._brain_orchestrator    = None
+    _wiring._brain_orchestrator    = None
     await pipeline._pipeline_state_store.set_detected_lang("en")
     await pipeline._pipeline_state_store.set_active_system_name("Kara")
     pipeline._shutdown_event        = asyncio.Event()   # fresh, not set
@@ -1083,7 +1084,7 @@ async def test_rejected_shutdown_response_overridden_to_neutral():
             f"Expected 'Okay.' but got {hist[-1]['content']!r}"
     finally:
         await pipeline._pipeline_state_store.set_cloud_state(orig_cloud)
-        pipeline._brain_orchestrator    = orig_brain
+        _wiring._brain_orchestrator    = orig_brain
         await pipeline._pipeline_state_store.set_detected_lang(orig_lang)
         await pipeline._pipeline_state_store.set_active_system_name(orig_sysname)
         pipeline._shutdown_event        = orig_shutdown
@@ -1104,7 +1105,7 @@ async def test_rejected_shutdown_does_not_write_goodbye_to_history():
     await pipeline._conversation_store.set_history("p_sd", [])
     await pipeline._pipeline_state_store.recover_online_no_flag()
     pipeline._per_person_agent_store.reset()
-    pipeline._brain_orchestrator    = None
+    _wiring._brain_orchestrator    = None
     await pipeline._pipeline_state_store.set_detected_lang("en")
     await pipeline._pipeline_state_store.set_active_system_name("Kara")
     pipeline._shutdown_event        = asyncio.Event()
@@ -1130,7 +1131,7 @@ async def test_rejected_shutdown_does_not_write_goodbye_to_history():
             f"'Goodbye!' leaked into history: {hist[-1]['content']!r}"
     finally:
         await pipeline._pipeline_state_store.set_cloud_state(orig_cloud)
-        pipeline._brain_orchestrator    = orig_brain
+        _wiring._brain_orchestrator    = orig_brain
         await pipeline._pipeline_state_store.set_detected_lang(orig_lang)
         await pipeline._pipeline_state_store.set_active_system_name(orig_sysname)
         pipeline._shutdown_event        = orig_shutdown
@@ -1151,7 +1152,7 @@ async def test_approved_shutdown_override_does_not_fire():
     await pipeline._conversation_store.set_history("p_sd", [])
     await pipeline._pipeline_state_store.recover_online_no_flag()
     pipeline._per_person_agent_store.reset()
-    pipeline._brain_orchestrator    = None
+    _wiring._brain_orchestrator    = None
     await pipeline._pipeline_state_store.set_detected_lang("en")
     await pipeline._pipeline_state_store.set_active_system_name("Kara")
     pipeline._shutdown_event        = asyncio.Event()
@@ -1178,7 +1179,7 @@ async def test_approved_shutdown_override_does_not_fire():
             "Override fired on an approved shutdown — it should only fire on rejected calls"
     finally:
         await pipeline._pipeline_state_store.set_cloud_state(orig_cloud)
-        pipeline._brain_orchestrator    = orig_brain
+        _wiring._brain_orchestrator    = orig_brain
         await pipeline._pipeline_state_store.set_detected_lang(orig_lang)
         await pipeline._pipeline_state_store.set_active_system_name(orig_sysname)
         pipeline._shutdown_event        = orig_shutdown
@@ -1218,7 +1219,7 @@ async def test_execute_tool_update_system_name_allowed_for_best_friend():
     import time as _t
     await pipeline._session_store.open_session("bf_p1", "Jagan", "best_friend", "face", now=_t.time())
     await pipeline._pipeline_state_store.set_active_system_name("Dog")
-    pipeline._brain_orchestrator = None
+    _wiring._brain_orchestrator = None
     mock_db = MagicMock()
     result = await pipeline._execute_tool(
         "update_system_name", {"name": "Kara"}, "bf_p1", "Jagan", db=mock_db,

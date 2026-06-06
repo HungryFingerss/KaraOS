@@ -35,6 +35,7 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
+import runtime.wiring as _wiring
 
 
 # Denial regex per Plan v2 §6 L2 (tightened from Plan v1's 3-way OR).
@@ -144,7 +145,7 @@ async def test_session_a_then_b_recipe_retrieval(tmp_path):
 
     orig_orch         = _pl._brain_orchestrator
     orig_bf_cache_fn  = _pl._get_best_friend_cached
-    _pl._brain_orchestrator       = orch
+    _wiring._brain_orchestrator       = orch
     _pl._get_best_friend_cached   = lambda db: {"id": "j_001", "name": "Jagan"}
     try:
         # Pass a stub db (truthy) so the best_friend lookup gate fires; the
@@ -164,7 +165,7 @@ async def test_session_a_then_b_recipe_retrieval(tmp_path):
         result_json = await memory_search_fn("Lexi", "cheese cookies recipe")
         result_dict = json.loads(result_json)
     finally:
-        _pl._brain_orchestrator     = orig_orch
+        _wiring._brain_orchestrator     = orig_orch
         _pl._get_best_friend_cached = orig_bf_cache_fn
 
     # MECHANISM assertion — search_memory wiring invoked query_knowledge_for.

@@ -387,9 +387,9 @@ def test_p0_r6_y_d3_anchor_4_site_7148_uses_await_voice_mod_identify() -> None:
         call_func = unary_not_call.func
         if not (
             isinstance(call_func, ast.Attribute)
-            and isinstance(call_func.value, ast.Name)
-            and call_func.value.id == "_session_store"
             and call_func.attr == "peek_all_snapshots"
+            and ((isinstance(call_func.value, ast.Name) and call_func.value.id == "_session_store")
+                 or (isinstance(call_func.value, ast.Attribute) and call_func.value.attr == "_session_store"))
         ):
             continue
         # Inside this If body, look for await voice_mod.identify(...).

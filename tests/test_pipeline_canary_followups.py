@@ -19,6 +19,7 @@ import pytest
 import numpy as np
 import time as _time_mod
 import numpy as _np
+import runtime.wiring as _wiring
 
 
 def test_bug_i_memory_search_uses_widened_fact_limit():
@@ -161,7 +162,7 @@ async def test_bug_f3_mishear_rename_refreshes_persons_in_frame_cache():
     mock_db.voice_embedding_count.return_value = 0
 
     orig_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = MagicMock()
+    _wiring._brain_orchestrator = MagicMock()
     try:
         await _execute_tool(
             "update_person_name", {"name": "Jagan"},
@@ -174,7 +175,7 @@ async def test_bug_f3_mishear_rename_refreshes_persons_in_frame_cache():
             },
         )
     finally:
-        pipeline._brain_orchestrator = orig_orch
+        _wiring._brain_orchestrator = orig_orch
 
     await asyncio.sleep(0)
     # The presence store must reflect the new name, not the stale STT-mangled one.
@@ -203,7 +204,7 @@ async def test_bug_f3_stranger_promotion_refreshes_persons_in_frame_cache():
     mock_db = MagicMock()
 
     orig_orch = pipeline._brain_orchestrator
-    pipeline._brain_orchestrator = MagicMock()
+    _wiring._brain_orchestrator = MagicMock()
     try:
         await _execute_tool(
             "update_person_name", {"name": "Lexi"},
@@ -211,7 +212,7 @@ async def test_bug_f3_stranger_promotion_refreshes_persons_in_frame_cache():
             user_text="my name is Lexi",
         )
     finally:
-        pipeline._brain_orchestrator = orig_orch
+        _wiring._brain_orchestrator = orig_orch
 
     await asyncio.sleep(0)
     assert pipeline._presence_store.peek_snapshot("stranger_abc").name == "Lexi"
@@ -773,7 +774,7 @@ def test_s116_room_lifecycle_logs_participant_join_and_synthesis(monkeypatch):
     asyncio.run(pipeline._pipeline_state_store.set_active_room_session(None))
     asyncio.run(pipeline._pipeline_state_store.set_active_room_started_at(None))
     asyncio.run(pipeline._pipeline_state_store.set_active_room_participants(set()))
-    pipeline._face_db_ref = None
+    _wiring._face_db_ref = None
     pipeline._per_person_agent_store.reset()
 
     captured_synth = {"called": False}
@@ -781,7 +782,7 @@ def test_s116_room_lifecycle_logs_participant_join_and_synthesis(monkeypatch):
         async def synthesize_room(self, **kwargs):
             captured_synth["called"] = True
         def clear_disputed(self, *a, **k): pass
-    pipeline._brain_orchestrator = _OrchStub()
+    _wiring._brain_orchestrator = _OrchStub()
     try:
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
@@ -820,7 +821,7 @@ def test_s116_room_lifecycle_logs_participant_join_and_synthesis(monkeypatch):
         asyncio.run(pipeline._pipeline_state_store.set_active_room_session(None))
         asyncio.run(pipeline._pipeline_state_store.set_active_room_started_at(None))
         asyncio.run(pipeline._pipeline_state_store.set_active_room_participants(set()))
-        pipeline._brain_orchestrator = None
+        _wiring._brain_orchestrator = None
 
 
 def test_s116_background_spawn_logs_compaction_and_emotion():

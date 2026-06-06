@@ -18,6 +18,7 @@ import asyncio
 import time
 import pytest
 from unittest.mock import patch
+import runtime.wiring as _wiring
 
 
 # ─── Fast stubs ─────────────────────────────────────────────────────────────
@@ -99,7 +100,7 @@ def latency_pipeline_harness():
     pipeline._conversation_store.reset()
     asyncio.run(pipeline._pipeline_state_store.recover_online_no_flag())
     asyncio.run(pipeline._pipeline_state_store.set_pipeline_state(PipelineState.WATCHING))
-    pipeline._brain_orchestrator = None
+    _wiring._brain_orchestrator = None
     pipeline._per_person_agent_store.reset()
     asyncio.run(pipeline._pipeline_state_store.set_last_user_speech_at(time.time()))
     asyncio.run(pipeline._pipeline_state_store.set_active_room_session(None))
@@ -135,9 +136,9 @@ def latency_pipeline_harness():
     for p in patches:
         p.stop()
 
-    pipeline._session_store = __import__("core.session_state", fromlist=["SessionStore"]).SessionStore()  # fresh store
+    _wiring._session_store = __import__("core.session_state", fromlist=["SessionStore"]).SessionStore()  # fresh store
     pipeline._per_person_agent_store.reset()
-    pipeline._brain_orchestrator = orig_brain_orchestrator
+    _wiring._brain_orchestrator = orig_brain_orchestrator
 
     asyncio.run(pipeline._pipeline_state_store.set_pipeline_state(orig_pss_snapshot["pipeline_state"]))
     asyncio.run(pipeline._pipeline_state_store.set_last_user_speech_at(orig_pss_snapshot["last_user_speech_at"]))

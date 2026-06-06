@@ -19,6 +19,7 @@ import pytest
 import numpy as np
 import time as _time_mod
 import numpy as _np
+import runtime.wiring as _wiring
 
 
 def test_kairos_tick_uses_is_disputed_helper():
@@ -64,7 +65,7 @@ async def test_kairos_tick_logs_turns_and_notifies_brain():
             pass
 
     try:
-        with patch("pipeline._brain_orchestrator", mock_orchestrator), \
+        with patch("runtime.wiring._brain_orchestrator", mock_orchestrator), \
              patch("pipeline.ask_stream",   new=fake_ask_stream), \
              patch("pipeline.speak_stream", new=fake_speak_stream), \
              patch("pipeline._set_state"):
@@ -116,7 +117,7 @@ async def test_kairos_tick_no_log_when_llm_returns_empty():
             pass
 
     try:
-        with patch("pipeline._brain_orchestrator", mock_orchestrator), \
+        with patch("runtime.wiring._brain_orchestrator", mock_orchestrator), \
              patch("pipeline.ask_stream",   new=fake_ask_stream_empty), \
              patch("pipeline.speak_stream", new=fake_speak_stream), \
              patch("pipeline._set_state"):
@@ -139,7 +140,7 @@ async def test_kairos_tick_silent_before_threshold():
     await pipeline._pipeline_state_store.set_last_user_speech_at(_time_mod.time() - 5)   # only 5s ago, threshold is 30s
 
     try:
-        with patch("pipeline._brain_orchestrator", mock_orchestrator):
+        with patch("runtime.wiring._brain_orchestrator", mock_orchestrator):
             result = await pipeline._kairos_tick("jagan_abc123", "Jagan", mock_db)
     finally:
         await pipeline._pipeline_state_store.set_last_user_speech_at(orig_last_speech)
@@ -156,8 +157,8 @@ async def test_dream_runs_when_idle():
 
     from core.session_state import SessionStore
     pipeline._shutdown_event = asyncio.Event()
-    pipeline._session_store = SessionStore()
-    pipeline._brain_orchestrator = MagicMock()
+    _wiring._session_store = SessionStore()
+    _wiring._brain_orchestrator = MagicMock()
     pipeline._brain_orchestrator.dream = AsyncMock()
     mock_db = MagicMock()
     mock_db.prune_old_strangers_async = AsyncMock(return_value=[])
@@ -186,7 +187,7 @@ async def test_dream_force_trigger_fires_during_active_session():
     from pipeline import _dream_loop
 
     pipeline._shutdown_event = asyncio.Event()
-    pipeline._brain_orchestrator = MagicMock()
+    _wiring._brain_orchestrator = MagicMock()
     pipeline._brain_orchestrator.dream = AsyncMock()
     mock_db = MagicMock()
     mock_db.prune_old_strangers_async = AsyncMock(return_value=[])
@@ -214,7 +215,7 @@ async def test_dream_skips_when_busy_and_not_forced():
     from pipeline import _dream_loop
 
     pipeline._shutdown_event = asyncio.Event()
-    pipeline._brain_orchestrator = MagicMock()
+    _wiring._brain_orchestrator = MagicMock()
     pipeline._brain_orchestrator.dream = AsyncMock()
     mock_db = MagicMock()
     mock_db.prune_old_strangers_async = AsyncMock(return_value=[])
@@ -276,7 +277,7 @@ async def test_kairos_does_not_fire_with_fresh_speech_at():
     await pipeline._session_store.open_session("p1", "Alice", "known", "face", now=time.time())
     await pipeline._pipeline_state_store.set_last_user_speech_at(pipeline.time.time())   # just spoke
     await pipeline._pipeline_state_store.set_last_kairos_at(0.0)                    # cooldown gate would pass
-    pipeline._brain_orchestrator  = MagicMock()
+    _wiring._brain_orchestrator  = MagicMock()
     pipeline._brain_orchestrator.get_pending_question.return_value = {"id": "q1", "text": "Hi?"}
 
     try:
@@ -284,7 +285,7 @@ async def test_kairos_does_not_fire_with_fresh_speech_at():
     finally:
         await pipeline._pipeline_state_store.set_last_user_speech_at(orig_speech_at)
         await pipeline._pipeline_state_store.set_last_kairos_at(orig_kairos_at)
-        pipeline._brain_orchestrator  = orig_orchestrator
+        _wiring._brain_orchestrator  = orig_orchestrator
 
     assert result is False   # silence gate blocked — user just spoke
 
@@ -305,7 +306,7 @@ async def test_kairos_fires_after_silence_threshold():
     await pipeline._pipeline_state_store.set_last_kairos_at(0.0)   # cooldown gate opens too
     mock_orch = MagicMock()
     mock_orch.get_pending_question.return_value = {"id": "q1", "text": "How are you?"}
-    pipeline._brain_orchestrator = mock_orch
+    _wiring._brain_orchestrator = mock_orch
 
     try:
         with patch("pipeline.speak_stream", new_callable=AsyncMock), \
@@ -320,7 +321,7 @@ async def test_kairos_fires_after_silence_threshold():
     finally:
         await pipeline._pipeline_state_store.set_last_user_speech_at(orig_speech_at)
         await pipeline._pipeline_state_store.set_last_kairos_at(orig_kairos_at)
-        pipeline._brain_orchestrator  = orig_orchestrator
+        _wiring._brain_orchestrator  = orig_orchestrator
 
     # The silence gate opened; KAIROS attempted to run (didn't return False early)
     mock_orch.get_pending_question.assert_called()
@@ -342,7 +343,7 @@ async def test_kairos_tick_passes_memory_search_fn():
     await pipeline._pipeline_state_store.set_last_kairos_at(0.0)
     mock_orch = MagicMock()
     mock_orch.get_pending_question.return_value = {"id": "q1", "text": "Do you exercise?"}
-    pipeline._brain_orchestrator = mock_orch
+    _wiring._brain_orchestrator = mock_orch
 
     captured_kwargs = {}
 
@@ -368,7 +369,7 @@ async def test_kairos_tick_passes_memory_search_fn():
     finally:
         await pipeline._pipeline_state_store.set_last_user_speech_at(orig_speech_at)
         await pipeline._pipeline_state_store.set_last_kairos_at(orig_kairos_at)
-        pipeline._brain_orchestrator  = orig_orchestrator
+        _wiring._brain_orchestrator  = orig_orchestrator
 
     assert captured_kwargs.get("memory_search_fn") is my_memory_search, \
         "memory_search_fn not forwarded to ask_stream"
@@ -390,7 +391,7 @@ async def test_kairos_tick_memory_search_fn_none_by_default():
     await pipeline._pipeline_state_store.set_last_kairos_at(0.0)
     mock_orch = MagicMock()
     mock_orch.get_pending_question.return_value = None
-    pipeline._brain_orchestrator = mock_orch
+    _wiring._brain_orchestrator = mock_orch
 
     async def _silent_stream(*a, **kw):
         yield ("text", "SILENT")
@@ -408,7 +409,7 @@ async def test_kairos_tick_memory_search_fn_none_by_default():
     finally:
         await pipeline._pipeline_state_store.set_last_user_speech_at(orig_speech_at)
         await pipeline._pipeline_state_store.set_last_kairos_at(orig_kairos_at)
-        pipeline._brain_orchestrator  = orig_orchestrator
+        _wiring._brain_orchestrator  = orig_orchestrator
 
     assert result is False, "brain returning SILENT must cause tick to return False"
 

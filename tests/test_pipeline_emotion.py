@@ -136,7 +136,7 @@ def test_emotion_agent_created_per_person(tmp_path):
             with patch("pipeline.ask", new_callable=AsyncMock,
                        return_value=("hello", [])):
                 with patch("pipeline.speak", new=AsyncMock()):
-                    with patch("pipeline._brain_orchestrator", None):
+                    with patch("runtime.wiring._brain_orchestrator", None):
                         with patch("core.brain._classify_intent",
                                    new_callable=AsyncMock, return_value=None):
                             await pipeline.conversation_turn(

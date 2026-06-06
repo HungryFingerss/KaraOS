@@ -19,6 +19,7 @@ import pytest
 import numpy as np
 import time as _time_mod
 import numpy as _np
+import runtime.wiring as _wiring
 
 
 def test_clean_for_tts_plain_text_unchanged():
@@ -421,7 +422,7 @@ async def test_stream_truncation_retry_replaces_fragment():
     await pipeline._conversation_store.set_history("p1", [])
     await pipeline._pipeline_state_store.recover_online_no_flag()
     pipeline._per_person_agent_store.reset()
-    pipeline._brain_orchestrator    = None
+    _wiring._brain_orchestrator    = None
     await pipeline._pipeline_state_store.set_detected_lang("en")
     await pipeline._pipeline_state_store.set_active_system_name("Kara")
     pipeline._shutdown_event        = asyncio.Event()
@@ -458,7 +459,7 @@ async def test_stream_truncation_retry_replaces_fragment():
             f"Expected full retry response in history, got: {asst_msgs[0]['content']!r}"
     finally:
         await pipeline._pipeline_state_store.set_cloud_state(orig_cloud)
-        pipeline._brain_orchestrator    = orig_brain
+        _wiring._brain_orchestrator    = orig_brain
         await pipeline._pipeline_state_store.set_detected_lang(orig_lang)
         await pipeline._pipeline_state_store.set_active_system_name(orig_sysname)
         pipeline._shutdown_event        = orig_shutdown
@@ -481,7 +482,7 @@ async def test_stream_truncation_skips_when_multi_word():
     await pipeline._conversation_store.set_history("p1", [])
     await pipeline._pipeline_state_store.recover_online_no_flag()
     pipeline._per_person_agent_store.reset()
-    pipeline._brain_orchestrator    = None
+    _wiring._brain_orchestrator    = None
     await pipeline._pipeline_state_store.set_detected_lang("en")
     await pipeline._pipeline_state_store.set_active_system_name("Kara")
     pipeline._shutdown_event        = asyncio.Event()
@@ -517,7 +518,7 @@ async def test_stream_truncation_skips_when_multi_word():
         assert asst[0]["content"] == _normal_response
     finally:
         await pipeline._pipeline_state_store.set_cloud_state(orig_cloud)
-        pipeline._brain_orchestrator    = orig_brain
+        _wiring._brain_orchestrator    = orig_brain
         await pipeline._pipeline_state_store.set_detected_lang(orig_lang)
         await pipeline._pipeline_state_store.set_active_system_name(orig_sysname)
         pipeline._shutdown_event        = orig_shutdown

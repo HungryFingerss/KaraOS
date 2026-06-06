@@ -353,8 +353,8 @@ def test_p0_s7_5_d3_handle_update_person_name_uses_await():
                 if (
                     isinstance(_f, ast.Attribute)
                     and _f.attr == "rename"
-                    and isinstance(_f.value, ast.Name)
-                    and _f.value.id == "_session_store"
+                    and ((isinstance(_f.value, ast.Name) and _f.value.id == "_session_store")
+                         or (isinstance(_f.value, ast.Attribute) and _f.value.attr == "_session_store"))
                 ):
                     _has_await_rename = True
         # _loop.create_task(_session_store.rename(...))
@@ -371,8 +371,8 @@ def test_p0_s7_5_d3_handle_update_person_name_uses_await():
                     if (
                         isinstance(_inner_f, ast.Attribute)
                         and _inner_f.attr == "rename"
-                        and isinstance(_inner_f.value, ast.Name)
-                        and _inner_f.value.id == "_session_store"
+                        and ((isinstance(_inner_f.value, ast.Name) and _inner_f.value.id == "_session_store")
+                             or (isinstance(_inner_f.value, ast.Attribute) and _inner_f.value.attr == "_session_store"))
                     ):
                         _has_create_task_rename = True
 

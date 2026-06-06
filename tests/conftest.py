@@ -34,6 +34,7 @@ import types
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import runtime.wiring as _wiring
 
 
 def setup_pipeline_stubs() -> None:
@@ -232,7 +233,7 @@ def _reset_pipeline_state_between_tests():
         import pipeline as _pipeline
         # P0.7 store — replaced directly (not via .reset()) to ensure a fresh lock.
         if hasattr(_pipeline, "_session_store"):
-            _pipeline._session_store = SessionStore()
+            _wiring._session_store = SessionStore()
         # P0.6 stores — reset via .reset() (sync, no event loop needed).
         for _sname in _STORE_NAMES:
             if hasattr(_pipeline, _sname):
@@ -243,7 +244,7 @@ def _reset_pipeline_state_between_tests():
         if (hasattr(_pipeline, "PipelineStateStore")
                 and hasattr(_pipeline, "PipelineState")
                 and hasattr(_pipeline, "CloudState")):
-            _pipeline._pipeline_state_store = _pipeline.PipelineStateStore(
+            _wiring._pipeline_state_store = _pipeline.PipelineStateStore(
                 initial_pipeline_state=_pipeline.PipelineState.WATCHING,
                 initial_cloud_state=_pipeline.CloudState.ONLINE,
             )
@@ -253,7 +254,7 @@ def _reset_pipeline_state_between_tests():
         # The class __init__ stores all deps without asserting; per-method
         # None checks handle the gaps (Plan v2 §4 refined 3-layer defense).
         if hasattr(_pipeline, "RoomOrchestrator"):
-            _pipeline._room_orchestrator = _pipeline.RoomOrchestrator(
+            _wiring._room_orchestrator = _pipeline.RoomOrchestrator(
                 session_store=_pipeline._session_store,
                 pipeline_state_store=_pipeline._pipeline_state_store,
                 face_db=getattr(_pipeline, "_face_db_ref", None),
