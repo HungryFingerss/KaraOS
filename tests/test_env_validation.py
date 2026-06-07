@@ -144,11 +144,11 @@ def test_pipeline_run_calls_validate_env_after_dashboard_token():
     # Anchor on each of the 3 locked landmarks
     dash_idx = src.find("_ensure_dashboard_token(FACES_DIR)")
     env_idx = src.find("validate_required_env()")
-    priv_idx = src.find("TOOL_PRIVILEGES missing entries")
+    priv_idx = src.find("validate_tool_registries(")  # P1.A1 SP-7a: validation extracted to runtime/boot_checks.py; ordering now enforced at the run() call site
 
     assert dash_idx > 0, "pipeline.py::run MUST call _ensure_dashboard_token"
     assert env_idx > 0, "pipeline.py::run MUST call validate_required_env() (P0.S3)"
-    assert priv_idx > 0, "pipeline.py::run MUST contain privilege-table check"
+    assert priv_idx > 0, "pipeline.py::run MUST call validate_tool_registries (tool-registry validation)"
 
     assert dash_idx < env_idx, (
         "ORDERING INVARIANT (P0.S2 → P0.S3): _ensure_dashboard_token MUST "

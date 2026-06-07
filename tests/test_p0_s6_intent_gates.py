@@ -99,7 +99,7 @@ def test_d2_pipeline_runtime_assertion_source_present():
     """D2 — source-inspection that the runtime assertion block exists in
     pipeline.py with the expected shape (intent-known set construction +
     missing + orphan checks)."""
-    src = (_REPO_ROOT / "pipeline.py").read_text(encoding="utf-8")
+    src = (_REPO_ROOT / "runtime" / "boot_checks.py").read_text(encoding="utf-8")  # P1.A1 SP-7a: validation extracted
     assert "INTENT_OPTIONAL_TOOLS" in src
     assert "_intent_known" in src
     assert "_intent_missing" in src
@@ -114,7 +114,7 @@ def test_d2_ordering_invariant_comment_present():
     """D2 — ORDERING INVARIANT comment block exists at the assertion site
     per Plan v1 §1.D2 P1 + P0.S3 §1.P3 shape precedent. Future
     maintainers grepping for ORDERING INVARIANT find this anchor."""
-    src = (_REPO_ROOT / "pipeline.py").read_text(encoding="utf-8")
+    src = (_REPO_ROOT / "runtime" / "boot_checks.py").read_text(encoding="utf-8")  # P1.A1 SP-7a: validation extracted
     # The D2 assertion's ORDERING INVARIANT comment must reference both
     # the privilege check (AFTER it) and env validation (AFTER it).
     idx_d2 = src.find("Intent-gate registry integrity check (P0.S6 D2)")
@@ -202,7 +202,7 @@ def test_d3_pipeline_runtime_assertion_source_present():
     """D3 — source-inspection that the fallback runtime assertion block
     exists in pipeline.py with the expected shape (missing + orphan +
     degenerate-whitespace checks)."""
-    src = (_REPO_ROOT / "pipeline.py").read_text(encoding="utf-8")
+    src = (_REPO_ROOT / "runtime" / "boot_checks.py").read_text(encoding="utf-8")  # P1.A1 SP-7a: validation extracted
     assert "_fb_missing" in src
     assert "_fb_orphans" in src
     assert "_fb_degenerate" in src
@@ -215,7 +215,7 @@ def test_d3_pipeline_runtime_assertion_source_present():
 def test_d3_ordering_invariant_comment_present():
     """D3 — ORDERING INVARIANT comment block at the assertion site,
     referencing the AFTER-D2 ordering position."""
-    src = (_REPO_ROOT / "pipeline.py").read_text(encoding="utf-8")
+    src = (_REPO_ROOT / "runtime" / "boot_checks.py").read_text(encoding="utf-8")  # P1.A1 SP-7a: validation extracted
     idx_d3 = src.find("Fallback registry integrity check (P0.S6 D3)")
     assert idx_d3 != -1, "D3 assertion comment header missing"
     window = src[idx_d3:idx_d3 + 1500]
@@ -265,7 +265,7 @@ def test_d4_handler_registry_covers_every_brain_tool():
 def test_d4_pipeline_runtime_assertion_source_present():
     """D4 — source-inspection that the handler runtime assertion block
     exists with expected shape."""
-    src = (_REPO_ROOT / "pipeline.py").read_text(encoding="utf-8")
+    src = (_REPO_ROOT / "runtime" / "boot_checks.py").read_text(encoding="utf-8")  # P1.A1 SP-7a: validation extracted
     assert "_handler_known" in src
     assert "_handler_missing" in src
     assert "_handler_orphans" in src
@@ -275,7 +275,7 @@ def test_d4_pipeline_runtime_assertion_source_present():
 def test_d4_ordering_invariant_comment_present():
     """D4 — ORDERING INVARIANT comment block at the handler-assertion
     site, referencing the AFTER-D3 ordering position."""
-    src = (_REPO_ROOT / "pipeline.py").read_text(encoding="utf-8")
+    src = (_REPO_ROOT / "runtime" / "boot_checks.py").read_text(encoding="utf-8")  # P1.A1 SP-7a: validation extracted
     idx_d4 = src.find("Handler registry integrity check (P0.S6 D4)")
     assert idx_d4 != -1, "D4 assertion comment header missing"
     window = src[idx_d4:idx_d4 + 1500]

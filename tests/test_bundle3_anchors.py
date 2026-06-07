@@ -40,21 +40,21 @@ A1_MIGRATED_SITES: tuple[tuple[str, int], ...] = (
     # moved regions shifted; lines re-derived deterministically via the facade-ify line-map (old→new).
     ("runtime/vision_loop.py", 58), ("runtime/vision_loop.py", 356), ("runtime/vision_loop.py", 352),
     ("runtime/vision_loop.py", 386), ("pipeline.py", 905), ("pipeline.py", 923),  # SP-4 refresh: 1006/2885/2886/2915/3426/3444
-    ("pipeline.py", 2409), ("pipeline.py", 4200),  # SP-4 refresh: 5867/7413 (deep anchors, −333 shift)
-    ("pipeline.py", 4295), ("pipeline.py", 4868), ("pipeline.py", 4877),  # SP-6.4 re-key: 5367/5376 −254 (loop removal above run()); SP-4 refresh: 7753/8580/8589
+    ("pipeline.py", 2409), ("pipeline.py", 4137),  # SP-4 refresh: 5867/7413 (deep anchors, −333 shift)
+    ("pipeline.py", 4295), ("pipeline.py", 4805), ("pipeline.py", 4814),  # SP-6.4 re-key: 5367/5376 −254 (loop removal above run()); SP-4 refresh: 7753/8580/8589
     ("core/brain_agent/orchestrator.py", 357),  # UNCHANGED by SP-4 (orchestrator.py untouched); 6908→6450 P1.A1 SP-2 C4 agents (5557->3104); SP-3 _ensure_graph_sync -> orchestrator.py (__init__:3104 -> orchestrator:357); C3 graph (5991->5557); C2 privacy/context; C1 package-ify; prior: SB.1 D1
     ("runtime/vision_loop.py", 62), ("runtime/vision_loop.py", 352), ("runtime/vision_loop.py", 390),  # SP-4 refresh: 1030/2879/2919
     ("runtime/vision_loop.py", 410), ("pipeline.py", 1012), ("pipeline.py", 973),  # SP-4 refresh: 2939/3533/3494
-    ("pipeline.py", 1015), ("pipeline.py", 1017), ("pipeline.py", 3145),  # SP-6.4 re-key: 3644 −254 (loop removal above run()); SP-4 refresh: 3536/3538/6858
-    ("pipeline.py", 3146), ("pipeline.py", 4360), ("pipeline.py", 4453),  # SP-6.4 re-key: 3645 −254 (loop removal above run()); SP-4 refresh: 6859/7573/7666
-    ("pipeline.py", 4594), ("pipeline.py", 4618),  # SP-4 refresh: 7807/7831
+    ("pipeline.py", 1015), ("pipeline.py", 1017), ("pipeline.py", 3082),  # SP-6.4 re-key: 3644 −254 (loop removal above run()); SP-4 refresh: 3536/3538/6858
+    ("pipeline.py", 3083), ("pipeline.py", 4360), ("pipeline.py", 4390),  # SP-6.4 re-key: 3645 −254 (loop removal above run()); SP-4 refresh: 6859/7573/7666
+    ("pipeline.py", 4594), ("pipeline.py", 4555),  # SP-4 refresh: 7807/7831
     ("core/cache_store.py", 87),  # UNCHANGED by SP-4
     # Developer Pass-3 grep refinement (+6 sites; banked as `Plan-v1-Pass-2-grep-undercount`)
     # P1.A1 SP-6.1 FILE re-key: 408/410 regionally tracked `_has_recent_face_evidence`'s
     # `time.monotonic() - last_seen` deadline-math (95897ef:pipeline.py:390); that helper
     # relocated to runtime/session.py (44-58) → file re-key, net-zero (−2 pipeline.py / +2 session.py).
-    ("runtime/session.py", 44), ("runtime/session.py", 58), ("pipeline.py", 4182),  # SP-4 refresh: 599/601/7395
-    ("pipeline.py", 4176), ("pipeline.py", 4180), ("pipeline.py", 4211),  # SP-4 refresh: 7389/7393/7424
+    ("runtime/session.py", 44), ("runtime/session.py", 58), ("pipeline.py", 4119),  # SP-4 refresh: 599/601/7395
+    ("pipeline.py", 4176), ("pipeline.py", 4117), ("pipeline.py", 4148),  # SP-4 refresh: 7389/7393/7424
 )
 
 
@@ -107,7 +107,11 @@ def test_a3_no_assert_in_migration_files(rel: str) -> None:
 def test_a3_total_44_sites_migrated_to_raise_runtime_error() -> None:
     """A3 — across the 4 Plan v2 §1.14 files, total `raise RuntimeError(` count >= 44."""
     total_raises = 0
-    for rel in A3_FILES:
+    # P1.A1 SP-7a: 8 Bundle-3-migrated raises relocated from pipeline.py to
+    # runtime/boot_checks.py with validate_tool_registries; count it too so the
+    # floor still reflects the full migrated surface (count-only — A3_FILES, which
+    # drives the per-file no-assert parametrize, stays the original 4).
+    for rel in (*A3_FILES, "runtime/boot_checks.py"):
         text = (REPO_ROOT / rel).read_text(encoding="utf-8")
         total_raises += len(re.findall(r"^\s*raise RuntimeError\s*\(", text, re.MULTILINE))
     assert total_raises >= 44, (
