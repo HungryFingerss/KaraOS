@@ -38,6 +38,10 @@ _CONFIG_PATH   = pathlib.Path(__file__).parent.parent / "core" / "config.py"
 
 _PIPELINE_SRC  = _PIPELINE_PATH.read_text(encoding="utf-8")
 _CONFIG_SRC    = _CONFIG_PATH.read_text(encoding="utf-8")
+# P1.A1 SP-6.5: the scene-cache fns (_scene_fingerprint / _get_scene_block_cached /
+# get_scene_block_cache_stats / _build_scene_block) relocated to runtime/context_blocks.py.
+_CB_PATH       = pathlib.Path(__file__).parent.parent / "runtime" / "context_blocks.py"
+_CB_SRC        = _CB_PATH.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -46,14 +50,14 @@ _CONFIG_SRC    = _CONFIG_PATH.read_text(encoding="utf-8")
 
 def test_cache_helpers_present():
     """All three scene_block cache helpers must be defined in pipeline.py."""
-    assert "def _scene_fingerprint(" in _PIPELINE_SRC, (
-        "Wave 6 Item 23 regression: _scene_fingerprint not found in pipeline.py"
+    assert "def _scene_fingerprint(" in _CB_SRC, (
+        "Wave 6 Item 23 regression: _scene_fingerprint not found in context_blocks.py"
     )
-    assert "def _get_scene_block_cached(" in _PIPELINE_SRC, (
-        "Wave 6 Item 23 regression: _get_scene_block_cached not found in pipeline.py"
+    assert "def _get_scene_block_cached(" in _CB_SRC, (
+        "Wave 6 Item 23 regression: _get_scene_block_cached not found in context_blocks.py"
     )
-    assert "def get_scene_block_cache_stats(" in _PIPELINE_SRC, (
-        "Wave 6 Item 23 regression: get_scene_block_cache_stats not found in pipeline.py"
+    assert "def get_scene_block_cache_stats(" in _CB_SRC, (
+        "Wave 6 Item 23 regression: get_scene_block_cache_stats not found in context_blocks.py"
     )
 
 
@@ -66,7 +70,7 @@ def test_call_sites_use_cached_wrapper():
     # Count direct _build_scene_block( occurrences outside its own def header
     # by looking at call-pattern lines (not 'def _build_scene_block').
     call_lines = [
-        ln for ln in _PIPELINE_SRC.splitlines()
+        ln for ln in _CB_SRC.splitlines()
         if "_build_scene_block(" in ln and "def _build_scene_block(" not in ln
     ]
     # The only remaining occurrence must be the one inside _get_scene_block_cached

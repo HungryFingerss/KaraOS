@@ -70,7 +70,8 @@ _WRITE_SCAN_FILES = (
     + sorted((REPO_ROOT / "tests").glob("*.py"))
 )
 _READ_SCAN_FILES = [REPO_ROOT / "pipeline.py", REPO_ROOT / "runtime" / "vision_loop.py",
-                    REPO_ROOT / "runtime" / "background_loops.py"]  # P1.A1 SP-6.4
+                    REPO_ROOT / "runtime" / "background_loops.py",  # P1.A1 SP-6.4
+                    REPO_ROOT / "runtime" / "context_blocks.py"]   # P1.A1 SP-6.5 (_set_state reads _wiring._pipeline_state_store)
 
 
 def _tree(path: Path) -> ast.Module:

@@ -116,10 +116,14 @@ def test_persons_in_frame_updated_for_voice_match():
 def test_scene_block_replaces_room_roster():
     """SCENE block is built every turn; old stranger-addendum 'Room:' roster is removed."""
     import inspect, pipeline
+    import runtime.context_blocks as _cb
     src = inspect.getsource(pipeline)
-    # SCENE block is built in conversation_turn()
-    assert "_build_scene_block(" in src, \
-        "_build_scene_block must be called in conversation_turn"
+    # P1.A1 SP-6.5: _build_scene_block relocated to runtime/context_blocks.py
+    # (conversation_turn calls the cached wrapper _get_scene_block_cached, which
+    # builds via _build_scene_block in context_blocks).
+    cb_src = inspect.getsource(_cb)
+    assert "_build_scene_block(" in cb_src, \
+        "_build_scene_block must be called in the scene-block path (context_blocks)"
     assert "scene_block=" in src, \
         "scene_block must be passed to ask()/ask_stream()"
     # Old stranger-addendum room roster deleted (covered by SCENE block now)
