@@ -243,6 +243,7 @@ from flows.companion.tools import (  # noqa: F401  — P1.A1 SP-6.2 re-export (t
     _ToolContext, _handle_update_person_name, _handle_report_identity_mismatch, _handle_update_system_name,
     _handle_shutdown, _handle_search_memory, _TOOL_HANDLERS, _execute_tool,
 )
+from flows.companion.turn_flows import shadow_classify  # noqa: F401  — P1.A1 SP-7b.1 re-export
 from runtime.identity_cache import (  # noqa: F401  — P1.A1 SP-6.2 re-export (bf-cache funcs;
     _get_best_friend_cached, _invalidate_bf_cache,  # raw _cached_bf_* globals NOT re-exported — mutable, stale-snapshot trap)
 )
@@ -2427,34 +2428,8 @@ async def conversation_turn(
                 ),
             )
 
-    # ── VISION_ROADMAP P1.3 — shadow intent classifier (lazy, gated-tool only) ─
-    # Only fire the classifier when the main stream proposed a tool whose
-    # gate is in TOOL_INTENT_MAP. Non-gated turns (no tools, or only search_memory)
-    # pay zero extra cost. The result is a dict {turn_intent, extracted_value,
-    # confidence, reasoning} or None on classifier failure. For Phase 1.3 we
-    # only LOG it — the regex gate remains authoritative until P1.7+ wires the
-    # validator (gated behind INTENT_FALLBACK_TO_REGEX).
-    from core.config import INTENT_SHADOW_MODE_ENABLED, TOOL_INTENT_MAP
-    _intent_sidecar: "dict | None" = None
-    if (INTENT_SHADOW_MODE_ENABLED
-            and tool_calls
-            and any(tc["name"] in TOOL_INTENT_MAP for tc in tool_calls)):
-        # Spec 2 wiring: route through `_classify_intent_smart` so graph
-        # runs alongside LLM in shadow mode. Production behavior identical
-        # in shadow (LLM result returned + divergences logged).
-        from core.brain import _classify_intent_smart
-        _intent_sidecar = await _classify_intent_smart(text, conversation_history=history)
-        if _intent_sidecar is not None:
-            _tool_names_str = ", ".join(tc["name"] for tc in tool_calls
-                                        if tc["name"] in TOOL_INTENT_MAP)
-            print(
-                f"[Intent] {_now_log_ts()} "
-                f"tools=[{_tool_names_str}] "
-                f"classified={_intent_sidecar['turn_intent']} "
-                f"value={_intent_sidecar['extracted_value']!r} "
-                f"conf={_intent_sidecar['confidence']:.2f} "
-                f"reason={_intent_sidecar.get('reasoning', '')[:80]!r}"
-            )
+    # Shadow intent classifier (lazy, gated-tool only) -> flows.companion.turn_flows  [P1.A1 SP-7b.1]
+    _intent_sidecar = await shadow_classify(text, history, tool_calls)
 
     # ── Spec 2: brain stays silent on user correction ───────────────────
     # When the graph classifier (or any future classifier) emits

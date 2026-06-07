@@ -6170,12 +6170,12 @@ def test_classifier_fires_only_on_gated_tools():
     """P1.3 refinement #1: the classifier is LAZY — fires only when the
     main stream proposed a tool listed in TOOL_INTENT_MAP. Non-gated turns
     (empty tool_calls, or search_memory only) must pay zero extra cost.
-    Source-inspection of conversation_turn enforces this."""
+    Source-inspection of shadow_classify (flows.companion.turn_flows) enforces this."""
     import inspect, pipeline
-    src = inspect.getsource(pipeline.conversation_turn)
+    src = inspect.getsource(pipeline.shadow_classify)  # P1.A1 SP-7b.1: relocated to flows.companion.turn_flows (move-immune via co_filename)
     # Must import the gate map.
     assert "TOOL_INTENT_MAP" in src, (
-        "conversation_turn must consult TOOL_INTENT_MAP before firing the "
+        "shadow_classify must consult TOOL_INTENT_MAP before firing the "
         "classifier — else we pay for classification on 100% of turns"
     )
     # Must guard on any-tool-in-map.
@@ -6194,7 +6194,7 @@ def test_classifier_result_logged_as_intent_line():
     so operators can scan terminal output during the observation window.
     Source-inspection — this is Phase 1's entire purpose (observable sidecar)."""
     import inspect, pipeline
-    src = inspect.getsource(pipeline.conversation_turn)
+    src = inspect.getsource(pipeline.shadow_classify)  # P1.A1 SP-7b.1: relocated to flows.companion.turn_flows (move-immune via co_filename)
     assert "[Intent]" in src, (
         "classifier output must log with '[Intent]' prefix for grep-able observation"
     )

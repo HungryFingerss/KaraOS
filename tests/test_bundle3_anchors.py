@@ -39,22 +39,22 @@ A1_MIGRATED_SITES: tuple[tuple[str, int], ...] = (
     # leaves moved to runtime/{text,state_enums,context_blocks}.py. Every pipeline.py anchor below the
     # moved regions shifted; lines re-derived deterministically via the facade-ify line-map (old→new).
     ("runtime/vision_loop.py", 58), ("runtime/vision_loop.py", 356), ("runtime/vision_loop.py", 352),
-    ("runtime/vision_loop.py", 386), ("pipeline.py", 905), ("pipeline.py", 923),  # SP-4 refresh: 1006/2885/2886/2915/3426/3444
-    ("pipeline.py", 2409), ("pipeline.py", 4137),  # SP-4 refresh: 5867/7413 (deep anchors, −333 shift)
-    ("pipeline.py", 4295), ("pipeline.py", 4805), ("pipeline.py", 4814),  # SP-6.4 re-key: 5367/5376 −254 (loop removal above run()); SP-4 refresh: 7753/8580/8589
+    ("runtime/vision_loop.py", 386), ("pipeline.py", 906), ("pipeline.py", 924),  # SP-7b.1 re-key +1 (re-export@246); SP-4 refresh: 1006/2885/2886/2915/3426/3444
+    ("pipeline.py", 2410), ("pipeline.py", 4112),  # SP-7b.1 re-key: 2409 +1 (re-export); 4137 −25 (shadow_classify slice removal); SP-4 refresh: 5867/7413
+    ("pipeline.py", 4270), ("pipeline.py", 4780), ("pipeline.py", 4789),  # SP-7b.1 re-key −25 (shadow_classify slice); SP-6.4 re-key: 5367/5376 −254; SP-4 refresh: 7753/8580/8589
     ("core/brain_agent/orchestrator.py", 357),  # UNCHANGED by SP-4 (orchestrator.py untouched); 6908→6450 P1.A1 SP-2 C4 agents (5557->3104); SP-3 _ensure_graph_sync -> orchestrator.py (__init__:3104 -> orchestrator:357); C3 graph (5991->5557); C2 privacy/context; C1 package-ify; prior: SB.1 D1
     ("runtime/vision_loop.py", 62), ("runtime/vision_loop.py", 352), ("runtime/vision_loop.py", 390),  # SP-4 refresh: 1030/2879/2919
-    ("runtime/vision_loop.py", 410), ("pipeline.py", 1012), ("pipeline.py", 973),  # SP-4 refresh: 2939/3533/3494
-    ("pipeline.py", 1015), ("pipeline.py", 1017), ("pipeline.py", 3082),  # SP-6.4 re-key: 3644 −254 (loop removal above run()); SP-4 refresh: 3536/3538/6858
-    ("pipeline.py", 3083), ("pipeline.py", 4360), ("pipeline.py", 4390),  # SP-6.4 re-key: 3645 −254 (loop removal above run()); SP-4 refresh: 6859/7573/7666
-    ("pipeline.py", 4594), ("pipeline.py", 4555),  # SP-4 refresh: 7807/7831
+    ("runtime/vision_loop.py", 410), ("pipeline.py", 1013), ("pipeline.py", 974),  # SP-7b.1 re-key +1 (re-export); SP-4 refresh: 2939/3533/3494
+    ("pipeline.py", 1016), ("pipeline.py", 1018), ("pipeline.py", 3057),  # SP-7b.1 re-key: 1015/1017 +1 (re-export), 3082 −25 (slice); SP-6.4 re-key: 3644 −254; SP-4 refresh: 3536/3538/6858
+    ("pipeline.py", 3058), ("pipeline.py", 4335), ("pipeline.py", 4365),  # SP-7b.1 re-key −25 (slice); SP-6.4 re-key: 3645 −254; SP-4 refresh: 6859/7573/7666
+    ("pipeline.py", 4569), ("pipeline.py", 4530),  # SP-7b.1 re-key −25 (slice); SP-4 refresh: 7807/7831
     ("core/cache_store.py", 87),  # UNCHANGED by SP-4
     # Developer Pass-3 grep refinement (+6 sites; banked as `Plan-v1-Pass-2-grep-undercount`)
     # P1.A1 SP-6.1 FILE re-key: 408/410 regionally tracked `_has_recent_face_evidence`'s
     # `time.monotonic() - last_seen` deadline-math (95897ef:pipeline.py:390); that helper
     # relocated to runtime/session.py (44-58) → file re-key, net-zero (−2 pipeline.py / +2 session.py).
-    ("runtime/session.py", 44), ("runtime/session.py", 58), ("pipeline.py", 4119),  # SP-4 refresh: 599/601/7395
-    ("pipeline.py", 4176), ("pipeline.py", 4117), ("pipeline.py", 4148),  # SP-4 refresh: 7389/7393/7424
+    ("runtime/session.py", 44), ("runtime/session.py", 58), ("pipeline.py", 4094),  # SP-7b.1 re-key: 4119 −25 (slice); SP-4 refresh: 599/601/7395
+    ("pipeline.py", 4151), ("pipeline.py", 4092), ("pipeline.py", 4123),  # SP-7b.1 re-key −25 (slice); SP-4 refresh: 7389/7393/7424
 )
 
 
