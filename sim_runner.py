@@ -681,7 +681,7 @@ def _load_session_state() -> dict | None:
 
 async def initialize() -> FaceDB:
     """Initialize all pipeline infrastructure (camera/vision skipped)."""
-    pipeline._shutdown_event    = asyncio.Event()
+    _wiring._shutdown_event    = asyncio.Event()
     pipeline._last_user_speech_at = time.time()
     pipeline._last_kairos_at      = time.time()
 
@@ -709,7 +709,7 @@ async def initialize() -> FaceDB:
     print("[Sim] Emotion model ready")
 
     _wiring._brain_orchestrator = BrainOrchestrator(
-        pipeline._shutdown_event,
+        _wiring._shutdown_event,
         brain_db_path=SIM_BRAIN_PATH,
         graph_db_path=SIM_GRAPH_PATH,
         faces_db_path=SIM_DB_PATH,
@@ -843,7 +843,7 @@ async def run_turns(turns_file: str) -> None:
 
     print("[Sim] Waiting for brain agent to drain...")
     await asyncio.sleep(8.0)
-    pipeline._shutdown_event.set()
+    _wiring._shutdown_event.set()
     print("[Sim] Done.")
 
 
@@ -855,7 +855,7 @@ async def close_session() -> None:
         print(f"[Sim] Running session-end tasks for {_LEGACY_PERSON_NAME}...")
         pipeline._brain_orchestrator.notify_session_end(_LEGACY_PERSON_ID)
         await asyncio.sleep(5.0)
-    pipeline._shutdown_event.set()
+    _wiring._shutdown_event.set()
     _STATE_FILE.unlink(missing_ok=True)
     print("[Sim] Session closed and state cleared.")
 

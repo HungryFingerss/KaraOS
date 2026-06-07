@@ -28,10 +28,10 @@ def test_stop_audio_safe():
 
 def test_shutdown_event_initially_none():
     print("TEST 2: _shutdown_event is None before run() is called")
-    import pipeline
+    import runtime.wiring as _wiring  # P1.A1 SP-6.4: _shutdown_event WIRE-d to runtime.wiring
     # In a fresh import _shutdown_event is None (not yet inside run())
-    assert pipeline._shutdown_event is None, \
-        f"Expected None, got {pipeline._shutdown_event}"
+    assert _wiring._shutdown_event is None, \
+        f"Expected None, got {_wiring._shutdown_event}"
     print("  -> _shutdown_event is None OK")
 
 

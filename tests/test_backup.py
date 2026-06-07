@@ -185,14 +185,15 @@ def test_run_daily_backup_pass_collects_errors_without_raising(tmp_path):
 
 def test_pipeline_dream_loop_invokes_backup_when_enabled():
     import os
-    pipeline_path = os.path.join(
-        os.path.dirname(__file__), "..", "pipeline.py"
+    # P1.A1 SP-6.4: _dream_loop relocated to runtime/background_loops.py.
+    loops_path = os.path.join(
+        os.path.dirname(__file__), "..", "runtime", "background_loops.py"
     )
-    src = open(pipeline_path, encoding="utf-8").read()
+    src = open(loops_path, encoding="utf-8").read()
 
     assert "run_daily_backup_pass" in src, (
-        "pipeline.py must call run_daily_backup_pass in the dream loop"
+        "background_loops.py must call run_daily_backup_pass in the dream loop"
     )
     assert "DAILY_BACKUP_ENABLED" in src, (
-        "pipeline.py must gate backup on config.DAILY_BACKUP_ENABLED"
+        "background_loops.py must gate backup on config.DAILY_BACKUP_ENABLED"
     )

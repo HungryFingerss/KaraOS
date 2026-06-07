@@ -40,16 +40,23 @@ THE_5 = frozenset({
 SP63_FORWARDED = frozenset({"_anti_spoof_checker", "_vision_task"})
 # SP-6.3 WIRE-d vision globals read+written ONLY internally (run + vision_loop) -> NOT forwarded
 SP63_INTERNAL = frozenset({"_vision_last_heartbeat", "_vision_last_heartbeat_state"})
+# SP-6.4 WIRE-d background-loop global. Multi-module (loops + run/first_boot/enrollment/
+# conversation_turn) but NOT forwarded: all test access repointed to runtime.wiring (symmetric),
+# so nothing reads pipeline._shutdown_event -> the strict facade fail-loud + write-completeness
+# carry the guard. The FIRST WIRE-d global tests heavily WRITE -> write-completeness now load-bearing.
+SP64_WIRED = frozenset({"_shutdown_event"})
 
-# the __getattr__ whitelist == every facade-forwarded name (5 + 2)
+# the __getattr__ whitelist == every facade-forwarded name (5 + 2; _shutdown_event NOT forwarded)
 FORWARDED = THE_5 | SP63_FORWARDED
-# read-completeness scan set == EVERY wired global (no bare Name anywhere) (5 + 4)
-WIRED_ALL = THE_5 | SP63_FORWARDED | SP63_INTERNAL
+# read-completeness scan set == EVERY wired global (no bare Name anywhere) (5 + 4 + 1)
+WIRED_ALL = THE_5 | SP63_FORWARDED | SP63_INTERNAL | SP64_WIRED
 
 PIPELINE_ALIASES = {"pipeline", "_pl", "_pipeline"}
 _ALIAS_RE = r"(?:pipeline|_pl|_pipeline)"
-_NAMES_RE = "|".join(sorted(FORWARDED))
-# patch-shadow forms — patch/patch.object/setattr that setattr a REAL pipeline.<forwarded>
+# write-completeness scans the FULL wired set (10): a pipeline.<any-wired> = ... / patch shadow is
+# ALWAYS a bug (the rewired read hits _wiring._X), regardless of whether the name is forwarded.
+_NAMES_RE = "|".join(sorted(WIRED_ALL))
+# patch-shadow forms — patch/patch.object/setattr that setattr a REAL pipeline.<wired>
 # attr, shadowing __getattr__ (the rewired read hits _wiring._X, so these MUST target
 # runtime.wiring._X). AST assignment-scan does NOT see these (they're Calls).
 _PATCH_SHADOW_RE = re.compile(
@@ -62,7 +69,8 @@ _WRITE_SCAN_FILES = (
     [REPO_ROOT / "pipeline.py", REPO_ROOT / "sim_runner.py", REPO_ROOT / "conftest.py"]
     + sorted((REPO_ROOT / "tests").glob("*.py"))
 )
-_READ_SCAN_FILES = [REPO_ROOT / "pipeline.py", REPO_ROOT / "runtime" / "vision_loop.py"]
+_READ_SCAN_FILES = [REPO_ROOT / "pipeline.py", REPO_ROOT / "runtime" / "vision_loop.py",
+                    REPO_ROOT / "runtime" / "background_loops.py"]  # P1.A1 SP-6.4
 
 
 def _tree(path: Path) -> ast.Module:
@@ -105,9 +113,11 @@ def test_sp5_read_completeness_no_bare_wired_name_in_engine():
 
 
 def test_sp5_write_completeness_no_facade_shadowing_assignment():
-    """R2 write-completeness — no file assigns/patches `<pipeline-alias>.<forwarded-name>`,
-    which would create a real pipeline attr shadowing the __getattr__ facade. Every rebind
-    must target `_wiring._X` / `runtime.wiring._X`. AST + regex (string-immune for the assign)."""
+    """R2 write-completeness — no file assigns/patches `<pipeline-alias>.<wired-name>` for ANY
+    wired global (10), which would create a real pipeline attr shadowing the __getattr__ facade /
+    the rewired _wiring._X read. Every rebind must target `_wiring._X` / `runtime.wiring._X`.
+    P1.A1 SP-6.4: _shutdown_event is the first WIRE-d global tests heavily WRITE, so this write-side
+    guard is newly load-bearing — it pins the 24 repointed sites + catches any future re-shadow."""
     offenders = []
     for path in _WRITE_SCAN_FILES:
         if path.name == Path(__file__).name:
@@ -121,7 +131,7 @@ def test_sp5_write_completeness_no_facade_shadowing_assignment():
             targets = node.targets if isinstance(node, ast.Assign) else (
                 [node.target] if isinstance(node, ast.AnnAssign) else [])
             for t in targets:
-                if (isinstance(t, ast.Attribute) and t.attr in FORWARDED
+                if (isinstance(t, ast.Attribute) and t.attr in WIRED_ALL
                         and isinstance(t.value, ast.Name) and t.value.id in PIPELINE_ALIASES):
                     offenders.append(f"{path.name}:{node.lineno} ({t.value.id}.{t.attr} = ...)")
         for i, line in enumerate(text.splitlines(), 1):

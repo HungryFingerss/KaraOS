@@ -71,6 +71,12 @@ _vision_task: "asyncio.Task | None" = None
 _vision_last_heartbeat:       float         = 0.0  # epoch time of last [Vision] status print
 _vision_last_heartbeat_state: str           = ""   # last printed heartbeat content — skip if unchanged
 
+# P1.A1 SP-6.4 — WIRE-d background-loop global (multi-module read+write: the loop fns in
+# runtime.background_loops + staying pipeline code [run/first_boot/enrollment/conversation_turn]).
+# Canonical home so reads+writes from both modules share one __dict__ (SP-5 lesson). Created
+# inside run() once the event loop is running (signal handlers fire outside the loop).
+_shutdown_event:     asyncio.Event | None      = None
+
 
 def set_brain_orchestrator(value):
     """Canonical-home setter for the rebound _brain_orchestrator (P1.A1 SP-5).

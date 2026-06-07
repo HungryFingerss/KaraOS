@@ -1052,7 +1052,7 @@ async def test_rejected_shutdown_response_overridden_to_neutral():
     orig_brain     = pipeline._brain_orchestrator
     orig_lang      = pipeline._pipeline_state_store.peek_detected_lang()
     orig_sysname   = pipeline._pipeline_state_store.peek_active_system_name()
-    orig_shutdown  = pipeline._shutdown_event
+    orig_shutdown  = _wiring._shutdown_event
 
     await pipeline._session_store.open_session("p_sd", "Jagan", "best_friend", "face", now=__import__("time").time())
     await pipeline._conversation_store.set_history("p_sd", [])
@@ -1061,7 +1061,7 @@ async def test_rejected_shutdown_response_overridden_to_neutral():
     _wiring._brain_orchestrator    = None
     await pipeline._pipeline_state_store.set_detected_lang("en")
     await pipeline._pipeline_state_store.set_active_system_name("Kara")
-    pipeline._shutdown_event        = asyncio.Event()   # fresh, not set
+    _wiring._shutdown_event        = asyncio.Event()   # fresh, not set
 
     async def fake_ask_stream(*args, **kwargs):
         yield ("text", "Goodbye!")
@@ -1087,7 +1087,7 @@ async def test_rejected_shutdown_response_overridden_to_neutral():
         _wiring._brain_orchestrator    = orig_brain
         await pipeline._pipeline_state_store.set_detected_lang(orig_lang)
         await pipeline._pipeline_state_store.set_active_system_name(orig_sysname)
-        pipeline._shutdown_event        = orig_shutdown
+        _wiring._shutdown_event        = orig_shutdown
 
 
 async def test_rejected_shutdown_does_not_write_goodbye_to_history():
@@ -1099,7 +1099,7 @@ async def test_rejected_shutdown_does_not_write_goodbye_to_history():
     orig_brain     = pipeline._brain_orchestrator
     orig_lang      = pipeline._pipeline_state_store.peek_detected_lang()
     orig_sysname   = pipeline._pipeline_state_store.peek_active_system_name()
-    orig_shutdown  = pipeline._shutdown_event
+    orig_shutdown  = _wiring._shutdown_event
 
     await pipeline._session_store.open_session("p_sd", "Jagan", "best_friend", "face", now=__import__("time").time())
     await pipeline._conversation_store.set_history("p_sd", [])
@@ -1108,7 +1108,7 @@ async def test_rejected_shutdown_does_not_write_goodbye_to_history():
     _wiring._brain_orchestrator    = None
     await pipeline._pipeline_state_store.set_detected_lang("en")
     await pipeline._pipeline_state_store.set_active_system_name("Kara")
-    pipeline._shutdown_event        = asyncio.Event()
+    _wiring._shutdown_event        = asyncio.Event()
 
     async def fake_ask_stream(*args, **kwargs):
         yield ("text", "Goodbye!")
@@ -1134,7 +1134,7 @@ async def test_rejected_shutdown_does_not_write_goodbye_to_history():
         _wiring._brain_orchestrator    = orig_brain
         await pipeline._pipeline_state_store.set_detected_lang(orig_lang)
         await pipeline._pipeline_state_store.set_active_system_name(orig_sysname)
-        pipeline._shutdown_event        = orig_shutdown
+        _wiring._shutdown_event        = orig_shutdown
 
 
 async def test_approved_shutdown_override_does_not_fire():
@@ -1146,7 +1146,7 @@ async def test_approved_shutdown_override_does_not_fire():
     orig_brain     = pipeline._brain_orchestrator
     orig_lang      = pipeline._pipeline_state_store.peek_detected_lang()
     orig_sysname   = pipeline._pipeline_state_store.peek_active_system_name()
-    orig_shutdown  = pipeline._shutdown_event
+    orig_shutdown  = _wiring._shutdown_event
 
     await pipeline._session_store.open_session("p_sd", "Jagan", "best_friend", "face", now=__import__("time").time())
     await pipeline._conversation_store.set_history("p_sd", [])
@@ -1155,7 +1155,7 @@ async def test_approved_shutdown_override_does_not_fire():
     _wiring._brain_orchestrator    = None
     await pipeline._pipeline_state_store.set_detected_lang("en")
     await pipeline._pipeline_state_store.set_active_system_name("Kara")
-    pipeline._shutdown_event        = asyncio.Event()
+    _wiring._shutdown_event        = asyncio.Event()
 
     async def fake_ask_stream(*args, **kwargs):
         yield ("text", "Goodbye!")
@@ -1182,7 +1182,7 @@ async def test_approved_shutdown_override_does_not_fire():
         _wiring._brain_orchestrator    = orig_brain
         await pipeline._pipeline_state_store.set_detected_lang(orig_lang)
         await pipeline._pipeline_state_store.set_active_system_name(orig_sysname)
-        pipeline._shutdown_event        = orig_shutdown
+        _wiring._shutdown_event        = orig_shutdown
 
 
 @pytest.mark.asyncio

@@ -417,7 +417,7 @@ async def test_stream_truncation_retry_replaces_fragment():
     orig_brain    = pipeline._brain_orchestrator
     orig_lang     = pipeline._pipeline_state_store.peek_detected_lang()
     orig_sysname  = pipeline._pipeline_state_store.peek_active_system_name()
-    orig_shutdown = pipeline._shutdown_event
+    orig_shutdown = _wiring._shutdown_event
 
     await pipeline._conversation_store.set_history("p1", [])
     await pipeline._pipeline_state_store.recover_online_no_flag()
@@ -425,7 +425,7 @@ async def test_stream_truncation_retry_replaces_fragment():
     _wiring._brain_orchestrator    = None
     await pipeline._pipeline_state_store.set_detected_lang("en")
     await pipeline._pipeline_state_store.set_active_system_name("Kara")
-    pipeline._shutdown_event        = asyncio.Event()
+    _wiring._shutdown_event        = asyncio.Event()
 
     # Simulate stream that only yields "Jagan" (1 word — truncation scenario)
     async def fake_stream_truncated(*a, **kw):
@@ -462,7 +462,7 @@ async def test_stream_truncation_retry_replaces_fragment():
         _wiring._brain_orchestrator    = orig_brain
         await pipeline._pipeline_state_store.set_detected_lang(orig_lang)
         await pipeline._pipeline_state_store.set_active_system_name(orig_sysname)
-        pipeline._shutdown_event        = orig_shutdown
+        _wiring._shutdown_event        = orig_shutdown
 
 
 @pytest.mark.asyncio
@@ -477,7 +477,7 @@ async def test_stream_truncation_skips_when_multi_word():
     orig_brain    = pipeline._brain_orchestrator
     orig_lang     = pipeline._pipeline_state_store.peek_detected_lang()
     orig_sysname  = pipeline._pipeline_state_store.peek_active_system_name()
-    orig_shutdown = pipeline._shutdown_event
+    orig_shutdown = _wiring._shutdown_event
 
     await pipeline._conversation_store.set_history("p1", [])
     await pipeline._pipeline_state_store.recover_online_no_flag()
@@ -485,7 +485,7 @@ async def test_stream_truncation_skips_when_multi_word():
     _wiring._brain_orchestrator    = None
     await pipeline._pipeline_state_store.set_detected_lang("en")
     await pipeline._pipeline_state_store.set_active_system_name("Kara")
-    pipeline._shutdown_event        = asyncio.Event()
+    _wiring._shutdown_event        = asyncio.Event()
 
     _normal_response = "Photosynthesis is how plants make food from sunlight."
     _offline_called  = []
@@ -521,7 +521,7 @@ async def test_stream_truncation_skips_when_multi_word():
         _wiring._brain_orchestrator    = orig_brain
         await pipeline._pipeline_state_store.set_detected_lang(orig_lang)
         await pipeline._pipeline_state_store.set_active_system_name(orig_sysname)
-        pipeline._shutdown_event        = orig_shutdown
+        _wiring._shutdown_event        = orig_shutdown
 
 
 def test_stream_truncation_retry_checks_terminal_punctuation():

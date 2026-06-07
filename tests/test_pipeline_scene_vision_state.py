@@ -138,7 +138,7 @@ async def test_in_session_history_trimmed_at_limit():
     orig_brain    = pipeline._brain_orchestrator
     orig_lang     = pipeline._pipeline_state_store.peek_detected_lang()
     orig_sysname  = pipeline._pipeline_state_store.peek_active_system_name()
-    orig_shutdown = pipeline._shutdown_event
+    orig_shutdown = _wiring._shutdown_event
 
     # Pre-populate history at exactly the limit (simulates loaded DB history)
     pre_history = []
@@ -153,7 +153,7 @@ async def test_in_session_history_trimmed_at_limit():
     _wiring._brain_orchestrator    = None
     await pipeline._pipeline_state_store.set_detected_lang("en")
     await pipeline._pipeline_state_store.set_active_system_name("Kara")
-    pipeline._shutdown_event        = asyncio.Event()
+    _wiring._shutdown_event        = asyncio.Event()
 
     async def fake_stream(*a, **kw):
         yield ("text", "Great question, here is the answer.")
@@ -180,7 +180,7 @@ async def test_in_session_history_trimmed_at_limit():
         _wiring._brain_orchestrator    = orig_brain
         await pipeline._pipeline_state_store.set_detected_lang(orig_lang)
         await pipeline._pipeline_state_store.set_active_system_name(orig_sysname)
-        pipeline._shutdown_event        = orig_shutdown
+        _wiring._shutdown_event        = orig_shutdown
 
 
 def test_in_session_history_cap_in_source():

@@ -46,9 +46,9 @@ async def test_cloud_retry_loop_continues_after_recovery():
     await pipeline._pipeline_state_store.transition_to_sick(_time_mod.time() - 10)
     _wiring._brain_orchestrator = None
 
-    with patch("pipeline.CLOUD_RETRY_INTERVAL", 0.05), \
-         patch("pipeline.ping_together", side_effect=fake_ping), \
-         patch("pipeline._shutdown_event", shutdown):
+    with patch("runtime.background_loops.CLOUD_RETRY_INTERVAL", 0.05), \
+         patch("runtime.background_loops.ping_together", side_effect=fake_ping), \
+         patch("runtime.wiring._shutdown_event", shutdown):
 
         task = asyncio.create_task(_cloud_retry_loop())
 
@@ -99,9 +99,9 @@ async def test_cloud_retry_loop_skips_ping_when_online():
         ping_called = True
         return True
 
-    with patch("pipeline.CLOUD_RETRY_INTERVAL", 0.05), \
-         patch("pipeline.ping_together", side_effect=fake_ping), \
-         patch("pipeline._shutdown_event", shutdown):
+    with patch("runtime.background_loops.CLOUD_RETRY_INTERVAL", 0.05), \
+         patch("runtime.background_loops.ping_together", side_effect=fake_ping), \
+         patch("runtime.wiring._shutdown_event", shutdown):
 
         task = asyncio.create_task(_cloud_retry_loop())
 

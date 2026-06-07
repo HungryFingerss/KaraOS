@@ -41,12 +41,12 @@ A1_MIGRATED_SITES: tuple[tuple[str, int], ...] = (
     ("runtime/vision_loop.py", 58), ("runtime/vision_loop.py", 356), ("runtime/vision_loop.py", 352),
     ("runtime/vision_loop.py", 386), ("pipeline.py", 1150), ("pipeline.py", 1168),  # SP-4 refresh: 1006/2885/2886/2915/3426/3444
     ("pipeline.py", 2654), ("pipeline.py", 4200),  # SP-4 refresh: 5867/7413 (deep anchors, −333 shift)
-    ("pipeline.py", 4540), ("pipeline.py", 5367), ("pipeline.py", 5376),  # SP-4 refresh: 7753/8580/8589
+    ("pipeline.py", 4540), ("pipeline.py", 5113), ("pipeline.py", 5122),  # SP-6.4 re-key: 5367/5376 −254 (loop removal above run()); SP-4 refresh: 7753/8580/8589
     ("core/brain_agent/orchestrator.py", 357),  # UNCHANGED by SP-4 (orchestrator.py untouched); 6908→6450 P1.A1 SP-2 C4 agents (5557->3104); SP-3 _ensure_graph_sync -> orchestrator.py (__init__:3104 -> orchestrator:357); C3 graph (5991->5557); C2 privacy/context; C1 package-ify; prior: SB.1 D1
     ("runtime/vision_loop.py", 62), ("runtime/vision_loop.py", 352), ("runtime/vision_loop.py", 390),  # SP-4 refresh: 1030/2879/2919
     ("runtime/vision_loop.py", 410), ("pipeline.py", 1257), ("pipeline.py", 1218),  # SP-4 refresh: 2939/3533/3494
-    ("pipeline.py", 1260), ("pipeline.py", 1262), ("pipeline.py", 3644),  # SP-4 refresh: 3536/3538/6858
-    ("pipeline.py", 3645), ("pipeline.py", 4360), ("pipeline.py", 4453),  # SP-4 refresh: 6859/7573/7666
+    ("pipeline.py", 1260), ("pipeline.py", 1262), ("pipeline.py", 3390),  # SP-6.4 re-key: 3644 −254 (loop removal above run()); SP-4 refresh: 3536/3538/6858
+    ("pipeline.py", 3391), ("pipeline.py", 4360), ("pipeline.py", 4453),  # SP-6.4 re-key: 3645 −254 (loop removal above run()); SP-4 refresh: 6859/7573/7666
     ("pipeline.py", 4594), ("pipeline.py", 4618),  # SP-4 refresh: 7807/7831
     ("core/cache_store.py", 87),  # UNCHANGED by SP-4
     # Developer Pass-3 grep refinement (+6 sites; banked as `Plan-v1-Pass-2-grep-undercount`)

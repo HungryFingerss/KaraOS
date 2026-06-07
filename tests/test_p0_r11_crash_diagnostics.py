@@ -293,9 +293,10 @@ def test_p0_r11_a7_healthsnapshot_recent_crash_logs_field_and_format():
 # A8: pipeline._dream_loop AST calls prune_old_crash_logs(CRASH_LOG_RETENTION_DAYS)
 # ─────────────────────────────────────────────────────────────────────────────
 def test_p0_r11_a8_dream_loop_calls_prune_old_crash_logs():
-    src = (REPO_ROOT / "pipeline.py").read_text(encoding="utf-8")
-    assert "prune_old_crash_logs" in src, "prune_old_crash_logs reference missing in pipeline.py"
-    assert "CRASH_LOG_RETENTION_DAYS" in src, "CRASH_LOG_RETENTION_DAYS reference missing in pipeline.py"
+    # P1.A1 SP-6.4: _dream_loop relocated to runtime/background_loops.py.
+    src = (REPO_ROOT / "runtime" / "background_loops.py").read_text(encoding="utf-8")
+    assert "prune_old_crash_logs" in src, "prune_old_crash_logs reference missing in background_loops.py"
+    assert "CRASH_LOG_RETENTION_DAYS" in src, "CRASH_LOG_RETENTION_DAYS reference missing in background_loops.py"
 
     mod = ast.parse(src)
     found = False

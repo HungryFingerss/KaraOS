@@ -156,7 +156,7 @@ async def test_dream_runs_when_idle():
     from pipeline import _dream_loop
 
     from core.session_state import SessionStore
-    pipeline._shutdown_event = asyncio.Event()
+    _wiring._shutdown_event = asyncio.Event()
     _wiring._session_store = SessionStore()
     _wiring._brain_orchestrator = MagicMock()
     pipeline._brain_orchestrator.dream = AsyncMock()
@@ -166,18 +166,18 @@ async def test_dream_runs_when_idle():
 
     try:
         # time.time returns a small value so cooldown/max_interval comparisons are predictable
-        with patch("pipeline.time") as mock_time, \
-             patch("pipeline.DREAM_IDLE_MINUTES", 0), \
-             patch("pipeline.DREAM_COOLDOWN", 0), \
-             patch("pipeline.DREAM_MAX_INTERVAL", 99999):
+        with patch("runtime.background_loops.time") as mock_time, \
+             patch("runtime.background_loops.DREAM_IDLE_MINUTES", 0), \
+             patch("runtime.background_loops.DREAM_COOLDOWN", 0), \
+             patch("runtime.background_loops.DREAM_MAX_INTERVAL", 99999):
             mock_time.time.return_value = 1.0  # now=1, last=0 → cooldown elapsed, force not reached
             async def stop_after_dream():
                 await asyncio.sleep(0.15)
-                pipeline._shutdown_event.set()
+                _wiring._shutdown_event.set()
             await asyncio.gather(_dream_loop(mock_db), stop_after_dream())
         pipeline._brain_orchestrator.dream.assert_called()
     finally:
-        pipeline._shutdown_event = None
+        _wiring._shutdown_event = None
 
 
 @pytest.mark.asyncio
@@ -186,7 +186,7 @@ async def test_dream_force_trigger_fires_during_active_session():
     import pipeline
     from pipeline import _dream_loop
 
-    pipeline._shutdown_event = asyncio.Event()
+    _wiring._shutdown_event = asyncio.Event()
     _wiring._brain_orchestrator = MagicMock()
     pipeline._brain_orchestrator.dream = AsyncMock()
     mock_db = MagicMock()
@@ -194,18 +194,18 @@ async def test_dream_force_trigger_fires_during_active_session():
     mock_db.find_stale_stranger_voice_ids.return_value = []
 
     try:
-        with patch("pipeline.time") as mock_time, \
-             patch("pipeline.DREAM_IDLE_MINUTES", 0), \
-             patch("pipeline.DREAM_COOLDOWN", 99999), \
-             patch("pipeline.DREAM_MAX_INTERVAL", 0):
+        with patch("runtime.background_loops.time") as mock_time, \
+             patch("runtime.background_loops.DREAM_IDLE_MINUTES", 0), \
+             patch("runtime.background_loops.DREAM_COOLDOWN", 99999), \
+             patch("runtime.background_loops.DREAM_MAX_INTERVAL", 0):
             mock_time.time.return_value = 1.0  # now=1, last=0 → force_trigger (1 >= 0)
             async def stop_after_dream():
                 await asyncio.sleep(0.15)
-                pipeline._shutdown_event.set()
+                _wiring._shutdown_event.set()
             await asyncio.gather(_dream_loop(mock_db), stop_after_dream())
         pipeline._brain_orchestrator.dream.assert_called()
     finally:
-        pipeline._shutdown_event = None
+        _wiring._shutdown_event = None
 
 
 @pytest.mark.asyncio
@@ -214,7 +214,7 @@ async def test_dream_skips_when_busy_and_not_forced():
     import pipeline
     from pipeline import _dream_loop
 
-    pipeline._shutdown_event = asyncio.Event()
+    _wiring._shutdown_event = asyncio.Event()
     _wiring._brain_orchestrator = MagicMock()
     pipeline._brain_orchestrator.dream = AsyncMock()
     mock_db = MagicMock()
@@ -224,18 +224,18 @@ async def test_dream_skips_when_busy_and_not_forced():
     await pipeline._session_store.open_session("p1", "unknown", "stranger", "face", now=0.0)
 
     try:
-        with patch("pipeline.time") as mock_time, \
-             patch("pipeline.DREAM_IDLE_MINUTES", 0), \
-             patch("pipeline.DREAM_COOLDOWN", 0), \
-             patch("pipeline.DREAM_MAX_INTERVAL", 99999):
+        with patch("runtime.background_loops.time") as mock_time, \
+             patch("runtime.background_loops.DREAM_IDLE_MINUTES", 0), \
+             patch("runtime.background_loops.DREAM_COOLDOWN", 0), \
+             patch("runtime.background_loops.DREAM_MAX_INTERVAL", 99999):
             mock_time.time.return_value = 1.0  # now=1, last=0 → force_trigger (1 >= 99999) = False
             async def stop_quickly():
                 await asyncio.sleep(0.15)
-                pipeline._shutdown_event.set()
+                _wiring._shutdown_event.set()
             await asyncio.gather(_dream_loop(mock_db), stop_quickly())
         pipeline._brain_orchestrator.dream.assert_not_called()
     finally:
-        pipeline._shutdown_event = None
+        _wiring._shutdown_event = None
 
 
 def test_kairos_clock_not_reset_on_reentry_after_no_speech():

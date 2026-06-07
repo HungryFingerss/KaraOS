@@ -194,7 +194,8 @@ def test_p0_r12_d1_prune_archive_removes_old_rows(tmp_path):
 # A3: D1 dream-loop calls prune (AST source inside guard)
 # ─────────────────────────────────────────────────────────────────────────────
 def test_p0_r12_d1_dream_loop_calls_prune():
-    src = (REPO_ROOT / "pipeline.py").read_text(encoding="utf-8")
+    # P1.A1 SP-6.4: _dream_loop relocated to runtime/background_loops.py.
+    src = (REPO_ROOT / "runtime" / "background_loops.py").read_text(encoding="utf-8")
     assert "config.CONVERSATION_ARCHIVE_ENABLED" in src, "ENABLED guard reference missing"
 
     mod = ast.parse(src)
