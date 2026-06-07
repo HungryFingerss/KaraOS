@@ -33,6 +33,9 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _HEAVY_WORKER = _REPO_ROOT / "core" / "heavy_worker.py"
 _PIPELINE = _REPO_ROOT / "pipeline.py"
+# P1.A1 SP-6.3: 2 of the 4 adaface_embed async-hot-path dispatches (the
+# _background_vision_loop ambient + secondary scans) relocated to vision_loop.py.
+_VISION_LOOP = _REPO_ROOT / "runtime" / "vision_loop.py"
 _PIPELINE_STATE_STORE = _REPO_ROOT / "core" / "pipeline_state_store.py"
 _HEALTH = _REPO_ROOT / "core" / "health.py"
 
@@ -177,42 +180,39 @@ def test_p0_r6_d3_anchor_1_all_4_async_sites_use_heavy_worker() -> None:
     of the 4 async sites) back to a sync ``embedder.embed(face_crop)`` call
     fires the positive 4-site enforcement.
     """
-    source = _PIPELINE.read_text(encoding="utf-8")
+    # P1.A1 SP-6.3: the 4 async-hot-path adaface_embed dispatches now SPLIT across
+    # pipeline.py (2: first_boot/enrollment-adjacent stays) + runtime/vision_loop.py
+    # (2: the _background_vision_loop ambient + secondary scans). Count across both.
+    def _count_adaface_run_heavy(tree: ast.Module) -> int:
+        # Canary #2 / latency D2 added a boot WARM-UP `hw.run_heavy("adaface_embed", ...)`
+        # in `_warm_heavy_worker_pools` (pipeline-side, first-turn cold-start fix). That is
+        # NOT one of the 4 async-HOT-PATH inference sites — exclude it.
+        _warm_call_ids: set[int] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "_warm_heavy_worker_pools":
+                for sub in ast.walk(node):
+                    if isinstance(sub, ast.Call):
+                        _warm_call_ids.add(id(sub))
+        count = 0
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or id(node) in _warm_call_ids:
+                continue
+            func = node.func
+            if not (
+                isinstance(func, ast.Attribute)
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "hw"
+                and func.attr == "run_heavy"
+            ):
+                continue
+            if node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value == "adaface_embed":
+                count += 1
+        return count
 
-    # Positive check — count `hw.run_heavy("adaface_embed"` calls (NOT
-    # docstring/comment mentions of the substring; AST walker scopes to
-    # actual Call nodes).
-    tree = ast.parse(source)
-    # Canary #2 / latency D2 added a boot WARM-UP `hw.run_heavy("adaface_embed", ...)`
-    # in `_warm_heavy_worker_pools` (first-turn cold-start fix). That is NOT one of the
-    # 4 async-HOT-PATH inference sites this anchor counts — exclude it so the count
-    # stays the contractual 4.
-    _warm_call_ids: set[int] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "_warm_heavy_worker_pools":
-            for sub in ast.walk(node):
-                if isinstance(sub, ast.Call):
-                    _warm_call_ids.add(id(sub))
-    adaface_run_heavy_calls = 0
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or id(node) in _warm_call_ids:
-            continue
-        # Match `hw.run_heavy("adaface_embed", ...)` shape:
-        # Call(func=Attribute(value=Name("hw"), attr="run_heavy"),
-        #      args=[Constant("adaface_embed"), ...])
-        func = node.func
-        if not (
-            isinstance(func, ast.Attribute)
-            and isinstance(func.value, ast.Name)
-            and func.value.id == "hw"
-            and func.attr == "run_heavy"
-        ):
-            continue
-        if not node.args:
-            continue
-        first = node.args[0]
-        if isinstance(first, ast.Constant) and first.value == "adaface_embed":
-            adaface_run_heavy_calls += 1
+    adaface_run_heavy_calls = (
+        _count_adaface_run_heavy(ast.parse(_PIPELINE.read_text(encoding="utf-8")))
+        + _count_adaface_run_heavy(ast.parse(_VISION_LOOP.read_text(encoding="utf-8")))
+    )
 
     assert adaface_run_heavy_calls == 4, (
         f"D3 regression (positive 4-site enforcement): expected exactly 4 "
@@ -227,7 +227,9 @@ def test_p0_r6_d3_anchor_1_all_4_async_sites_use_heavy_worker() -> None:
     # direct `embedder.embed(face_crop)` calls (3474 + 3551 line numbers
     # may shift; substring-level check across the file is more robust).
     # Plan v1 §1.1 explicitly classifies these as sync boot/enrollment flows
-    # that should NOT be migrated. Migrating them would break this anchor.
+    # that should NOT be migrated — first_boot_flow + enrollment_flow STAY in
+    # pipeline.py (P1.A1 SP-6.3 moved only the async vision-loop sites).
+    source = _PIPELINE.read_text(encoding="utf-8")
     sync_direct_call_count = source.count("embedding = embedder.embed(face_crop)")
     assert sync_direct_call_count == 2, (
         f"D3 regression (inverse OUT-OF-SCOPE check): expected exactly 2 "

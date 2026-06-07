@@ -226,8 +226,8 @@ def test_bug_f3_background_face_scan_refreshes_cached_name():
     first-recognition name, even though recognize() returns the current
     DB name after a rename. This is the ROOT source of the stale cache
     the 2026-04-23 canary surfaced."""
-    import inspect, pipeline
-    src = inspect.getsource(pipeline)
+    import inspect, runtime.vision_loop  # P1.A1 SP-6.3: background-scan else-branch relocated here
+    src = inspect.getsource(runtime.vision_loop)
     # The background scan now calls _presence_store.upsert_face_recognition
     # (via loop.create_task) passing the current name from recognize() on
     # every scan cycle — this is the Bug F.3 name-cache refresh.

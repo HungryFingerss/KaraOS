@@ -61,7 +61,10 @@ def test_vision_heartbeat_interval_is_30s():
     """Both heartbeat locations must use a 30-second interval, not 5 seconds."""
     import inspect
     import pipeline
-    src = inspect.getsource(pipeline)
+    import runtime.vision_loop
+    # P1.A1 SP-6.3: one heartbeat location (_background_vision_loop) relocated to
+    # runtime/vision_loop.py; the other (run()) stays in pipeline. Scan both.
+    src = inspect.getsource(pipeline) + "\n" + inspect.getsource(runtime.vision_loop)
     # Find heartbeat interval comparisons — there should be no 5.0 threshold
     # (both locations converted to 30.0)
     import re

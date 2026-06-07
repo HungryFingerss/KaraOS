@@ -70,7 +70,8 @@ async def test_background_scan_uses_temporal_pooling():
     pipeline._vision_face_scan_last = 0.0
     pipeline._vision_frame_store._sync_set_prev_det_count(0)
 
-    with patch("pipeline.face_quality_score", return_value=0.8), \
+    # P1.A1 SP-6.3: _background_vision_loop reads vision_loop's face_quality_score binding
+    with patch("runtime.vision_loop.face_quality_score", return_value=0.8), \
          patch("pipeline.hw.run_heavy", side_effect=_hw_stub):
         task = asyncio.create_task(
             _background_vision_loop(mock_camera, mock_detector, mock_embedder, mock_temporal, mock_db)
@@ -123,7 +124,8 @@ async def test_background_scan_uses_adaptive_threshold():
         return _np.ones(512, dtype=_np.float32).tobytes()
 
     quality = 0.9  # high quality → threshold should drop below base
-    with patch("pipeline.face_quality_score", return_value=quality), \
+    # P1.A1 SP-6.3: _background_vision_loop reads vision_loop's face_quality_score binding
+    with patch("runtime.vision_loop.face_quality_score", return_value=quality), \
          patch("pipeline.hw.run_heavy", side_effect=_hw_stub):
         task = asyncio.create_task(
             _background_vision_loop(mock_camera, mock_detector, mock_embedder, mock_temporal, mock_db)
@@ -170,7 +172,8 @@ async def test_background_scan_skips_when_temporal_buffer_none():
     pipeline._vision_face_scan_last = 0.0
     pipeline._vision_frame_store._sync_set_prev_det_count(0)
 
-    with patch("pipeline.face_quality_score", return_value=0.8):
+    # P1.A1 SP-6.3: _background_vision_loop reads vision_loop's face_quality_score binding
+    with patch("runtime.vision_loop.face_quality_score", return_value=0.8):
         task = asyncio.create_task(
             # temporal_buffer=None — secondary scan block must not fire
             _background_vision_loop(mock_camera, mock_detector, mock_embedder, None, mock_db)
@@ -411,7 +414,8 @@ def test_maybe_record_silent_obs_calls_db_when_throttle_elapsed(tmp_path):
     mock_db = MagicMock()
     emb = [0.1] * 512
     bbox = (10, 10, 50, 50)
-    with patch.object(_pl, "_infer_zone", return_value="center"):
+    # P1.A1 SP-6.3: _maybe_record_silent_obs reads vision_loop's _infer_zone binding
+    with patch("runtime.vision_loop._infer_zone", return_value="center"):
         _pl._maybe_record_silent_obs(emb, bbox, 640, 480, mock_db)
     mock_db.update_silent_observation.assert_called_once_with(emb, zone="center")
 
@@ -428,9 +432,11 @@ def test_maybe_record_silent_obs_skips_when_throttled(tmp_path):
 
 
 def test_update_silent_observation_called_only_from_helper():
-    """All pipeline.py call sites use the helper; no raw update_silent_observation calls."""
+    """All call sites use the helper; no raw update_silent_observation calls.
+    P1.A1 SP-6.3: _maybe_record_silent_obs (+ its one raw db.update_silent_observation
+    call) relocated to runtime/vision_loop.py."""
     import pathlib, re
-    src = pathlib.Path("pipeline.py").read_text()
+    src = pathlib.Path("runtime/vision_loop.py").read_text()
     raw_calls = re.findall(r"db\.update_silent_observation|update_silent_observation\(", src)
     helper_def = re.findall(r"def _maybe_record_silent_obs", src)
     assert len(helper_def) == 1

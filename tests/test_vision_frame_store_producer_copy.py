@@ -24,6 +24,9 @@ import ast
 import pathlib
 
 PIPELINE_PATH = pathlib.Path(__file__).parent.parent / "pipeline.py"
+# P1.A1 SP-6.3: the _vision_frame_store.set_frame producer (in _background_vision_loop)
+# relocated to runtime/vision_loop.py; the invariant scans both files.
+VISION_LOOP_PATH = pathlib.Path(__file__).parent.parent / "runtime" / "vision_loop.py"
 
 
 def _contains_copy_call(node: ast.AST) -> bool:
@@ -65,17 +68,24 @@ def _collect_set_frame_calls(tree: ast.AST) -> list[ast.Call]:
     ]
 
 
+def _collect_all_set_frame_calls() -> list[ast.Call]:
+    """All set_frame calls across pipeline.py + runtime/vision_loop.py (P1.A1 SP-6.3:
+    the producer moved to vision_loop, so the invariant must scan both)."""
+    calls: list[ast.Call] = []
+    for p in (PIPELINE_PATH, VISION_LOOP_PATH):
+        calls += _collect_set_frame_calls(ast.parse(p.read_text(encoding="utf-8")))
+    return calls
+
+
 class TestProducerCopyInvariant:
     def test_pipeline_has_at_least_one_set_frame_call(self) -> None:
         """Sanity guard: if pipeline.py drops all set_frame call sites
         accidentally (e.g. during a refactor), the test corpus becomes
         empty and the .copy() assertions trivially pass.  Anchor a
         positive count here."""
-        src = PIPELINE_PATH.read_text(encoding="utf-8")
-        tree = ast.parse(src)
-        calls = _collect_set_frame_calls(tree)
+        calls = _collect_all_set_frame_calls()
         assert len(calls) >= 1, (
-            "pipeline.py contains zero calls to _vision_frame_store.set_frame(). "
+            "pipeline.py / runtime/vision_loop.py contain zero calls to _vision_frame_store.set_frame(). "
             "Either the producer was removed (regression) or the call shape "
             "changed in a way the AST detector doesn't recognize."
         )
@@ -83,9 +93,7 @@ class TestProducerCopyInvariant:
     def test_every_set_frame_call_passes_a_copy(self) -> None:
         """For every call to set_frame(frame_expr, ts), the first positional
         arg expression must contain a `.copy()` method call."""
-        src = PIPELINE_PATH.read_text(encoding="utf-8")
-        tree = ast.parse(src)
-        calls = _collect_set_frame_calls(tree)
+        calls = _collect_all_set_frame_calls()
 
         violations: list[str] = []
         for call in calls:

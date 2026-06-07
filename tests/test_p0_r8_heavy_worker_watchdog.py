@@ -55,6 +55,9 @@ _HEALTH = _REPO_ROOT / "core" / "health.py"
 _CONFIG = _REPO_ROOT / "core" / "config.py"
 _BRAIN_AGENT = _REPO_ROOT / "core" / "brain_agent" / "agents" / "watchdog.py"
 _PIPELINE = _REPO_ROOT / "pipeline.py"
+# P1.A1 SP-6.3: _heavy_worker_watchdog_loop relocated to runtime/vision_loop.py; A3/A4/A5
+# (the loop-body AST scans) read there. A6 (run() spawn-ordering) still reads _PIPELINE.
+_VISION_LOOP = _REPO_ROOT / "runtime" / "vision_loop.py"
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +235,7 @@ def test_p0_r8_d3_anchor_1_watchdog_loop_exists_with_bare_while_true() -> None:
     Per Plan v1 §2.8 (c) deliberate-regression: deleting the function
     fires this anchor.
     """
-    tree = ast.parse(_PIPELINE.read_text(encoding="utf-8"))
+    tree = ast.parse(_VISION_LOOP.read_text(encoding="utf-8"))
     module_level_asyncs = {
         node.name for node in tree.body
         if isinstance(node, ast.AsyncFunctionDef)
@@ -283,7 +286,7 @@ def test_p0_r8_d3_anchor_2_watchdog_sleeps_config_interval() -> None:
     the arg must be a Name node referencing `HEAVY_WORKER_WATCHDOG_INTERVAL_SECS`,
     NOT a numeric Constant.
     """
-    tree = ast.parse(_PIPELINE.read_text(encoding="utf-8"))
+    tree = ast.parse(_VISION_LOOP.read_text(encoding="utf-8"))
     found_correct_sleep = False
     found_hardcoded_sleep = False
     for fn_node in tree.body:
@@ -354,7 +357,7 @@ def test_p0_r8_d3_anchor_3_burst_detection_threshold_logic() -> None:
 
     # Part 1: AST check — threshold comparison uses Name (config constant)
     # NOT a numeric Constant.
-    tree = ast.parse(_PIPELINE.read_text(encoding="utf-8"))
+    tree = ast.parse(_VISION_LOOP.read_text(encoding="utf-8"))
     found_correct_threshold_compare = False
     found_hardcoded_threshold_compare = False
     for fn_node in tree.body:
@@ -562,17 +565,21 @@ def test_p0_r8_d6_anchor_1_startup_ordering_invariant() -> None:
                     pool_lines[node.args[0].value] = node.lineno
         if isinstance(node, ast.Assign):
             for target in node.targets:
-                if not isinstance(target, ast.Name):
+                # P1.A1 SP-6.3: _vision_task is WIRE-d, so its run() spawn is now
+                # `_wiring._vision_task = create_task(...)` (an Attribute target). The
+                # watchdog handles stay bare Name targets. Accept both forms.
+                tname = (target.id if isinstance(target, ast.Name)
+                         else target.attr if isinstance(target, ast.Attribute) else None)
+                if tname is None:
                     continue
-                if target.id == "_vision_task" and vision_task_line is None:
-                    # Only first assignment within run() body (multiple
-                    # restart-helper assignments may follow).
+                if tname == "_vision_task" and vision_task_line is None:
+                    # Only first assignment within run() body (the spawn).
                     if isinstance(node.value, ast.Call):
                         vision_task_line = node.lineno
-                if target.id == "_vision_watchdog_task" and vision_watchdog_line is None:
+                if tname == "_vision_watchdog_task" and vision_watchdog_line is None:
                     if isinstance(node.value, ast.Call):
                         vision_watchdog_line = node.lineno
-                if target.id == "_heavy_worker_watchdog_task" and heavy_watchdog_line is None:
+                if tname == "_heavy_worker_watchdog_task" and heavy_watchdog_line is None:
                     if isinstance(node.value, ast.Call):
                         heavy_watchdog_line = node.lineno
 

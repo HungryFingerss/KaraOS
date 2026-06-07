@@ -32,6 +32,7 @@ def test_vision_watchdog_no_spurious_stale_with_monotonic_heartbeat(monkeypatch)
     ≈ 1.78e9 ≫ VISION_WATCHDOG_STALE_THRESHOLD_SECS on every poll → restart fires → assert fails.
     """
     import pipeline as _pl
+    import runtime.vision_loop as _vl  # P1.A1 SP-6.3: _vision_watchdog_loop + _restart_vision_task relocated here
     import core.config as _cfg
 
     _pl._pipeline_state_store.reset()
@@ -43,14 +44,14 @@ def test_vision_watchdog_no_spurious_stale_with_monotonic_heartbeat(monkeypatch)
     async def _fake_restart():
         restart_called["count"] += 1
 
-    monkeypatch.setattr(_pl, "_restart_vision_task", _fake_restart)
+    monkeypatch.setattr(_vl, "_restart_vision_task", _fake_restart)
     # Poll fast so multiple real iterations run inside the short drive window.
     monkeypatch.setattr(_cfg, "VISION_WATCHDOG_INTERVAL_SECS", 0.02, raising=False)
 
     async def _drive():
         # _vision_watchdog_loop is `while True:` — drive it briefly, then cancel.
         try:
-            await asyncio.wait_for(_pl._vision_watchdog_loop(), timeout=0.3)
+            await asyncio.wait_for(_vl._vision_watchdog_loop(), timeout=0.3)
         except asyncio.TimeoutError:
             pass
 
@@ -70,6 +71,7 @@ def test_vision_watchdog_detects_genuinely_stale_monotonic_heartbeat(monkeypatch
     'fix' that simply disables the watchdog.
     """
     import pipeline as _pl
+    import runtime.vision_loop as _vl  # P1.A1 SP-6.3: _vision_watchdog_loop + _restart_vision_task relocated here
     import core.config as _cfg
 
     _pl._pipeline_state_store.reset()
@@ -84,12 +86,12 @@ def test_vision_watchdog_detects_genuinely_stale_monotonic_heartbeat(monkeypatch
         # Advance the heartbeat so the next poll sees it fresh (mirror real restart success).
         await _pl._pipeline_state_store.set_vision_heartbeat(time.monotonic())
 
-    monkeypatch.setattr(_pl, "_restart_vision_task", _fake_restart)
+    monkeypatch.setattr(_vl, "_restart_vision_task", _fake_restart)
     monkeypatch.setattr(_cfg, "VISION_WATCHDOG_INTERVAL_SECS", 0.02, raising=False)
 
     async def _drive():
         try:
-            await asyncio.wait_for(_pl._vision_watchdog_loop(), timeout=0.3)
+            await asyncio.wait_for(_vl._vision_watchdog_loop(), timeout=0.3)
         except asyncio.TimeoutError:
             pass
 
@@ -107,7 +109,8 @@ def test_vision_watchdog_loop_uses_monotonic_read(monkeypatch):
     from pathlib import Path
     import ast
 
-    src = (Path(__file__).resolve().parent.parent / "pipeline.py").read_text(encoding="utf-8")
+    # P1.A1 SP-6.3: _vision_watchdog_loop relocated to runtime/vision_loop.py.
+    src = (Path(__file__).resolve().parent.parent / "runtime" / "vision_loop.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
     fn = next(
         n for n in ast.walk(tree)

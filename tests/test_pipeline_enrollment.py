@@ -49,7 +49,7 @@ async def test_first_boot_flow_antispoof_blocks_all_frames():
 
     spoken = []
 
-    with patch("pipeline._anti_spoof_checker", spoof_checker), \
+    with patch("runtime.wiring._anti_spoof_checker", spoof_checker), \
          patch("pipeline.speak", new=AsyncMock(side_effect=lambda t, **kw: spoken.append(t))), \
          patch("pipeline.listen_and_transcribe", new=AsyncMock(side_effect=[
              ("yes", None, None),
@@ -80,7 +80,7 @@ async def test_first_boot_flow_antispoof_none_enrolls_normally():
 
     spoken = []
 
-    with patch("pipeline._anti_spoof_checker", None), \
+    with patch("runtime.wiring._anti_spoof_checker", None), \
          patch("pipeline.speak", new=AsyncMock(side_effect=lambda t, **kw: spoken.append(t))), \
          patch("pipeline.listen_and_transcribe", new=AsyncMock(side_effect=[
              ("yes", None, None),
@@ -111,7 +111,7 @@ async def test_enrollment_flow_antispoof_blocks_all_frames():
 
     spoken = []
 
-    with patch("pipeline._anti_spoof_checker", spoof_checker), \
+    with patch("runtime.wiring._anti_spoof_checker", spoof_checker), \
          patch("pipeline.speak", new=AsyncMock(side_effect=lambda t, **kw: spoken.append(t))), \
          patch("pipeline.face_quality_score", return_value=1.0), \
          patch("pipeline._set_state"), \
@@ -138,7 +138,7 @@ async def test_enrollment_flow_antispoof_none_enrolls_normally():
 
     spoken = []
 
-    with patch("pipeline._anti_spoof_checker", None), \
+    with patch("runtime.wiring._anti_spoof_checker", None), \
          patch("pipeline.speak", new=AsyncMock(side_effect=lambda t, **kw: spoken.append(t))), \
          patch("pipeline.face_quality_score", return_value=1.0), \
          patch("pipeline._set_state"), \

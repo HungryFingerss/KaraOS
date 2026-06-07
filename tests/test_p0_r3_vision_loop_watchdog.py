@@ -27,6 +27,9 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PIPELINE_PY = _REPO_ROOT / "pipeline.py"
+# P1.A1 SP-6.3: the vision-loop fns relocated to runtime/vision_loop.py; source-inspection
+# anchors that scanned the loop bodies now scan there (the moved STRING PATTERNS).
+_VISION_LOOP_PY = _REPO_ROOT / "runtime" / "vision_loop.py"
 _STORE_PY = _REPO_ROOT / "core" / "pipeline_state_store.py"
 _HEALTH_PY = _REPO_ROOT / "core" / "health.py"
 _CONFIG_PY = _REPO_ROOT / "core" / "config.py"
@@ -40,6 +43,11 @@ def _read(p: Path) -> str:
 @pytest.fixture(scope="module")
 def pipeline_src() -> str:
     return _read(_PIPELINE_PY)
+
+
+@pytest.fixture(scope="module")
+def vision_loop_src() -> str:
+    return _read(_VISION_LOOP_PY)
 
 
 @pytest.fixture(scope="module")
@@ -57,10 +65,11 @@ def config_src() -> str:
     return _read(_CONFIG_PY)
 
 
-def test_p0_r3_d1_anchor_1_heartbeat_update_in_loop(pipeline_src):
+def test_p0_r3_d1_anchor_1_heartbeat_update_in_loop(vision_loop_src):
     """A1: `_background_vision_loop` body contains `set_vision_heartbeat` call
-    BEFORE the `camera.read` executor call (heartbeat at iteration start)."""
-    tree = ast.parse(pipeline_src)
+    BEFORE the `camera.read` executor call (heartbeat at iteration start).
+    P1.A1 SP-6.3: the loop relocated to runtime/vision_loop.py."""
+    tree = ast.parse(vision_loop_src)
     loop_fn = None
     for node in ast.walk(tree):
         if isinstance(node, ast.AsyncFunctionDef) and node.name == "_background_vision_loop":
@@ -80,20 +89,21 @@ def test_p0_r3_d1_anchor_1_heartbeat_update_in_loop(pipeline_src):
     )
 
 
-def test_p0_r3_d2_anchor_1_watchdog_loop_source(pipeline_src):
-    """A2: `_vision_watchdog_loop` exists + cadence + stale check + persists log + degraded branch."""
-    assert "async def _vision_watchdog_loop" in pipeline_src, (
+def test_p0_r3_d2_anchor_1_watchdog_loop_source(vision_loop_src):
+    """A2: `_vision_watchdog_loop` exists + cadence + stale check + persists log + degraded branch.
+    P1.A1 SP-6.3: the watchdog loop relocated to runtime/vision_loop.py."""
+    assert "async def _vision_watchdog_loop" in vision_loop_src, (
         "P0.R3 D2: `_vision_watchdog_loop` function MUST exist."
     )
-    assert "VISION_WATCHDOG_INTERVAL_SECS" in pipeline_src
-    assert "VISION_WATCHDOG_STALE_THRESHOLD_SECS" in pipeline_src
-    assert "peek_vision_degraded" in pipeline_src, (
+    assert "VISION_WATCHDOG_INTERVAL_SECS" in vision_loop_src
+    assert "VISION_WATCHDOG_STALE_THRESHOLD_SECS" in vision_loop_src
+    assert "peek_vision_degraded" in vision_loop_src, (
         "P0.R3 D2: watchdog MUST consult `peek_vision_degraded()` for persists-branch."
     )
     # Tighter substring `print(f"[Vision] stale persists` to avoid matching the
     # bare `stale persists` in the watchdog docstring (P0.R2 §2.6(b)-precedent
     # detector strengthening per `### Induction-surfaces-invariant-gaps`).
-    assert 'print(f"[Vision] stale persists' in pipeline_src, (
+    assert 'print(f"[Vision] stale persists' in vision_loop_src, (
         "P0.R3 D2: degraded-persists branch MUST emit `print(f\"[Vision] stale persists`. "
         "Bare `stale persists` matches the watchdog docstring too; the print call "
         "shape is the load-bearing assertion."
@@ -109,6 +119,7 @@ def test_p0_r3_d2_anchor_2_stale_triggers_restart_OR_persists(
 ):
     """A3: stale heartbeat — degraded=False → restart; degraded=True → persists log."""
     import pipeline as _pl
+    import runtime.vision_loop as _vl  # P1.A1 SP-6.3: _restart_vision_task relocated here
     import time
     _pl._pipeline_state_store.reset()
     asyncio.run(_pl._pipeline_state_store.set_vision_heartbeat(time.time() - 1000.0))
@@ -119,7 +130,7 @@ def test_p0_r3_d2_anchor_2_stale_triggers_restart_OR_persists(
     async def _fake_restart():
         restart_called["count"] += 1
 
-    monkeypatch.setattr(_pl, "_restart_vision_task", _fake_restart)
+    monkeypatch.setattr(_vl, "_restart_vision_task", _fake_restart)
 
     async def _run_one_iteration():
         _now = time.time()
@@ -130,7 +141,7 @@ def test_p0_r3_d2_anchor_2_stale_triggers_restart_OR_persists(
             return
         if _pl._pipeline_state_store.peek_vision_degraded():
             return
-        await _pl._restart_vision_task()
+        await _vl._restart_vision_task()
 
     asyncio.run(_run_one_iteration())
     assert (restart_called["count"] > 0) == expected_restart_called, (
@@ -164,6 +175,8 @@ def test_p0_r3_d3_anchor_3_format_alerts_emits_degraded(health_src):
 def test_p0_r3_d4_anchor_1_restart_success_clears_degraded(monkeypatch):
     """A7: D4 detects heartbeat advance → clears vision_degraded."""
     import pipeline as _pl
+    import runtime.vision_loop as _vl  # P1.A1 SP-6.3: _restart_vision_task + _background_vision_loop relocated here
+    import runtime.wiring as _wiring   # P1.A1 SP-6.3: _vision_task WIRE-d here (patch the canonical home, not the shadow)
     import time
     _pl._pipeline_state_store.reset()
     asyncio.run(_pl._pipeline_state_store.set_vision_degraded(True))
@@ -173,14 +186,14 @@ def test_p0_r3_d4_anchor_1_restart_success_clears_degraded(monkeypatch):
     class _DoneTask:
         def done(self): return True
         def cancel(self): pass
-    monkeypatch.setattr(_pl, "_vision_task", _DoneTask())
+    monkeypatch.setattr(_wiring, "_vision_task", _DoneTask())
 
     async def _fake_loop_body():
         await _pl._pipeline_state_store.set_vision_heartbeat(time.time())
 
-    monkeypatch.setattr(_pl, "_background_vision_loop", lambda *a, **k: _fake_loop_body())
+    monkeypatch.setattr(_vl, "_background_vision_loop", lambda *a, **k: _fake_loop_body())
 
-    asyncio.run(_pl._restart_vision_task())
+    asyncio.run(_vl._restart_vision_task())
 
     async def _flush():
         await asyncio.sleep(0.1)
@@ -194,6 +207,8 @@ def test_p0_r3_d4_anchor_1_restart_success_clears_degraded(monkeypatch):
 def test_p0_r3_d4_anchor_2_restart_fail_sets_degraded(monkeypatch):
     """A8: D4 detects heartbeat timeout → sets vision_degraded; audio untouched."""
     import pipeline as _pl
+    import runtime.vision_loop as _vl  # P1.A1 SP-6.3: _restart_vision_task + _background_vision_loop relocated here
+    import runtime.wiring as _wiring   # P1.A1 SP-6.3: _vision_task WIRE-d here
     import time
     _pl._pipeline_state_store.reset()
     asyncio.run(_pl._pipeline_state_store.set_vision_heartbeat(time.time() - 1000.0))
@@ -201,7 +216,7 @@ def test_p0_r3_d4_anchor_2_restart_fail_sets_degraded(monkeypatch):
 
     async def _never_advance():
         await asyncio.sleep(100.0)
-    monkeypatch.setattr(_pl, "_background_vision_loop", lambda *a, **k: _never_advance())
+    monkeypatch.setattr(_vl, "_background_vision_loop", lambda *a, **k: _never_advance())
 
     import core.config
     monkeypatch.setattr(core.config, "VISION_WATCHDOG_RESTART_TIMEOUT_SECS", 2.0)
@@ -209,14 +224,14 @@ def test_p0_r3_d4_anchor_2_restart_fail_sets_degraded(monkeypatch):
     class _DoneTask:
         def done(self): return True
         def cancel(self): pass
-    monkeypatch.setattr(_pl, "_vision_task", _DoneTask())
+    monkeypatch.setattr(_wiring, "_vision_task", _DoneTask())
 
     # Audio-alive sentinel: capture before; verify after (the restart helper
     # has NO reference to any audio symbol, so this is a defense-in-depth check).
     audio_alive = {"alive": True}
 
     async def _test():
-        await _pl._restart_vision_task()
+        await _vl._restart_vision_task()
         assert audio_alive["alive"], "P0.R3 D4: audio task MUST NOT be touched"
 
     asyncio.run(_test())

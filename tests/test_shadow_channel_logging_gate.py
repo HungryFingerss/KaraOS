@@ -62,8 +62,12 @@ def test_d6_flag_exists_default_false():
 
 def test_d6_three_shadow_prints_gated_by_flag():
     """Each of the 3 shadow divergence prints is nested under an `if` whose test
-    references SHADOW_CHANNEL_LOGGING_ENABLED (AST control-flow, not proximity)."""
-    src = (REPO_ROOT / "pipeline.py").read_text(encoding="utf-8")
+    references SHADOW_CHANNEL_LOGGING_ENABLED (AST control-flow, not proximity).
+    P1.A1 SP-6.3: the Vision-shadow print (in _background_vision_loop) relocated to
+    runtime/vision_loop.py; Voice + Reconciler stay in pipeline. Scan both (concatenated
+    modules parse cleanly — both are valid top-level code)."""
+    src = ((REPO_ROOT / "pipeline.py").read_text(encoding="utf-8")
+           + "\n" + (REPO_ROOT / "runtime" / "vision_loop.py").read_text(encoding="utf-8"))
     tree = ast.parse(src)
     parents = _build_parents(tree)
 
@@ -90,7 +94,10 @@ def test_d6_three_shadow_prints_gated_by_flag():
 
 def test_d6_comparisons_not_deleted():
     """The shadow COMPARISONS must remain (only the prints are gated, not the logic)."""
-    src = (REPO_ROOT / "pipeline.py").read_text(encoding="utf-8")
+    # P1.A1 SP-6.3: the Vision visible-set comparison (in _background_vision_loop) relocated
+    # to runtime/vision_loop.py; Voice + Reconciler stay in pipeline. Scan both.
+    src = ((REPO_ROOT / "pipeline.py").read_text(encoding="utf-8")
+           + "\n" + (REPO_ROOT / "runtime" / "vision_loop.py").read_text(encoding="utf-8"))
     # Vision: the visible-set comparison; Voice: the identify_speaker shadow call;
     # Reconciler: the reconcile() shadow dispatch — all must still be present.
     assert "_prod_visible != _new_visible" in src, "vision shadow comparison must remain"

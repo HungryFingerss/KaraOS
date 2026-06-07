@@ -52,7 +52,7 @@ def test_ambient_listen_path_classifies_and_upserts_with_verdict():
     a real camera or extensive mocking. The structural test asserts the wiring
     pattern is correct so future refactors that break the contract surface.
     """
-    src = _read("pipeline.py")
+    src = _read("runtime/vision_loop.py")  # P1.A1 SP-6.3: _background_vision_loop relocated here
 
     # Locate the ambient-listen path body using its docstring marker.
     ambient_marker = "# ── Full recognition when no active sessions (ambient listen path)"
@@ -86,7 +86,7 @@ def test_ambient_listen_path_classifies_and_upserts_with_verdict():
 
 def test_secondary_scan_path_classifies_and_upserts_with_verdict():
     """Same wiring assertion as #1 but for the secondary-scan path."""
-    src = _read("pipeline.py")
+    src = _read("runtime/vision_loop.py")  # P1.A1 SP-6.3: _background_vision_loop relocated here
 
     sec_marker = "# ── Secondary face scan during active conversation"
     assert sec_marker in src
@@ -230,7 +230,8 @@ def test_same_frame_discipline_in_background_vision_loop():
     (embedder.embed appears as a Name expression, not a Call). Route B is
     cleaner here and is the route this test exercises.
     """
-    pipeline_path = _REPO_ROOT / "pipeline.py"
+    # P1.A1 SP-6.3: _background_vision_loop (with its # P0S1-C0: markers) relocated to vision_loop.
+    pipeline_path = _REPO_ROOT / "runtime" / "vision_loop.py"
     src = pipeline_path.read_text(encoding="utf-8")
     lines = src.splitlines()
 
@@ -280,7 +281,7 @@ def test_h2_vision_frame_emit_uses_real_verdict_aggregate():
     per-iteration aggregate (`_h2_iter_live`) rather than the pre-P0.S1
     placeholder `True`. Source-inspection only.
     """
-    src = _read("pipeline.py")
+    src = _read("runtime/vision_loop.py")  # P1.A1 SP-6.3: _background_vision_loop relocated here
     # The aggregate variable name is the load-bearing signal — if a future
     # refactor renames it, this test surfaces the change.
     assert "_h2_iter_live" in src, (

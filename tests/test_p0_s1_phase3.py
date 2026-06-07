@@ -276,8 +276,9 @@ def test_close_session_pops_rejection_store_for_owned_tracks():
 
 def test_stale_prune_pops_rejection_store_for_disappeared_tracks():
     """Source-inspection: the background-vision-loop stale-prune block pops
-    rejection-store entries for tracks that disappeared from the active set."""
-    src = _read("pipeline.py")
+    rejection-store entries for tracks that disappeared from the active set.
+    P1.A1 SP-6.3: _background_vision_loop relocated to runtime/vision_loop.py."""
+    src = _read("runtime/vision_loop.py")
     sec_marker = "# ── Secondary face scan during active conversation"
     start = src.index(sec_marker)
     end = src.index("for _det in detections:", start)

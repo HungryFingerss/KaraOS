@@ -63,6 +63,14 @@ _classifier_cache_store: "CacheStore" = CacheStore("classifier", ttl=_CLASSIFIER
 # + runtime.vision_loop, neither of which then imports the other.
 lip_tracker = LipTracker()
 
+# P1.A1 SP-6.3 — WIRE-d vision globals (multi-module read+write: the vision-loop
+# functions in runtime.vision_loop + staying pipeline code [run/enrollment]).
+# Canonical home so reads+writes from both modules share one __dict__ (SP-5 lesson).
+_anti_spoof_checker:    "AntiSpoofChecker | None"  = None  # set in run(); None when ANTISPOOFING_ENABLED=False
+_vision_task: "asyncio.Task | None" = None
+_vision_last_heartbeat:       float         = 0.0  # epoch time of last [Vision] status print
+_vision_last_heartbeat_state: str           = ""   # last printed heartbeat content — skip if unchanged
+
 
 def set_brain_orchestrator(value):
     """Canonical-home setter for the rebound _brain_orchestrator (P1.A1 SP-5).

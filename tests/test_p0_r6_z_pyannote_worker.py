@@ -539,12 +539,16 @@ def test_p0_r6_z_d4_anchor_2_four_pool_ordering_invariant() -> None:
             if first.value not in pool_lines:
                 pool_lines[first.value] = node.lineno
 
-    # AST scan for `_vision_task = asyncio.create_task(...)` Assign target.
+    # AST scan for the `_vision_task` spawn Assign target. P1.A1 SP-6.3: _vision_task
+    # is WIRE-d, so run()'s spawn is `_wiring._vision_task = create_task(...)` (an
+    # Attribute target); accept both the bare-Name and _wiring-Attribute forms.
     vision_task_line = None
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "_vision_task":
+                tname = (target.id if isinstance(target, ast.Name)
+                         else target.attr if isinstance(target, ast.Attribute) else None)
+                if tname == "_vision_task":
                     if vision_task_line is None:
                         vision_task_line = node.lineno
                     break
