@@ -328,17 +328,20 @@ def test_p0_s7_5_d3_handle_update_person_name_uses_await():
     Catches: future refactor that reverts the fix or accidentally
     fires both `await` AND `create_task`.
     """
-    src = _PIPELINE_PY.read_text(encoding="utf-8")
-    tree = ast.parse(src)
-
-    fn_node = None
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name == "_handle_update_person_name"
-        ):
-            fn_node = node
-            break
+    # P1.A1 SP-6.2: _handle_update_person_name relocated pipeline.py → flows/companion/tools.py
+    # (re-exported by pipeline). inspect.getsource follows the function object to its real
+    # co_filename — move-immune, no re-point needed as the engine keeps relocating. Fail-loud:
+    # the attribute lookup raises if the re-export is dropped, and the node must parse.
+    import inspect
+    import pipeline
+    fn_src = inspect.getsource(pipeline._handle_update_person_name)
+    tree = ast.parse(fn_src)
+    fn_node = next(
+        (n for n in ast.walk(tree)
+         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+         and n.name == "_handle_update_person_name"),
+        None,
+    )
     assert fn_node is not None, "_handle_update_person_name missing"
 
     # Scan for await _session_store.rename(...) and create_task(_session_store.rename(...))

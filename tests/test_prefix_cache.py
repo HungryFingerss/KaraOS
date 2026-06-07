@@ -22,6 +22,13 @@ from core.brain import _build_system_prompt, render_session_stable_prefix
 _PIPELINE_SRC = open(
     os.path.join(os.path.dirname(__file__), "..", "pipeline.py"), encoding="utf-8"
 ).read()
+# P1.A1 SP-6.2: the dispute-flip handlers (_handle_report_identity_mismatch +
+# _handle_update_person_name) relocated to flows/companion/tools.py, taking their
+# set_cached_prefix(person_id, None) cache-invalidation calls with them.
+_TOOLS_SRC = open(
+    os.path.join(os.path.dirname(__file__), "..", "flows", "companion", "tools.py"),
+    encoding="utf-8",
+).read()
 
 
 # ── Test 1: pure function — same params → same output ──────────────────────────
@@ -76,7 +83,7 @@ def test_build_system_prompt_uses_cached_prefix():
 # ── Test 5: report_identity_mismatch invalidates affected session cache ───────
 
 def test_report_identity_mismatch_invalidates_session_cache():
-    src = _PIPELINE_SRC
+    src = _PIPELINE_SRC + _TOOLS_SRC  # SP-6.2: dispute-flip handlers now in flows/companion/tools.py
     # Both dispute-flip sites must invalidate the cache via set_cached_prefix
     pop_count = src.count('set_cached_prefix(person_id, None)')
     assert pop_count >= 2, (

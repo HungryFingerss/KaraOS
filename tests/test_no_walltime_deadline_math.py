@@ -37,6 +37,7 @@ def _collect_in_scope() -> list[Path]:
         if "_minifasnet" not in p.parts:
             files.append(p)
     files.extend(sorted((REPO_ROOT / "runtime").rglob("*.py")))  # P1.A1 SP-4 engine package
+    files.extend(sorted((REPO_ROOT / "flows").rglob("*.py")))  # P1.A1 SP-6.2 app-layer flows
     boot = REPO_ROOT / "bootstrap" / "classifier"
     if boot.exists():
         files.extend(sorted(boot.rglob("*.py")))

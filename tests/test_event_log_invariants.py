@@ -226,6 +226,10 @@ def test_each_event_type_has_exactly_one_producer_location():
     # engine modules — include them so the N=1 lower bound stays satisfied.
     for p in (_REPO_ROOT / "runtime").rglob("*.py"):
         scan_targets.append(p)
+    # P1.A1 SP-6.2: _execute_tool (the `tool_call` + `tool_result` producer) relocated
+    # to flows/companion/tools.py — include the app-layer flows so N=1 holds.
+    for p in (_REPO_ROOT / "flows").rglob("*.py"):
+        scan_targets.append(p)
 
     counts: dict[str, int] = {t: 0 for t in EVENT_TYPES}
     locations: dict[str, list[str]] = {t: [] for t in EVENT_TYPES}
