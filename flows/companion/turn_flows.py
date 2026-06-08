@@ -13,6 +13,9 @@ from __future__ import annotations
 
 from core.log_utils import _now_log_ts
 import runtime.wiring as _wiring  # P1.A1 SP-7b.2: shim dispatch + session_end_notify brain-notify
+import time  # P1.A1 SP-7b.3: history_persist _now_ts wall-clock stamp
+from core.config import CONVERSATION_HISTORY_LIMIT  # P1.A1 SP-7b.3
+from runtime.wiring import _conversation_store  # P1.A1 SP-7b.3: from-import SAFE (reset-in-place shared object)
 
 
 async def shadow_classify(text, history, tool_calls):
@@ -86,3 +89,112 @@ def session_end_notify(db, person_id, text, response, _is_disputed_session, _roo
     elif _is_disputed_session:
         print(f"[Pipeline] Skipping log_turn for disputed session {person_id} — "
               f"turns stay in-memory only until identity resolves.")
+
+
+def _resolve_addressed_to(
+    parsed_addr: "str | None",
+    active_sessions: "tuple",
+    effective_name: str,
+) -> str:
+    """Session 113 Part 1 — resolve the LLM's [addressing:X] marker into
+    the history's addressed_to field. Policy:
+      - marker absent / empty / "current" → default to current speaker
+      - marker names a person in active_sessions (case-insensitive) → use
+        that person's canonical name from the session dict
+      - marker names someone not active → log warning + fall back to the
+        current speaker (safety property: the marker never silently
+        corrupts history with an unverifiable name).
+
+    Pulled out of conversation_turn so unit tests can exercise the three
+    branches without the full turn surface.
+
+    Session 113.1: emit an observability log line on every call so canary
+    debugging can tell apart (a) "LLM emitted a marker that routed to X"
+    vs (b) "LLM emitted no marker; default to current speaker." Prior to
+    the log, canary analysis had no ground truth on whether Part 1's
+    parser actually fired — a mis-address could be a broken marker parse
+    OR a legit LLM decision, and we couldn't distinguish.
+    """
+    # Session 116 P1 #8 — address decision reasoning: surface the room
+    # candidate count so an outside reviewer can see WHY the default
+    # path was taken (single-person room → no override possible vs.
+    # multi-person room → LLM chose to default).
+    _candidate_count = len(active_sessions)
+    if not parsed_addr or parsed_addr.strip().lower() == "current":
+        print(
+            f"[Pipeline] Turn addressed: {effective_name} (default; "
+            f"candidates={_candidate_count})"
+        )
+        return effective_name
+    addr_lc = parsed_addr.strip().lower()
+    matched = next(
+        (s.person_name for s in active_sessions
+         if s.person_name.strip().lower() == addr_lc),
+        None,
+    )
+    if matched:
+        print(
+            f"[Pipeline] Turn addressed: {matched} "
+            f"(LLM: '[addressing:{parsed_addr}]'; candidates={_candidate_count})"
+        )
+        return matched
+    print(
+        f"[Pipeline] ADDRESS DECISION: unknown name {parsed_addr!r} "
+        f"not in active sessions, falling back to {effective_name!r}"
+    )
+    print(f"[Pipeline] Turn addressed: {effective_name} (fallback)")
+    return effective_name
+
+
+async def history_persist(text, response, person_id, person_name, _addr_override, history):
+    """P1.A1 SP-7b.3 — end-of-turn history append + cap-trim + persist (non-empty
+    bundle). Extracted verbatim from pipeline.conversation_turn (P9). Resolves the
+    effective speaker name + the addressed_to marker, appends user+assistant turns
+    to the in-memory history, trims to CONVERSATION_HISTORY_LIMIT, and persists.
+    Returns effective_name (the only slice-defined local the caller reads after).
+    """
+    # ── Update in-memory conversation name if it changed ─────────────────────
+    # session dict may have been updated by update_person_name tool
+    _post_tool_snap = _wiring._session_store.peek_snapshot(person_id)
+    effective_name = _post_tool_snap.person_name if _post_tool_snap is not None else person_name
+
+    # Session 113 Part 1 — resolve the ADDRESS DECISION marker parsed by
+    # _token_gen into the addressed_to field. TTS already played without
+    # the marker (stripped in _token_gen); this only affects the history
+    # field and, through it, Session 111's cross-person excerpt rendering.
+    addressed_to = _resolve_addressed_to(
+        _addr_override[0], _wiring._session_store.peek_all_snapshots(), effective_name,
+    )
+
+    # ── History + persistence ──────────────────────────────────────────────────
+    # Session 111 Criticals #2 + #3 + HIGH timestamps — each message gets:
+    #   - ts:           wall-clock write time (drives HIGH-timestamps excerpt
+    #                   format + Critical #2 session-boundary filtering)
+    #   - addressed_to: assistant-only; names the person the assistant was
+    #                   replying to. Critical #3: 4-person rooms need
+    #                   unambiguous "you [to Alice]: ..." format instead of
+    #                   the previous "you: ..." where the target was implied
+    #                   by the containing session dict. Session 113 Part 1
+    #                   populates this from the LLM's [addressing:X] marker
+    #                   when multi-person (falls back to effective_name).
+    _now_ts = time.time()
+    history.append({
+        "role":    "user",
+        "content": text,
+        "ts":      _now_ts,
+    })
+    history.append({
+        "role":         "assistant",
+        "content":      response,
+        "ts":           _now_ts,
+        "addressed_to": addressed_to,
+    })
+    # Enforce in-session history cap: load_conversation_history() caps at
+    # CONVERSATION_HISTORY_LIMIT turns on DB load, but in-session accumulation
+    # is unbounded.  Trim here so the LLM never sees more than the limit.
+    # Trim from the front (oldest turns) so recent context is preserved.
+    _max_msgs = CONVERSATION_HISTORY_LIMIT * 2   # 2 messages per turn
+    if len(history) > _max_msgs:
+        history = history[-_max_msgs:]
+    await _conversation_store.set_history(person_id, history)
+    return effective_name

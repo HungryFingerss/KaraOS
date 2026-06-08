@@ -1169,7 +1169,9 @@ def test_s111_conversation_entries_carry_ts_and_addressed_to():
     path since the function is end-to-end async and hard to exercise
     behaviorally without the full pipeline fixture."""
     import inspect, pipeline
-    src = inspect.getsource(pipeline.conversation_turn)
+    # P1.A1 SP-7b.3: the history append (ts + addressed_to fields) relocated to
+    # flows.companion.turn_flows.history_persist (re-exported; getsource move-immune).
+    src = inspect.getsource(pipeline.history_persist)
     # User message gains ts.
     assert '"ts":      _now_ts' in src or '"ts": _now_ts' in src, (
         "user message append must include ts field for session-boundary "

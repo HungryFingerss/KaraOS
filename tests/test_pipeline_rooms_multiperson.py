@@ -381,9 +381,12 @@ def test_s113_token_gen_marker_parse_source_guards_strip_and_capture():
     assert "_prefix_buf" in src and "not _marker_done[0]" in src, (
         "end-of-stream flush path must read _marker_done + _prefix_buf"
     )
-    # Resolution site must call the helper.
-    assert "_resolve_addressed_to(" in src, (
-        "conversation_turn must delegate resolution to the testable helper"
+    # Resolution site must call the helper. P1.A1 SP-7b.3: the resolution call
+    # relocated to flows.companion.turn_flows.history_persist (re-exported);
+    # getsource follows co_filename → move-immune.
+    hp_src = inspect.getsource(pipeline.history_persist)
+    assert "_resolve_addressed_to(" in hp_src, (
+        "history_persist must delegate resolution to the testable helper"
     )
 
 

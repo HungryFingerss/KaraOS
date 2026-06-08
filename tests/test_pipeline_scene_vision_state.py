@@ -188,11 +188,13 @@ async def test_in_session_history_trimmed_at_limit():
 
 
 def test_in_session_history_cap_in_source():
-    """pipeline.py must trim history to CONVERSATION_HISTORY_LIMIT * 2 messages."""
+    """The companion turn logic must trim history to CONVERSATION_HISTORY_LIMIT * 2
+    messages. P1.A1 SP-7b.3: the cap+trim relocated from conversation_turn to
+    flows.companion.turn_flows.history_persist (re-exported; getsource move-immune)."""
     import inspect, pipeline
-    src = inspect.getsource(pipeline)
+    src = inspect.getsource(pipeline.history_persist)
     assert "CONVERSATION_HISTORY_LIMIT * 2" in src, \
-        "pipeline must enforce in-session history cap using CONVERSATION_HISTORY_LIMIT"
+        "history_persist must enforce in-session history cap using CONVERSATION_HISTORY_LIMIT"
 
 
 def test_temporal_buffer_pool_depth_returns_zero_for_unseen_track():
