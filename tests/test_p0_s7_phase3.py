@@ -39,6 +39,7 @@ pytestmark = pytest.mark.privacy_critical
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 _PIPELINE_PY = _REPO_ROOT / "pipeline.py"
+_TURN_FLOWS_PY = _REPO_ROOT / "flows" / "companion" / "turn_flows.py"  # P1.A1 SP-7b.2
 _DB_PY = _REPO_ROOT / "core" / "db.py"
 
 
@@ -54,13 +55,13 @@ def test_log_turn_callers_use_compute_room_audience_helper() -> None:
     `[<single_pid>]` list. Catches refactors that revert any of the 5 sites
     back to the single-speaker shape.
     """
-    src = _PIPELINE_PY.read_text(encoding="utf-8")
-    tree = ast.parse(src)
-
-    # Annotate parents so each Call can walk up to its enclosing function.
-    for node in ast.walk(tree):
-        for child in ast.iter_child_nodes(node):
-            child._parent = node  # type: ignore[attr-defined]
+    # P1.A1 SP-7b.2 — the P10 session-end-notify block (2 of the 5 log_turn
+    # callers) moved to flows/companion/turn_flows.py::session_end_notify.
+    # Scan BOTH files so all 5 callers + their _compute_room_audience routing
+    # stay enforced (pipeline.py: _kairos_tick ×2 + the P2 stay-silent block;
+    # turn_flows.py: session_end_notify ×2).
+    _scan_files = (("pipeline.py", _PIPELINE_PY),
+                   ("flows/companion/turn_flows.py", _TURN_FLOWS_PY))
 
     def _enclosing_function(call: ast.Call):
         cur: ast.AST = call
@@ -79,22 +80,30 @@ def test_log_turn_callers_use_compute_room_audience_helper() -> None:
             and f.value.id == "db"
         )
 
-    log_turn_calls: list[ast.Call] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and _is_db_log_turn(node):
-            log_turn_calls.append(node)
+    # (label, call) so violation messages name the right file.
+    log_turn_calls: list[tuple[str, ast.Call]] = []
+    for _label, _path in _scan_files:
+        _tree = ast.parse(_path.read_text(encoding="utf-8"))
+        # Annotate parents so each Call can walk up to its enclosing function.
+        for node in ast.walk(_tree):
+            for child in ast.iter_child_nodes(node):
+                child._parent = node  # type: ignore[attr-defined]
+        for node in ast.walk(_tree):
+            if isinstance(node, ast.Call) and _is_db_log_turn(node):
+                log_turn_calls.append((_label, node))
 
-    # Plan v2 §4.1 grep-verified exactly 5 sites — anchor the count so a
-    # NEW log_turn caller doesn't slip through without explicit audit.
+    # Plan v2 §4.1 grep-verified exactly 5 sites; P1.A1 SP-7b.2 split them
+    # 3 (pipeline.py) + 2 (turn_flows.py). Anchor the TOTAL so a new log_turn
+    # caller in either file doesn't slip through without explicit audit.
     assert len(log_turn_calls) == 5, (
-        f"Plan v2 §4.1: expected exactly 5 db.log_turn(...) call sites in "
-        f"pipeline.py (grep-verified at lines 3205/3208/5103/5996/5998). "
-        f"Found {len(log_turn_calls)}. New caller? Update §4.1 + Plan v2 "
-        f"§8 test 15 + the producer-side audience_ids upgrade pattern."
+        f"Plan v2 §4.1 / SP-7b.2: expected exactly 5 db.log_turn(...) call "
+        f"sites across pipeline.py + flows/companion/turn_flows.py. Found "
+        f"{len(log_turn_calls)}. New caller? Update §4.1 + Plan v2 §8 test 15 "
+        f"+ the producer-side audience_ids upgrade pattern."
     )
 
     violations: list[str] = []
-    for call in log_turn_calls:
+    for _label, call in log_turn_calls:
         # Find audience_ids kwarg.
         audience_kw = None
         for kw in call.keywords:
@@ -103,7 +112,7 @@ def test_log_turn_callers_use_compute_room_audience_helper() -> None:
                 break
         if audience_kw is None:
             violations.append(
-                f"pipeline.py:{call.lineno} — db.log_turn(...) missing "
+                f"{_label}:{call.lineno} — db.log_turn(...) missing "
                 f"audience_ids kwarg (Plan v2 §4.3 wiring)"
             )
             continue
@@ -113,7 +122,7 @@ def test_log_turn_callers_use_compute_room_audience_helper() -> None:
         # upgrade reverted.
         if isinstance(value, ast.List):
             violations.append(
-                f"pipeline.py:{call.lineno} — db.log_turn(audience_ids=<List "
+                f"{_label}:{call.lineno} — db.log_turn(audience_ids=<List "
                 f"literal>): the producer-side upgrade requires a variable "
                 f"assigned from _compute_room_audience(...), not a literal "
                 f"list. Revert?"
@@ -124,7 +133,7 @@ def test_log_turn_callers_use_compute_room_audience_helper() -> None:
         # _compute_room_audience(...) somewhere in the same function.
         if not isinstance(value, ast.Name):
             violations.append(
-                f"pipeline.py:{call.lineno} — db.log_turn(audience_ids=...) "
+                f"{_label}:{call.lineno} — db.log_turn(audience_ids=...) "
                 f"value is {type(value).__name__}, expected ast.Name "
                 f"(variable assigned from _compute_room_audience)"
             )
@@ -133,7 +142,7 @@ def test_log_turn_callers_use_compute_room_audience_helper() -> None:
         var_name = value.id
         fn = _enclosing_function(call)
         assert isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)), (
-            f"Module-level log_turn at line {call.lineno} unsupported"
+            f"Module-level log_turn at {_label}:{call.lineno} unsupported"
         )
         # Scan the enclosing function for an assignment
         #   <var_name> = _compute_room_audience(...)
@@ -151,7 +160,7 @@ def test_log_turn_callers_use_compute_room_audience_helper() -> None:
                             helper_assigns.append(inner.lineno)
         if not helper_assigns:
             violations.append(
-                f"pipeline.py:{call.lineno} — db.log_turn(audience_ids="
+                f"{_label}:{call.lineno} — db.log_turn(audience_ids="
                 f"{var_name!r}) but no preceding assignment of "
                 f"{var_name!r} = _compute_room_audience(...) found in "
                 f"enclosing function '{fn.name}'. Hidden bypass of the "

@@ -243,7 +243,7 @@ from flows.companion.tools import (  # noqa: F401  — P1.A1 SP-6.2 re-export (t
     _ToolContext, _handle_update_person_name, _handle_report_identity_mismatch, _handle_update_system_name,
     _handle_shutdown, _handle_search_memory, _TOOL_HANDLERS, _execute_tool,
 )
-from flows.companion.turn_flows import shadow_classify  # noqa: F401  — P1.A1 SP-7b.1 re-export
+from flows.companion.turn_flows import shadow_classify, _compute_room_audience, session_end_notify  # noqa: F401  — P1.A1 SP-7b.1/7b.2 re-export
 from runtime.identity_cache import (  # noqa: F401  — P1.A1 SP-6.2 re-export (bf-cache funcs;
     _get_best_friend_cached, _invalidate_bf_cache,  # raw _cached_bf_* globals NOT re-exported — mutable, stale-snapshot trap)
 )
@@ -362,24 +362,6 @@ _TOOL_FALLBACKS: dict[str, str] = {
 
 
 
-
-def _compute_room_audience(
-    participants: "set[str] | list[str] | tuple[str, ...]",
-    person_id: str,
-) -> "list[str]":
-    """P0.S7.D-D Stage 1 shim → RoomOrchestrator.compute_room_audience.
-
-    Legacy module-level helper preserved as a function-shim (NOT attribute
-    binding — defers lookup to call time so the shim works even if the
-    underlying class instance is reassigned). 130 test sites call this
-    name unchanged; Stage 2 hard-deletes the shim and migrates tests.
-    """
-    if _wiring._room_orchestrator is None:
-        raise RuntimeError(
-            "RoomOrchestrator not initialized — _init_room_orchestrator() "
-            "must run first (production: from run(); tests: autouse fixture)"
-        )
-    return _wiring._room_orchestrator.compute_room_audience(participants, person_id)
 
 
 
@@ -2747,25 +2729,7 @@ async def conversation_turn(
     # group on. None is acceptable (backward-compat); room_session_id is
     # stamped on session dict at _open_session time.
     _room_sid = _ct_snap.room_session_id if _ct_snap is not None else None
-    if db and not _is_disputed_session:
-        # P0.S7 T-B + MEDIUM 4 — full-room-audience (sites 4+5 share one
-        # call; same logical turn).
-        _ct_audience = _compute_room_audience(
-            _wiring._pipeline_state_store.peek_active_room_participants(),
-            person_id,
-        )
-        db.log_turn(person_id, "user",      text, room_session_id=_room_sid,
-                    audience_ids=_ct_audience)
-        db.log_turn(person_id, "assistant", response, room_session_id=_room_sid,
-                    audience_ids=_ct_audience)
-        # Wake brain agent immediately — extraction runs during TTS so facts
-        # are in brain.db before the user speaks their next turn.
-        if _wiring._brain_orchestrator:
-            _wiring._brain_orchestrator.notify()
-    elif _is_disputed_session:
-        print(f"[Pipeline] Skipping log_turn for disputed session {person_id} — "
-              f"turns stay in-memory only until identity resolves.")
-
+    session_end_notify(db, person_id, text, response, _is_disputed_session, _room_sid)
     # ── Identity scoring for stranger sessions ────────────────────────────────
     # Fast keyword-matching against social mentions — no API calls.
     # Accumulates confidence across turns; thresholds drive the next turn's hint.

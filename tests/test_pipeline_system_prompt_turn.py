@@ -204,13 +204,17 @@ def test_system_prompt_injects_identity_disputed_block():
 
 def test_conversation_turn_skips_log_turn_when_disputed():
     """During a disputed session, db.log_turn must not be called — turns live only
-    in-memory until the dispute resolves."""
+    in-memory until the dispute resolves. P1.A1 SP-7b.2: the log_turn + skip gate
+    relocated to flows.companion.turn_flows.session_end_notify; conversation_turn
+    computes _is_disputed_session and threads it through. Scan both homes
+    (getsource follows co_filename → move-immune)."""
     import inspect, pipeline
-    src = inspect.getsource(pipeline.conversation_turn)
-    assert "_is_disputed_session" in src, \
-        "conversation_turn must define _is_disputed_session guard"
-    assert "not _is_disputed_session" in src, \
-        "log_turn must be gated on `not _is_disputed_session`"
+    ct_src = inspect.getsource(pipeline.conversation_turn)
+    assert "_is_disputed_session" in ct_src, \
+        "conversation_turn must compute the _is_disputed_session guard + pass it to session_end_notify"
+    sen_src = inspect.getsource(pipeline.session_end_notify)
+    assert "not _is_disputed_session" in sen_src, \
+        "session_end_notify must gate log_turn on `not _is_disputed_session`"
 
 
 def _make_evidence(**overrides):

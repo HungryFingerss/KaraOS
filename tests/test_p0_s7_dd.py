@@ -42,30 +42,41 @@ _PIPELINE_PY  = pathlib.Path(__file__).resolve().parent.parent / "pipeline.py"
 # P1.A1 SP-6.1: _on_room_end shim relocated pipeline.py → runtime/session.py
 # (re-exported in pipeline.py so callers stay byte-identical).
 _SESSION_PY   = pathlib.Path(__file__).resolve().parent.parent / "runtime" / "session.py"
+# P1.A1 SP-7b.2: _compute_room_audience shim co-relocated pipeline.py →
+# flows/companion/turn_flows.py (re-exported in pipeline.py — same shape as SP-6.1).
+_TURN_FLOWS_PY = pathlib.Path(__file__).resolve().parent.parent / "flows" / "companion" / "turn_flows.py"
 
 
 def _resolve_shim_node(name: str):
-    """Resolve a P0.S7.D-D shim's FunctionDef + source, following the SP-6.1
-    relocation. A shim is either defined directly in pipeline.py OR
-    re-exported there via ``from runtime.session import ...`` (its body then
-    living in runtime/session.py). Returns ``(node | None, label, src)``."""
+    """Resolve a P0.S7.D-D shim's FunctionDef + source, following the shim
+    relocations. A shim is either defined directly in pipeline.py OR
+    re-exported there via ``from <module> import ...`` (its body then living
+    in <module>'s file). Relocation sources (in order): runtime.session
+    (SP-6.1, _on_room_end) + flows.companion.turn_flows (SP-7b.2,
+    _compute_room_audience). Returns ``(node | None, label, src)``."""
     pipeline_src = _PIPELINE_PY.read_text(encoding="utf-8")
     pipeline_tree = ast.parse(pipeline_src)
     for n in pipeline_tree.body:
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name:
             return n, "pipeline.py", pipeline_src
-    _reexported = any(
-        isinstance(n, ast.ImportFrom)
-        and (n.module or "").startswith("runtime.session")
-        and any((a.asname or a.name) == name for a in n.names)
-        for n in pipeline_tree.body
+    # Re-export relocation sources: (import-module-prefix, label, path).
+    _reexport_sources = (
+        ("runtime.session", "runtime/session.py", _SESSION_PY),
+        ("flows.companion.turn_flows", "flows/companion/turn_flows.py", _TURN_FLOWS_PY),
     )
-    if _reexported:
-        session_src = _SESSION_PY.read_text(encoding="utf-8")
-        session_tree = ast.parse(session_src)
-        for n in session_tree.body:
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name:
-                return n, "runtime/session.py", session_src
+    for _modpfx, _label, _path in _reexport_sources:
+        _reexported = any(
+            isinstance(n, ast.ImportFrom)
+            and (n.module or "").startswith(_modpfx)
+            and any((a.asname or a.name) == name for a in n.names)
+            for n in pipeline_tree.body
+        )
+        if _reexported:
+            _src = _path.read_text(encoding="utf-8")
+            _tree = ast.parse(_src)
+            for n in _tree.body:
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name:
+                    return n, _label, _src
     return None, None, None
 
 
