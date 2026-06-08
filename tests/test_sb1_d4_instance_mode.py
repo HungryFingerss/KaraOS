@@ -42,9 +42,12 @@ def test_config_default_instance_mode_is_base():
 
 
 def test_pipeline_boot_logs_instance_mode_with_valid_guard():
-    """Source-inspection: run() emits the boot declaration, reads the config
-    constant, and falls back to base on an invalid env override."""
-    src = (_REPO_ROOT / "pipeline.py").read_text(encoding="utf-8")
+    """Source-inspection: the boot declaration emits the log line, reads the config
+    constant, and falls back to base on an invalid env override. P1.A1 SP-7c: the
+    instance-mode check relocated from pipeline.run() to runtime/boot_checks.py::
+    validate_instance_mode (engine boot-leaf home, alongside validate_tool_registries);
+    run() now calls validate_instance_mode() — the substrings live in boot_checks.py."""
+    src = (_REPO_ROOT / "runtime" / "boot_checks.py").read_text(encoding="utf-8")
     assert "[Config] instance_mode=" in src
     assert "config.KARAOS_INSTANCE_MODE" in src
     assert "config.VALID_INSTANCE_MODES" in src

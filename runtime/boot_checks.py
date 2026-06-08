@@ -87,3 +87,21 @@ def validate_tool_registries(_BRAIN_TOOLS, _TOOL_FALLBACKS, _TOOL_HANDLERS):
         raise RuntimeError(f'Tools missing from _TOOL_HANDLERS ∪ INLINE_DISPATCHED_TOOLS: {sorted(_handler_missing)}. Add to _TOOL_HANDLERS if dispatched through _execute_tool, OR to INLINE_DISPATCHED_TOOLS if consumed via inline ask_stream callbacks (see core/config.py rationale block).')
     if not (not _handler_orphans):
         raise RuntimeError(f'_TOOL_HANDLERS has entries for tools not in brain.TOOLS: {sorted(_handler_orphans)}. Remove the handler entry OR re-add to brain.TOOLS.')
+
+
+def validate_instance_mode() -> None:
+    """SB.1 D4.2 — KaraOS instance-mode boot declaration. Documents deployment
+    intent (base = cloneable/publishable; personal = Jagan's local instance).
+    Lightweight: log only. Write-path enforcement lands in SB.5. Flags a typo'd
+    env override (not in VALID_INSTANCE_MODES) without crashing — SB.1 is
+    documentation-only. P1.A1 SP-7c: lifted verbatim from pipeline.run() to the
+    engine boot-check home (alongside validate_tool_registries).
+    """
+    _instance_mode = config.KARAOS_INSTANCE_MODE
+    if _instance_mode not in config.VALID_INSTANCE_MODES:
+        print(
+            f"[Config] WARNING — KARAOS_INSTANCE_MODE={_instance_mode!r} is not one of "
+            f"{config.VALID_INSTANCE_MODES}; treating as 'base'. (SB.1 D4.2)"
+        )
+        _instance_mode = "base"
+    print(f"[Config] instance_mode={_instance_mode}")

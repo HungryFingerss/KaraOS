@@ -3012,20 +3012,9 @@ async def run():
     except Exception as _ollama_probe_err:
         print(f"[Warmup] Ollama health-check skipped (non-fatal): {_ollama_probe_err!r}")
 
-    # ── SB.1 D4.2 — KaraOS instance-mode boot declaration ─────────────────────
-    # Documents deployment intent (base = cloneable/publishable; personal =
-    # Jagan's local instance). Lightweight: log only. Write-path enforcement
-    # lands in SB.5. Flag a typo'd env override (not in VALID_INSTANCE_MODES)
-    # without crashing — SB.1 is documentation-only.
-    _instance_mode = config.KARAOS_INSTANCE_MODE
-    if _instance_mode not in config.VALID_INSTANCE_MODES:
-        print(
-            f"[Config] WARNING — KARAOS_INSTANCE_MODE={_instance_mode!r} is not one of "
-            f"{config.VALID_INSTANCE_MODES}; treating as 'base'. (SB.1 D4.2)"
-        )
-        _instance_mode = "base"
-    print(f"[Config] instance_mode={_instance_mode}")
-
+    # ── SB.1 D4.2 instance-mode boot declaration → runtime/boot_checks.py  [P1.A1 SP-7c]
+    from runtime.boot_checks import validate_instance_mode
+    validate_instance_mode()
     print("[Pipeline] All systems ready. Watching...")
     state.write(mode="watching")
 
