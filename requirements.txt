@@ -35,6 +35,7 @@ kuzu==0.11.3              # embedded property graph (entity-relationship knowled
 
 # Utils
 python-dotenv>=1.0.0
+PyYAML==6.0.3            # SB.2.1 — profile loader (yaml.safe_load); exact pin, latest stable 6.x
 rapidfuzz>=3.0.0          # fast string similarity — schema normalization pre-filter
 jellyfish>=1.0.0          # Double Metaphone phonetic matching — _name_heard_in (Session 41 G4 phonetic gate)
 pytest>=7.0.0             # test runner (dev)

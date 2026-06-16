@@ -118,6 +118,13 @@ _ENV_VAR_ACCESS_ALLOWLIST: dict[tuple[str, str, str], str] = {
         "supports both HF_TOKEN and HUGGING_FACE_HUB_TOKEN; subprocess "
         "tries HF_TOKEN first, falls back to HUGGING_FACE_HUB_TOKEN. "
         "Same rationale as HF_TOKEN entry above — lazy subprocess read.",
+    ("core/profile_loader.py", "KARAOS_PROFILE", "read"):
+        "SB.2.1: the profile loader reads the KARAOS_PROFILE deployment-shape "
+        "selector at module load. It CANNOT centralize through config.py — "
+        "config.py imports the loader at its END (the loader runs before config "
+        "finishes) and the loader must stay config-free (the T8 no-import-cycle "
+        "invariant). Not a secret — a profile name {companion|robotics}. Mirrors "
+        "the KARAOS_INSTANCE_MODE env-read pattern at core/config.py:1347.",
 }
 
 

@@ -43,6 +43,7 @@ def _collect_in_scope() -> list[Path]:
     files.extend(sorted(p for p in (REPO_ROOT / "tools").glob("*.py") if p.is_file()))
     files.extend(sorted((REPO_ROOT / "runtime").rglob("*.py")))  # P1.A1 SP-4 engine package
     files.extend(sorted((REPO_ROOT / "flows").rglob("*.py")))  # P1.A1 SP-6.2 app-layer flows
+    files.extend(sorted((REPO_ROOT / "profiles").rglob("*.py")))  # SB.2.1 profile package
     boot = REPO_ROOT / "bootstrap" / "classifier"
     if boot.exists():
         files.extend(sorted(boot.rglob("*.py")))

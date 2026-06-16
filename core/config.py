@@ -1636,3 +1636,58 @@ DISK_ALERT_CRITICAL_PCT     = 90    # second threshold: critical severity
 DISK_ALERT_BLOCKER_PCT      = 95    # third threshold: critical/blocker — operator must act
 DISK_MONITORED_DIRS         = ["faces/", "data/", "faces/snapshots/", "faces/brain_graph/"]
 
+
+# ── SB.2.1 — profile overlay (applied at module-load, AFTER all base constants
+#    + the KARAOS_INSTANCE_MODE block) ──────────────────────────────────────────
+# One codebase serves multiple product shapes via a selected profile's thin
+# override bundle. PI-1: writes ONLY the per-role LLM *leaves* (CHAT_MODEL,
+# CHAT_BASE_URL, CHAT_API_KEY, …) + cloud timings + feature flags — NEVER the
+# derivation roots (TOGETHER_API_KEY/_BASE_URL stay env-derived + untouched), so
+# a root-override / stale-leaf desync is impossible by construction, and nothing
+# derives from the leaves. For the companion profile (the default), the leaf
+# values written == today's derived values → byte-identical → behavior-neutral.
+# persona/hardware/retention are declared-only hooks (SB.5/SB.8 wire them); they
+# are NOT applied here (companion system_name='Kara' would clobber
+# DEFAULT_SYSTEM_NAME='Dog' → not behavior-neutral). See profiles/_schema.py.
+from profiles._schema import (
+    LLM_ROLES as _SB21_LLM_ROLES,
+    FEATURE_FLAG_MAP as _SB21_FEATURE_FLAG_MAP,
+    CLOUD_TIMING_MAP as _SB21_CLOUD_TIMING_MAP,
+)
+
+
+def _apply_profile_overrides(_g: dict, _overrides: dict) -> None:
+    """Write the resolved profile overrides into the config namespace ``_g`` at the
+    LEAF level only (PI-1). Pure writer over the passed dict (lives here, not in
+    the loader, so the loader stays config-free → no import cycle)."""
+    _llm = _overrides.get("llm", {})
+    for _role in _SB21_LLM_ROLES:
+        _leaf = _llm.get(_role)
+        if not _leaf:
+            continue
+        _prefix = _role.upper()
+        if "model" in _leaf:
+            _g[f"{_prefix}_MODEL"] = _leaf["model"]
+        if "base_url" in _leaf:
+            _g[f"{_prefix}_BASE_URL"] = _leaf["base_url"]
+        if "api_key_env" in _leaf:
+            # PI-C: re-resolve via the env var NAME + .strip() so a whitespace-
+            # padded key never leaks raw into Authorization: Bearer (preserves the
+            # P0.S3 invariant; secrets never live in the YAML). Empty env-name
+            # (keyless local) → "".
+            _env_name = _leaf["api_key_env"]
+            _g[f"{_prefix}_API_KEY"] = os.getenv(_env_name, "").strip() if _env_name else ""
+    _cloud = _llm.get("cloud", {})
+    for _yaml_key, _const in _SB21_CLOUD_TIMING_MAP.items():
+        if _yaml_key in _cloud:
+            _g[_const] = _cloud[_yaml_key]
+    _features = _overrides.get("features", {})
+    for _feat, _flag in _SB21_FEATURE_FLAG_MAP.items():
+        if _feat in _features:
+            _g[_flag] = _features[_feat]
+
+
+from core.profile_loader import load_profile as _sb21_load_profile
+
+_apply_profile_overrides(globals(), _sb21_load_profile())   # LEAF-level writes only (PI-1)
+

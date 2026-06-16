@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+#
+# SB.2.1 — the robotics profile (PLACEHOLDER). The robotics stack (commitment
+# store + scheduler + policy engine + verifier registry + adapter SDK + MCP
+# server) is a SEPARATE stack on the shared engine — none of it exists in this
+# codebase yet. So this profile is thin: select the onboard local-LLM + flip the
+# companionship features off. Real content lands with the robotics stack / SB.9.
+profile: robotics
+llm:        { provider: local-orin }             # onboard, no cloud
+features:   { emotion: false, tier_memory: false }  # companionship layer off
+persona:    { system_name: Kara, persona_id: robotics_placeholder }
+hardware:   { tier: jetson_orin }
+retention:  { default_mode: base }               # no personal PII on a shared robot by default
+# motor / nav / adapter subsystems: NOT YET BUILT. They are NOT schema keys (an
+# unknown section would fail-loud at load); they arrive as real axes with the
+# robotics stack / SB.9 adapter seam.

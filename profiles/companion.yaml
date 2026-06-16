@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+#
+# SB.2.1 — the companion profile. EXACT == today's config (golden-snapshot-
+# guarded by T1). Only AXIS values live here; universal constants stay in
+# core/config.py, so a base tweak to a non-axis constant doesn't touch this file.
+# apply(companion) re-applies these at the LEAF == base → byte-identical →
+# zero behavior change.
+profile: companion
+llm:        { provider: cloud }                  # → today's Together-70B leaves
+features:   { emotion: true, tier_memory: true } # the 2 real-flag-backed toggles (= current values)
+persona:    { system_name: Kara, persona_id: companion_dog }  # declared-only hook (SB.8)
+hardware:   { tier: dev_laptop }                 # declared-only hook (today's loadout)
+retention:  { default_mode: personal }           # declared-only; env KARAOS_INSTANCE_MODE is authoritative
