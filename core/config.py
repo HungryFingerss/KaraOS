@@ -1685,7 +1685,22 @@ def _apply_profile_overrides(_g: dict, _overrides: dict) -> None:
     for _feat, _flag in _SB21_FEATURE_FLAG_MAP.items():
         if _feat in _features:
             _g[_flag] = _features[_feat]
+    # SB.3 — agent membership: the loader keys the resolved active-agent set as
+    # "ACTIVE_AGENTS" directly (Lock 2), so this writes config.ACTIVE_AGENTS.
+    if "ACTIVE_AGENTS" in _overrides:
+        _g["ACTIVE_AGENTS"] = _overrides["ACTIVE_AGENTS"]
 
+
+# ── SB.3 — agent-membership axis: ACTIVE_AGENTS base default (full set),
+#    overridden by the apply below. A NEW base constant — NOT derived from a
+#    root, so no SB.2.1-PI-1 derivation hazard. The orchestrator reads it via
+#    `config.ACTIVE_AGENTS` attribute access; it MUST NOT
+#    `from core.config import ACTIVE_AGENTS` (that binds this pre-apply default
+#    and silently ignores every profile — the Lock-2 from-import trap, enforced
+#    by tests/test_sb3_agent_registry.py T10).
+from profiles._registry import AGENT_REGISTRY as _SB3_AGENT_REGISTRY
+
+ACTIVE_AGENTS = frozenset(_SB3_AGENT_REGISTRY)
 
 from core.profile_loader import load_profile as _sb21_load_profile
 

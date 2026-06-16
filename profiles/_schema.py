@@ -130,4 +130,8 @@ SCHEMA: dict = {
     "retention": {"kind": "section", "keys": {
         "default_mode": {"kind": "scalar", "type": str, "enum": VALID_RETENTION_MODES},
     }},
+    # SB.3 — agent-membership axis. Value is a bundle-shorthand string
+    # (∈ AGENT_BUNDLES, e.g. "companion") OR a list[str] of AGENT_REGISTRY keys.
+    # Validated by the loader's _check_agent_select against profiles/_registry.py.
+    "agents": {"kind": "agent_select"},
 }

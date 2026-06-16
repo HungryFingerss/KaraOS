@@ -47,6 +47,7 @@ from core.config import (
     SOCIAL_MENTIONS_MAX_ROWS,
     WATCHDOG_MAX_AGE_DAYS,
 )
+import core.config as config  # SB.3 — read config.ACTIVE_AGENTS by attribute (Lock 2; NEVER a from-import)
 from core.sanitize import wrap_user_input
 from core.log_utils import _now_log_ts
 from core.brain_agent._llm import _call_llm_chat
@@ -78,6 +79,73 @@ from core.brain_agent.agents.briefing import (
 from core.brain_agent.agents.routine import RoutineAgent
 from core.brain_agent.agents.nudge import ProactiveNudgeAgent
 from core.brain_agent.agents.watchdog import WatchdogAgent
+
+from profiles._registry import AGENT_REGISTRY  # SB.3 — agent-membership registry (pure data)
+
+# SB.3 — registry class-name STRING → the class object. The orchestrator owns
+# the resolution (it already imports all 15); profiles/_registry.py stays pure
+# data with name strings → no profiles/→core/ coupling (D4).
+_CLASS_BY_NAME = {
+    "TriageAgent": TriageAgent,
+    "ExtractionAgent": ExtractionAgent,
+    "ContradictionAgent": ContradictionAgent,
+    "SchemaNormAgent": SchemaNormAgent,
+    "EmbeddingAgent": EmbeddingAgent,
+    "SocialGraphAgent": SocialGraphAgent,
+    "FrictionDetectionAgent": FrictionDetectionAgent,
+    "HouseholdExtractionAgent": HouseholdExtractionAgent,
+    "PromptPrefAgent": PromptPrefAgent,
+    "ConversationInsightAgent": ConversationInsightAgent,
+    "RoutineAgent": RoutineAgent,
+    "ProactiveNudgeAgent": ProactiveNudgeAgent,
+    "BriefingAgent": BriefingAgent,
+    "IdentityAgent": IdentityAgent,
+    "WatchdogAgent": WatchdogAgent,
+}
+
+# SB.3 — registry name → the existing self.<attr>. Keeps every call site's
+# attribute name unchanged (the diff is "build from registry + presence guard",
+# not a rename) — D-neutrality.
+_ATTR = {
+    "triage": "_triage",
+    "extraction": "_extractor",
+    "contradiction": "_contradictor",
+    "schema": "_schema_norm",
+    "embed": "_embed_agent",
+    "social": "_social_graph",
+    "friction": "_friction_agent",
+    "household": "_household_agent",
+    "prefs": "_pref_agent",
+    "insight": "_insight_agent",
+    "routine": "_routine_agent",
+    "nudge": "_nudge_agent",
+    "briefing": "_briefing_agent",
+    "identity": "_identity_agent",
+    "watchdog": "_watchdog",
+}
+
+
+def _topo_order(active) -> "list[str]":
+    """SB.3 — order `active` agent names so any inter-agent dep builds first
+    (the one edge today: schema deps on embed → embed before schema). Stable on
+    the registry insertion order otherwise. DFS over deps that are registry keys."""
+    active_set = set(active)
+    placed: "set[str]" = set()
+    ordered: "list[str]" = []
+
+    def _place(name: str) -> None:
+        if name in placed:
+            return
+        for dep in AGENT_REGISTRY[name]["deps"]:
+            if dep in AGENT_REGISTRY and dep in active_set:
+                _place(dep)
+        placed.add(name)
+        ordered.append(name)
+
+    for name in AGENT_REGISTRY:  # registry order = stable base
+        if name in active_set:
+            _place(name)
+    return ordered
 
 
 def _is_phantom_name(
@@ -204,6 +272,32 @@ class BrainOrchestrator:
     REPLACE semantics to prevent duplicates on retry.
     """
 
+    def _build_agents(self, only=None) -> None:
+        """SB.3 — construct the registered agents from ``config.ACTIVE_AGENTS``.
+
+        Used by BOTH construction sites (PI-1): ``__init__`` (``only=None`` →
+        build the full active set; an unregistered agent's attribute is set to
+        ``None``) and ``reopen_connections`` (``only={dep-tags}`` → rebuild ONLY
+        the active agents bound to a reopened source, i.e. the DB-handle agents).
+        Topo-respects embed→schema. Companion registers all 15 → identical to the
+        prior hardcoded blocks → behavior-neutral.
+        """
+        active = config.ACTIVE_AGENTS
+        sources = {"http": self._http, "brain_db": self._brain_db,
+                   "graph_db": self._graph_db, "faces_conn": self._faces_conn}
+        if only is None:
+            # __init__ path: an unregistered agent's attribute is None (set once up front).
+            for name in AGENT_REGISTRY:
+                if name not in active:
+                    setattr(self, _ATTR[name], None)
+        for name in _topo_order(active):
+            spec = AGENT_REGISTRY[name]
+            if only is not None and not (set(spec["deps"]) & only):
+                continue  # reset path: only rebuild agents bound to a reopened source
+            cls = _CLASS_BY_NAME[spec["class"]]
+            args = [self._embed_agent if d == "embed" else sources[d] for d in spec["deps"]]
+            setattr(self, _ATTR[name], cls(*args))
+
     def __init__(self, shutdown_event: asyncio.Event, *,
                  brain_db_path=None, graph_db_path=None, faces_db_path=None):
         self._shutdown     = shutdown_event
@@ -225,21 +319,7 @@ class BrainOrchestrator:
             isolation_level="IMMEDIATE",  # P0.9.1 Imp-1
         )
         self._http         = httpx.AsyncClient(timeout=20.0)
-        self._triage          = TriageAgent()
-        self._extractor       = ExtractionAgent(self._http)
-        self._contradictor    = ContradictionAgent(self._http)
-        self._pref_agent      = PromptPrefAgent(self._http)
-        self._friction_agent  = FrictionDetectionAgent(self._http)
-        self._embed_agent  = EmbeddingAgent(self._http)
-        self._schema_norm    = SchemaNormAgent(self._brain_db, self._embed_agent)
-        self._social_graph   = SocialGraphAgent(self._http)
-        self._identity_agent = IdentityAgent()
-        self._briefing_agent = BriefingAgent(self._http)
-        self._insight_agent  = ConversationInsightAgent(self._http)
-        self._routine_agent  = RoutineAgent(self._brain_db)
-        self._nudge_agent    = ProactiveNudgeAgent(self._brain_db, self._graph_db)
-        self._watchdog       = WatchdogAgent(self._brain_db, self._faces_conn)
-        self._household_agent = HouseholdExtractionAgent(self._http)
+        self._build_agents()  # SB.3 — registry-driven construction (companion: all 15, byte-identical)
         self._system_name: str = DEFAULT_SYSTEM_NAME  # updated by pipeline when system_name tool fires
         # Per-session state (keyed by person_id)
         self._session_turn_counts: dict[str, int]   = {}
@@ -379,7 +459,8 @@ class BrainOrchestrator:
 
     def _schedule_startup_tasks(self) -> None:
         """Schedule background tasks that should run once after startup."""
-        asyncio.create_task(self._schema_norm.maybe_run())
+        if self._schema_norm is not None:  # SB.3 presence guard
+            asyncio.create_task(self._schema_norm.maybe_run())
         asyncio.create_task(self._backfill_embeddings())   # Item 5: embed pre-Phase-3 rows
 
     @property
@@ -542,6 +623,8 @@ class BrainOrchestrator:
         if len(turns) < INSIGHT_MIN_TURNS:
             return
 
+        if self._insight_agent is None:  # SB.3 presence guard
+            return
         episode = await self._insight_agent.analyze(
             person_name, turns, started, ended
         )
@@ -567,9 +650,10 @@ class BrainOrchestrator:
             return
         person_name = row[0]
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(
-            None, self._routine_agent.analyze, person_id, person_name
-        )
+        if self._routine_agent is not None:  # SB.3 presence guard
+            await loop.run_in_executor(
+                None, self._routine_agent.analyze, person_id, person_name
+            )
 
     async def _run_nudge_generation(self, person_id: str) -> None:
         """Run all ProactiveNudgeAgent passes for the completed session."""
@@ -579,6 +663,8 @@ class BrainOrchestrator:
         if not row:
             return
         person_name = row[0]
+        if self._nudge_agent is None:  # SB.3 presence guard
+            return
         loop = asyncio.get_event_loop()
         # Cross-person inference needs faces_conn for source-person name lookups
         await loop.run_in_executor(
@@ -878,22 +964,31 @@ class BrainOrchestrator:
     def set_system_name(self, name: str) -> None:
         """Called by pipeline when the AI's name is set or changed."""
         self._system_name = name
-        self._household_agent.set_system_name(name)
+        if self._household_agent is not None:  # SB.3 presence guard
+            self._household_agent.set_system_name(name)
 
     def report_camera_null_streak(self, streak: int) -> None:
         """Report a camera null-frame streak to the watchdog."""
+        if self._watchdog is None:  # SB.3 presence guard
+            return
         self._watchdog.report_camera_null_streak(streak)
 
     def report_camera_recovered(self) -> None:
         """Mark CAMERA_FAILURE alerts resolved after successful reconnect."""
+        if self._watchdog is None:  # SB.3 presence guard
+            return
         self._watchdog.resolve_camera_failure()
 
     def report_antispoof_disabled(self) -> None:
         """Record a persistent ANTISPOOF_DISABLED watchdog alert."""
+        if self._watchdog is None:  # SB.3 presence guard
+            return
         self._watchdog.report_antispoof_disabled()
 
     def report_api_failure(self, duration_s: float) -> None:
         """Report Together.ai being unreachable to the watchdog."""
+        if self._watchdog is None:  # SB.3 presence guard
+            return
         self._watchdog.report_api_failure(duration_s)
 
     def report_dispute_rename_burst(
@@ -906,6 +1001,8 @@ class BrainOrchestrator:
         dispute_started_at: "float | None",
     ) -> None:
         """Surface a watchdog alert for persistent disputed-rename attempts."""
+        if self._watchdog is None:  # SB.3 presence guard
+            return
         self._watchdog.report_dispute_rename_burst(
             victim_pid=victim_pid,
             victim_name=victim_name,
@@ -917,6 +1014,8 @@ class BrainOrchestrator:
 
     def report_api_recovered(self) -> None:
         """Mark API_FAILURE alerts resolved after recovery."""
+        if self._watchdog is None:  # SB.3 presence guard
+            return
         self._watchdog.resolve_api_failure()
 
     def report_anti_spoof_rejection(
@@ -927,6 +1026,8 @@ class BrainOrchestrator:
         person_id: "str | None" = None,
     ) -> None:
         """P0.S1 Phase 3 — surface a per-instance anti-spoof rejection."""
+        if self._watchdog is None:  # SB.3 presence guard
+            return
         self._watchdog.report_anti_spoof_rejection(
             track_id=track_id,
             reason=reason,
@@ -943,6 +1044,8 @@ class BrainOrchestrator:
         person_id: "str | None" = None,
     ) -> None:
         """P0.S1 Phase 3 + §14b.1 — surface burst-threshold alert (warning)."""
+        if self._watchdog is None:  # SB.3 presence guard
+            return
         self._watchdog.report_anti_spoof_burst(
             track_id=track_id,
             count=count,
@@ -959,6 +1062,8 @@ class BrainOrchestrator:
         severity: str,
     ) -> None:
         """Surface a disk-space threshold crossing alert via the watchdog."""
+        if self._watchdog is None:  # SB.3 presence guard
+            return
         self._watchdog.report_disk_threshold(
             level=level,
             percent_used=percent_used,
@@ -973,6 +1078,8 @@ class BrainOrchestrator:
         window_secs: float,
     ) -> None:
         """Surface a heavy-worker pool burst-crash alert via the watchdog (P0.R8)."""
+        if self._watchdog is None:  # SB.3 presence guard
+            return
         self._watchdog.report_heavy_worker_burst(
             task_name=task_name,
             crash_count=crash_count,
@@ -987,6 +1094,8 @@ class BrainOrchestrator:
         estimate_mb: int,
     ) -> None:
         """Surface a VRAM budget refusal alert via the watchdog (P0.R9 D5)."""
+        if self._watchdog is None:  # SB.3 presence guard
+            return
         self._watchdog.report_vram_budget_refusal(
             task_name=task_name,
             cumulative_mb=cumulative_mb,
@@ -1001,6 +1110,8 @@ class BrainOrchestrator:
         window_secs: float,
     ) -> None:
         """Surface an audio device burst alert via the watchdog (P0.R10 D4)."""
+        if self._watchdog is None:  # SB.3 presence guard
+            return
         self._watchdog.report_audio_device_burst(
             channel=channel,
             failure_count=failure_count,
@@ -1014,9 +1125,11 @@ class BrainOrchestrator:
     async def run(self) -> None:
         print("[BrainAgent] Started — watching conversation_log for new turns")
         self._schedule_startup_tasks()
-        watchdog_task = asyncio.create_task(
-            self._watchdog.run_loop(self._shutdown)
-        )
+        watchdog_task = None
+        if self._watchdog is not None:  # SB.3 presence guard
+            watchdog_task = asyncio.create_task(
+                self._watchdog.run_loop(self._shutdown)
+            )
         while not self._shutdown.is_set():
             # Clear trigger BEFORE poll so any notify() called during poll
             # re-arms the trigger and causes an immediate follow-up poll.
@@ -1041,7 +1154,8 @@ class BrainOrchestrator:
                 await asyncio.gather(shutdown_task, trigger_task, return_exceptions=True)
 
         print("[BrainAgent] Shutting down...")
-        await watchdog_task
+        if watchdog_task is not None:  # SB.3 — None when watchdog is unregistered
+            await watchdog_task
         await self.close()
 
     async def _poll_once(self) -> None:
@@ -1130,6 +1244,8 @@ class BrainOrchestrator:
             except (json.JSONDecodeError, TypeError, ValueError):
                 _room_participant_pids = []
         _room_count = len(_room_participant_pids)
+        if self._triage is None:  # SB.3 presence guard — no triage → no knowledge processing
+            return
         ok, reason = self._triage.should_process(
             role, content,
             prior_assistant_turn=prior_assistant,
@@ -1184,7 +1300,9 @@ class BrainOrchestrator:
 
         # ── Stage 2: Extract entities + facts ─────────────────────────────────
         t1 = time.time()
-        if reason == "multi_person_assistant_turn":
+        if self._extractor is None:  # SB.3 presence guard — no extractor → no facts → cascade skips
+            extractions = []
+        elif reason == "multi_person_assistant_turn":
             # P0.S7.2 Phase 2 — κ branch. ONE LLM call + mechanical fan-out.
             # Resolve participant pids → names via persons table.
             _names_by_pid: "dict[str, str]" = {}
@@ -1266,13 +1384,16 @@ class BrainOrchestrator:
                 no_conflict.append(ext)
 
         t2 = time.time()
-        check_results = await asyncio.gather(*[
-            self._contradictor.check(
-                ext.entity, ext.attribute, old_val, ext.value,
-                conflict_counts[ext.attribute],
-            )
-            for ext, old_val in conflicts
-        ])
+        if self._contradictor is not None:  # SB.3 presence guard
+            check_results = await asyncio.gather(*[
+                self._contradictor.check(
+                    ext.entity, ext.attribute, old_val, ext.value,
+                    conflict_counts[ext.attribute],
+                )
+                for ext, old_val in conflicts
+            ])
+        else:
+            check_results = []
         contra_ms = (time.time() - t2) * 1000
 
         final = list(no_conflict)
@@ -1382,6 +1503,8 @@ class BrainOrchestrator:
         prev_assistant_turn: str | None,
         active_prefs: list[dict],
     ) -> None:
+        if self._friction_agent is None:  # SB.3 presence guard
+            return
         frictions = await self._friction_agent.detect(
             user_turn, prev_assistant_turn, active_prefs
         )
@@ -1565,6 +1688,8 @@ class BrainOrchestrator:
         enrolled_persons: list[str],
     ) -> None:
         """Async fire-and-forget household extraction for a single turn."""
+        if self._household_agent is None:  # SB.3 presence guard
+            return
         result = await self._household_agent.extract_per_turn(
             speaker_id, speaker_name, utterance, context_turns, enrolled_persons
         )
@@ -1578,6 +1703,8 @@ class BrainOrchestrator:
         started_at: float,
     ) -> None:
         """Deep household analysis at session close."""
+        if self._household_agent is None:  # SB.3 presence guard
+            return
         turns_raw = self._faces_conn.execute(
             """SELECT role, content FROM conversation_log
                WHERE person_id = ? AND ts >= ?
@@ -1609,6 +1736,8 @@ class BrainOrchestrator:
         return row is not None
 
     async def _extract_social_mentions(self, source_person_id: str, text: str) -> None:
+        if self._social_graph is None:  # SB.3 presence guard
+            return
         mentions = await self._social_graph.extract(text)
         for m in mentions:
             name = (m.get("name") or "").strip()
@@ -1633,6 +1762,8 @@ class BrainOrchestrator:
           {name, relationship, confidence, matched_attrs, source_person_id}
         """
         mentions = self._brain_db.get_all_social_mentions()
+        if self._identity_agent is None:  # SB.3 presence guard
+            return None
         return self._identity_agent.score(conversation, mentions)
 
     async def get_briefing(self, bf_person_id: str, since_ts: float) -> str | None:
@@ -1691,6 +1822,8 @@ class BrainOrchestrator:
             ]
 
             mentions = self._brain_db.get_all_social_mentions()
+            if self._briefing_agent is None:  # SB.3 presence guard
+                return None
             return await self._briefing_agent.generate(
                 bf_name, stranger_visits, silent_obs, mentions
             )
@@ -1817,6 +1950,8 @@ class BrainOrchestrator:
         Returns None when no API key is configured — callers fall back to
         graph/recency context automatically.
         """
+        if self._embed_agent is None:  # SB.3 presence guard
+            return None
         return await self._embed_agent.embed(text, purpose="user query")
 
     def get_pending_question(self) -> dict | None:
@@ -1875,6 +2010,8 @@ class BrainOrchestrator:
         Fire-and-forget task — called after store_knowledge() so the pipeline
         never waits for it. Embeds up to 20 rows per call to keep latency low.
         """
+        if self._embed_agent is None:  # SB.3 presence guard
+            return
         rows = self._brain_db.get_unembedded_knowledge(person_id)
         if not rows:
             return
@@ -1894,6 +2031,8 @@ class BrainOrchestrator:
         oldest-first, 50 rows per batch with 2s sleep for rate limiting. Exits
         immediately when all rows are embedded. Idempotent: safe to re-run.
         """
+        if self._embed_agent is None:  # SB.3 presence guard
+            return
         total = 0
         while not self._shutdown.is_set():
             rows = self._brain_db.get_all_unembedded_knowledge(limit=batch_size)
@@ -1941,6 +2080,8 @@ class BrainOrchestrator:
         - No cascading: calls BrainDB.invalidate() directly, not _process_turn()
         - No cross-entity scan in v1 (only same-entity facts checked)
         """
+        if self._contradictor is None:  # SB.3 presence guard
+            return
         related = [
             f for f in self._brain_db.get_active_knowledge(entity)
             if f["attribute"] != changed_attr
@@ -1996,6 +2137,8 @@ class BrainOrchestrator:
         Item 6: calls update_confirmation() which boosts stored confidence AND
         resets last_confirmed_at to now — resetting the decay clock.
         """
+        if self._embed_agent is None:  # SB.3 presence guard
+            return
         emb = await self._embed_agent.embed(prior_ai_text[:200], purpose="user query")
         if not emb:
             return
@@ -2113,6 +2256,8 @@ class BrainOrchestrator:
 
             existing   = self._brain_db.get_active_prefs(person_id)
             t0         = time.time()
+            if self._pref_agent is None:  # SB.3 presence guard
+                return
             prefs      = await self._pref_agent.analyze(person_name, existing, session_turns)
             elapsed_ms = (time.time() - t0) * 1000
 
@@ -2148,7 +2293,10 @@ class BrainOrchestrator:
                 # near-duplicate. The 2026-04-20 run produced 4 separate
                 # "Prefers brief responses" rows with minor wording variations.
                 import numpy as _np_l
-                new_emb = await self._embed_agent.embed(content, purpose="user preference")
+                if self._embed_agent is not None:  # SB.3 presence guard
+                    new_emb = await self._embed_agent.embed(content, purpose="user preference")
+                else:
+                    new_emb = None
                 dedup_handled = False
                 if new_emb is not None:
                     new_vec = _np_l.asarray(new_emb, dtype=_np_l.float32)
@@ -2157,6 +2305,8 @@ class BrainOrchestrator:
                         old_bytes = existing.get("embedding")
                         if old_bytes is None:
                             # Pre-migration row — embed now and backfill.
+                            if self._embed_agent is None:  # SB.3 presence guard
+                                continue
                             old_emb_list = await self._embed_agent.embed(
                                 existing["content"], purpose="user preference"
                             )
@@ -2231,7 +2381,8 @@ class BrainOrchestrator:
         prf_exp = self._brain_db.prune_expired_prefs()
         pq_old  = self._brain_db.prune_old_pattern_questions(PATTERN_Q_MAX_AGE_DAYS)
         removed = self._brain_db.prune_shadow_persons(max_age_days=90)
-        await self._schema_norm.maybe_run()
+        if self._schema_norm is not None:  # SB.3 presence guard
+            await self._schema_norm.maybe_run()
         table_removed = k_cap + p_cap + ep_cap + sm_cap + n_exp + wa_old + al_old + prf_exp + pq_old + removed
         print(
             f"[Dream] Consolidated — {pruned} pruned, {decayed} decayed, {stable} stable"
@@ -2282,11 +2433,12 @@ class BrainOrchestrator:
             self._faces_db_path, check_same_thread=False,
             isolation_level="IMMEDIATE",  # P0.9.1 Imp-1
         )
-        # Patch all agents that hold direct DB references
-        self._schema_norm    = SchemaNormAgent(self._brain_db, self._embed_agent)
-        self._routine_agent  = RoutineAgent(self._brain_db)
-        self._nudge_agent    = ProactiveNudgeAgent(self._brain_db, self._graph_db)
-        self._watchdog       = WatchdogAgent(self._brain_db, self._faces_conn)
+        # SB.3 (PI-1) — rebuild ONLY the registered DB-handle agents (deps touch a
+        # reopened source). Companion: schema+routine+nudge+watchdog (the same 4).
+        # A clone registering no knowledge agents rebuilds only what it has (e.g.
+        # just watchdog) → the reset-bypass leak is closed by construction, not by
+        # a guard the golden/canary is blind to.
+        self._build_agents(only={"brain_db", "faces_conn", "graph_db"})
         self._ensure_graph_sync()
 
     def prune_brain_data(self, person_ids: list) -> int:

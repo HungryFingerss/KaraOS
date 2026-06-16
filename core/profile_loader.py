@@ -35,6 +35,7 @@ from profiles._schema import (
     VALID_PROVIDERS,
     CLOUD_TIMING_MAP,
 )
+from profiles._registry import AGENT_REGISTRY, AGENT_BUNDLES  # SB.3 agent-membership axis
 
 # Env-selected deployment SHAPE. Default "companion" (today). Composed with the
 # orthogonal KARAOS_INSTANCE_MODE retention axis (which stays in config.py).
@@ -116,6 +117,9 @@ def _validate(raw: dict, profile_name: str, where: str) -> None:
         if spec.get("kind") == "scalar":
             _check_scalar(section, body, spec, where)
             continue
+        if spec.get("kind") == "agent_select":
+            _check_agent_select(section, body, where)
+            continue
         # section
         if not isinstance(body, dict):
             raise ProfileError(
@@ -194,6 +198,50 @@ def _check_cloud_timing(section: str, key: str, val, where: str) -> None:
             )
 
 
+def _check_agent_select(section: str, val, where: str) -> None:
+    """SB.3 — `agents:` is a bundle-shorthand string (∈ AGENT_BUNDLES) OR a
+    list[str] of AGENT_REGISTRY keys. Fail-loud on unknown bundle / unknown
+    agent name / wrong type (mirrors the LLM-provider enum)."""
+    if isinstance(val, str):
+        if val not in AGENT_BUNDLES:
+            raise ProfileError(
+                f"{where}: agents={val!r} is not a known agent bundle. "
+                f"Valid bundles: {tuple(AGENT_BUNDLES)}."
+            )
+    elif isinstance(val, list):
+        for name in val:
+            if not isinstance(name, str):
+                raise ProfileError(
+                    f"{where}: agents list entries must be agent-name strings; "
+                    f"got {type(name).__name__} ({name!r})."
+                )
+            if name not in AGENT_REGISTRY:
+                raise ProfileError(
+                    f"{where}: agents entry {name!r} is not a registered agent. "
+                    f"Valid: {tuple(AGENT_REGISTRY)}."
+                )
+    else:
+        raise ProfileError(
+            f"{where}: agents must be a bundle-name string or a list of agent "
+            f"names; got {type(val).__name__} ({val!r})."
+        )
+
+
+def _validate_dep_closure(active: "frozenset[str]") -> None:
+    """SB.3 §6.1 (D4 dep-closure) — every active agent's INTER-agent deps must
+    also be active. An inter-agent dep is a dep tag that is itself a registry key
+    (only ``embed`` today). A profile with `schema` but not `embed` fails LOUD at
+    load — never crashes the topo-build. Moot for companion (all registered)."""
+    for name in active:
+        for dep in AGENT_REGISTRY[name]["deps"]:
+            if dep in AGENT_REGISTRY and dep not in active:
+                raise ProfileError(
+                    f"agent {name!r} requires inter-agent dep {dep!r}, which is "
+                    f"not in the active set {sorted(active)}. Register {dep!r} or "
+                    f"drop {name!r}."
+                )
+
+
 def _resolve(raw: dict) -> dict:
     """Expand the ``llm.provider`` shorthand into the 4 per-role leaves; explicit
     per-role overrides win. Pass persona/hardware/retention through unchanged
@@ -234,5 +282,18 @@ def _resolve(raw: dict) -> dict:
     for sect in ("persona", "hardware", "retention"):
         if sect in raw:
             out[sect] = dict(raw[sect])
+
+    # SB.3 — agent-membership axis → ACTIVE_AGENTS (Lock 2: keyed directly, NOT
+    # `agents`, so the apply's globals()[key]=value writes config.ACTIVE_AGENTS).
+    # YAML section is `agents:`; absent → full set (un-profiled / companion).
+    agents_raw = raw.get("agents")
+    if agents_raw is None:
+        active = frozenset(AGENT_REGISTRY)
+    elif isinstance(agents_raw, str):
+        active = frozenset(AGENT_BUNDLES[agents_raw])
+    else:
+        active = frozenset(agents_raw)
+    _validate_dep_closure(active)
+    out["ACTIVE_AGENTS"] = active
 
     return out
