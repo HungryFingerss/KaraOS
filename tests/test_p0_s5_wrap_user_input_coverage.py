@@ -67,34 +67,45 @@ _INDIRECT_BOUNDARIES_ALLOWLIST: dict[tuple[str, int], str] = {
     # the brain_agent.py triage (:296 jellyfish +2, :2906 _safe_loads +3, :3872 Kuzu LOG +5)
     # shifted :462 by +2 and all sites after :3872 by +10. Line keys refreshed via the
     # detector RUN's reported current linenos; all entries remain legitimately indirect.
-    ("core/brain.py", 533):
+    # SB.4.1 LINE-REF-DRIFT refresh (2026-06-17): the prompt-block registry refactor
+    # (dynamic-slice _render_* fns + _RENDER_BY_NAME builder in core/brain.py) moved the
+    # Section-3 block-render code out of _build_system_prompt into the render fns. That
+    # shifted ONLY the FOUR brain.py role:user Dict sites that live BELOW the dynamic-slice
+    # render fns (web-search re-injection + the 3 greeting/order sites in generate_greeting
+    # / choose_greeting_order) — all by +118. The first 7 brain.py entries (all <=2080,
+    # ABOVE the render fns) are UNCHANGED, and the 4 brain_agent entries are UNCHANGED
+    # (SB.4.1 touched brain.py only). Line keys re-derived via a fresh Pass-2 grep of
+    # `"role": "user"` sites; all entries remain legitimately indirect — these are
+    # system-constructed prompts, NOT raw user-role content (the refactor builds
+    # system-prompt strings, never user-role message dicts).
+    ("core/brain.py", 543):
         "ping_together health check — 'hi' literal, no user_text (unchanged: above the #123 ping annotation)",
-    ("core/brain.py", 755):
+    ("core/brain.py", 765):
         "describe_frame vision — system-constructed describe-instruction; no user_text path (+6 #123)",
-    ("core/brain.py", 1140):
+    ("core/brain.py", 1150):
         "_classify_intent _user_prompt — UPSTREAM-WRAPPED via "
         "wrap_user_input(_snip); messages-list line consumes composite "
         "(system context + history + wrapped user content) per Plan v2 P4 (+6 #123)",
-    ("core/brain.py", 1995):
+    ("core/brain.py", 2005):
         "autocompact_history Together — history-injection deferred to P0.S5.X per Plan v3 §2 (+6 #123)",
-    ("core/brain.py", 2015):
+    ("core/brain.py", 2025):
         "autocompact_history Ollama retry — same as the Together path (+6 #123)",
-    ("core/brain.py", 2029):
+    ("core/brain.py", 2039):
         "autocompact synthetic-summary — system-constructed compacted prompt "
         "wrapping LLM-generated summary; history-derived deferred to P0.S5.X (+6 #123)",
-    ("core/brain.py", 2070):
+    ("core/brain.py", 2080):
         "_build_context user_msg — UPSTREAM-WRAPPED via "
         "wrap_user_input(message.strip()); web-context augmentation "
         "concatenates AROUND the wrapped user_msg so wrap survives (+6 #123)",
-    ("core/brain.py", 3052):
+    ("core/brain.py", 3289):
         "web-search re-injection — concatenates web_context with "
-        "already-wrapped user_msg from upstream (+6 #123, +5 #5-SliceD)",
-    ("core/brain.py", 3249):
-        "greeting generation Together — system-constructed greeting prompt (+6 #123, +5 #5-SliceD)",
-    ("core/brain.py", 3279):
-        "greeting generation Ollama — system-constructed (parallel to Together) (+6 #123, +5 #5-SliceD)",
-    ("core/brain.py", 3348):
-        "choose_greeting_order — structured names-list prompt, no raw user-text (+6 #123, +5 #5-SliceD)",
+        "already-wrapped user_msg from upstream (+6 #123, +5 #5-SliceD, +118 SB.4.1)",
+    ("core/brain.py", 3486):
+        "greeting generation Together — system-constructed greeting prompt (+6 #123, +5 #5-SliceD, +118 SB.4.1)",
+    ("core/brain.py", 3516):
+        "greeting generation Ollama — system-constructed (parallel to Together) (+6 #123, +5 #5-SliceD, +118 SB.4.1)",
+    ("core/brain.py", 3585):
+        "choose_greeting_order — structured names-list prompt, no raw user-text (+6 #123, +5 #5-SliceD, +118 SB.4.1)",
     # ── core/brain_agent privacy.py(1) + agents/extraction.py(1) + agents/briefing.py(2) ─────────────────────────────────
     ("core/brain_agent/privacy.py", 164):
         "_ask_privacy_llm — entity/attribute/value triples (already-wrapped upstream extraction) (+2 #123)",

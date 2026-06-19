@@ -10,6 +10,7 @@ profile: robotics
 llm:        { provider: local-orin }             # onboard, no cloud
 features:   { emotion: false, tier_memory: false }  # companionship layer off
 agents:     companion                               # SB.3 placeholder — full set until the robotics stack defines its reduced set (SB.9)
+blocks:     companion                               # SB.4.1 placeholder — full set until the robotics stack defines its reduced block set (SB.9)
 persona:    { system_name: Kara, persona_id: robotics_placeholder }
 hardware:   { tier: jetson_orin }
 retention:  { default_mode: base }               # no personal PII on a shared robot by default

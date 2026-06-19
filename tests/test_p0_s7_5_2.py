@@ -302,7 +302,7 @@ def test_stranger_identity_block_uses_numbered_contrast_shape():
     import re
     from core import brain
 
-    raw_src = inspect.getsource(brain.render_session_stable_prefix)
+    raw_src = inspect.getsource(brain._render_stranger_identity)
     src = re.sub(r'"\s+"', "", raw_src)
     src = re.sub(r"'\s+'", "", src)
 

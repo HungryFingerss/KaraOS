@@ -54,6 +54,7 @@ _DATE_SENSITIVE_RE = re.compile(
     re.IGNORECASE,
 )
 import base64
+import dataclasses
 import cv2
 import numpy as np
 from core.config import (
@@ -81,6 +82,15 @@ from core.config import (
 )
 from core.log_utils import _now_log_ts
 from core.sanitize import wrap_user_input
+# SB.4.1 step 2: core→profiles import (allowed; profiles imports nothing from
+# core — T6 enforces the no-import structurally). BLOCK_REGISTRY is the pure-data
+# block registry; _assemble_phase iterates it (insertion order = assembly order).
+from profiles._blocks import BLOCK_REGISTRY
+# SB.4.1 step 2: module alias for ACTIVE_BLOCKS attribute access (Lock-2 / T8 —
+# read config.ACTIVE_BLOCKS at CALL TIME; NEVER `from core.config import
+# ACTIVE_BLOCKS`, which binds the pre-profile-apply default and ignores a clone's
+# blocks: selection).
+import core.config as config
 
 if not CHAT_API_KEY:
     print("[Brain] WARNING: CHAT_API_KEY is not set — cloud LLM will be disabled")
@@ -2272,41 +2282,58 @@ def _format_core_memory_block(facts: list[dict]) -> str | None:
     return f"<<<CORE MEMORY>>>\n{block}\n<<<END CORE MEMORY>>>"
 
 
-def render_session_stable_prefix(
-    system_name: str | None,
-    session_person_type: str | None,
-    session_user_turns: int,
-    identity_disputed: bool,
-    person_name: str | None,
-    disputed_claimed_name: str | None,
-    core_memory: "list[dict] | None" = None,
-) -> str:
-    """Render Sections 1+2 of the system prompt (pure-static + session-stable).
+@dataclasses.dataclass(frozen=True, slots=True)
+class _PromptCtx:
+    """Render inputs for the stable-phase prompt blocks (SB.4.1 step 2).
 
-    Cache the result in session_dict["cached_prefix"] and pass it as
-    cached_prefix= to ask_stream / _build_system_prompt to skip rebuilding
-    on every turn.  Together.ai reuses its KV cache when the prompt prefix
-    is byte-identical across consecutive calls — ~25-30% per-turn cost saving.
-
-    Invalidate the cache (pop "cached_prefix") whenever:
-      - system_name changes (update_system_name tool)
-      - session_person_type changes (dispute flip, stranger→known promotion,
-        dispute auto-clear, auto-confirm, update_person_name)
-      - session_user_turns crosses STRANGER_IDENTITY_BLOCK_MIN_TURNS
-      - identity_disputed changes (report_identity_mismatch, dispute auto-clear)
+    Carries the 7 args of ``render_session_stable_prefix`` on one immutable
+    object so each ``_render_<name>(ctx)`` reads its inputs off it. The
+    registry loop builds the ctx once and passes it to every block's render fn.
     """
-    # ============================================================
-    # SECTION 1: PURE-STATIC (cacheable across all sessions/turns)
-    # ============================================================
-    prompt = SYSTEM_PROMPT
+    system_name: "str | None"
+    session_person_type: "str | None"
+    session_user_turns: int
+    identity_disputed: bool
+    person_name: "str | None"
+    disputed_claimed_name: "str | None"
+    core_memory: "list[dict] | None" = None
+    # SB.4.1 step 3 — dynamic-phase (Section 3) render inputs. All default None
+    # so the stable-phase builder (render_session_stable_prefix) constructs a
+    # _PromptCtx without them; the dynamic builder (_build_system_prompt) fills
+    # them in before iterating the dynamic phase-slice.
+    vision_state: "dict | None" = None
+    voice_state: "dict | None" = None
+    memory_context: "str | None" = None
+    object_context: "str | None" = None
+    emotion_context: "str | None" = None
+    prompt_addendum: "str | None" = None
+    scene_block: "str | None" = None
 
+
+# --- Stable-phase block render fns (SB.4.1 step 2). Each is a VERBATIM string
+#     move of the corresponding inline block body from the pre-refactor
+#     render_session_stable_prefix; `prompt += (...)` became `return (...)`, a
+#     gated block returns None when its flag/condition is off, and the ctx
+#     fields are aliased to the local names the moved body used. Resolved by
+#     _RENDER_BY_NAME below (mirrors SB.3's _CLASS_BY_NAME render_fn-string →
+#     bound-callable dispatch). Behavior-neutral — see T1/T2 byte-goldens. ---
+
+def _render_persona(ctx: "_PromptCtx") -> "str | None":
+    # SECTION 1: PURE-STATIC (cacheable across all sessions/turns).
+    return SYSTEM_PROMPT
+
+
+def _render_tool_contributions(ctx: "_PromptCtx") -> "str | None":
     tool_contributions = _get_tool_contributions()
     if tool_contributions:
-        prompt += f"\n\n{tool_contributions}"
+        return f"\n\n{tool_contributions}"
+    return None
 
+
+def _render_hedged_naming(ctx: "_PromptCtx") -> "str | None":
     from core.config import HEDGED_NAMING_CONTRACT_ENABLED
     if HEDGED_NAMING_CONTRACT_ENABLED:
-        prompt += (
+        return (
             "\n\n<<<HEDGED NAMING CONTRACT>>>\n"
             "When you are about to propose any of these tool calls:\n"
             "  - update_system_name\n"
@@ -2328,50 +2355,63 @@ def render_session_stable_prefix(
             "This rule applies REGARDLESS of your confidence. Hedge anyway.\n"
             "<<<END HEDGED NAMING CONTRACT>>>"
         )
+    return None
 
-    # ============================================================
-    # SECTION 2: SESSION-STABLE (cacheable within a session)
-    # ============================================================
 
+def _render_system_name_prose(ctx: "_PromptCtx") -> "str | None":
+    # SECTION 2: SESSION-STABLE (cacheable within a session) begins here.
+    system_name = ctx.system_name
     if system_name:
         if system_name != DEFAULT_SYSTEM_NAME:
-            prompt += (
+            return (
                 f"\n\nYour name is {system_name}. You already have this name — it is settled. "
                 f"Do NOT call update_system_name — your name is already set. "
                 f"Only call it if the person explicitly says they want to CHANGE your name to something DIFFERENT."
             )
         else:
-            prompt += (
+            return (
                 "\n\nYou do not yet have a name beyond your default. "
                 "If someone asks your name, answer naturally ('I don't have one yet — do you want to give me one?'). "
                 "Only call update_system_name if the person explicitly gives you a name — "
                 "do NOT call it when they are just asking what your name is."
             )
+    return None
 
+
+def _render_system_identity(ctx: "_PromptCtx") -> "str | None":
+    system_name = ctx.system_name
     from core.config import SYSTEM_IDENTITY_BLOCK_ENABLED as _SYS_ID_ENABLED
     if (
         _SYS_ID_ENABLED
         and system_name
         and system_name != DEFAULT_SYSTEM_NAME
     ):
-        prompt += format_system_identity_block(system_name)
+        return format_system_identity_block(system_name)
+    return None
 
+
+def _render_known_speaker(ctx: "_PromptCtx") -> "str | None":
     # P0.S7.5 D4 — KNOWN SPEAKER IDENTITY block. Fires only when the
     # current speaker's session person_type is 'known' or 'best_friend'
     # (NOT stranger — strangers receive promotion prompting via
     # STRANGER IDENTITY block). Surfaces the established name so the
     # brain stops re-issuing update_person_name as confirmation.
+    person_name = ctx.person_name
+    session_person_type = ctx.session_person_type
     from core.config import KNOWN_SPEAKER_IDENTITY_BLOCK_ENABLED as _KS_ID_ENABLED
     if (
         _KS_ID_ENABLED
         and person_name
         and session_person_type in ("known", "best_friend")
     ):
-        prompt += format_known_speaker_identity_block(person_name, session_person_type)
+        return format_known_speaker_identity_block(person_name, session_person_type)
+    return None
 
+
+def _render_honesty_policy(ctx: "_PromptCtx") -> "str | None":
     from core.config import HONESTY_POLICY_BLOCK_ENABLED
     if HONESTY_POLICY_BLOCK_ENABLED:
-        prompt += (
+        return (
             "\n\n<<<HONESTY POLICY>>>\n"
             "When you have no substantive stored facts about a person, event, "
             "or conversation, SAY SO explicitly. Do NOT invent plausible-sounding "
@@ -2478,12 +2518,16 @@ def render_session_stable_prefix(
             "either axis.\n"
             "<<<END HONESTY POLICY>>>"
         )
+    return None
 
+
+def _render_cross_person_privacy(ctx: "_PromptCtx") -> "str | None":
+    session_person_type = ctx.session_person_type
     from core.config import CROSS_PERSON_PRIVACY_BLOCK_ENABLED
     if CROSS_PERSON_PRIVACY_BLOCK_ENABLED:
         _is_bf_speaker = (session_person_type == "best_friend")
         if _is_bf_speaker:
-            prompt += (
+            return (
                 "\n\n<<<CROSS-PERSON PRIVACY (OWNER MODE)>>>\n"
                 "You are talking to the household owner. Under the 3A.4.6 "
                 "owner-access model, the owner has full access to what "
@@ -2507,7 +2551,7 @@ def render_session_stable_prefix(
                 "<<<END CROSS-PERSON PRIVACY (OWNER MODE)>>>"
             )
         else:
-            prompt += (
+            return (
                 "\n\n<<<CROSS-PERSON PRIVACY>>>\n"
                 "When the current speaker asks about OTHER people's sessions — "
                 "\"who were you talking to when I was away?\", \"what did Sarah "
@@ -2539,19 +2583,27 @@ def render_session_stable_prefix(
                 "honoring someone else's privacy. Frame your response that way.\n"
                 "<<<END CROSS-PERSON PRIVACY>>>"
             )
+    return None
 
+
+def _render_tool_access(ctx: "_PromptCtx") -> "str | None":
+    session_person_type = ctx.session_person_type
     from core.config import TOOL_PRIVILEGES as _TP
     _caller_pt = session_person_type or "stranger"
     _tool_lines = []
     for _tname in sorted(_TP):
         _status = "available" if _caller_pt in _TP[_tname] else "NOT AVAILABLE to this speaker"
         _tool_lines.append(f"- {_tname}: {_status}")
-    prompt += (
+    return (
         f"\n\n<<<TOOL ACCESS FOR THIS SPEAKER (person_type={_caller_pt!r})>>>\n"
         + "\n".join(_tool_lines)
         + "\n<<<END TOOL ACCESS>>>"
     )
 
+
+def _render_stranger_identity(ctx: "_PromptCtx") -> "str | None":
+    session_person_type = ctx.session_person_type
+    session_user_turns = ctx.session_user_turns
     from core.config import (
         STRANGER_IDENTITY_BLOCK_ENABLED,
         STRANGER_IDENTITY_BLOCK_MIN_TURNS,
@@ -2569,7 +2621,7 @@ def render_session_stable_prefix(
         # symmetric Rule 1 (statements → call update_person_name) + Rule 2 (questions
         # → DO NOT call report_identity_mismatch) with concrete examples on both
         # sides and forward-reference from Rule 2 back to Rule 1.
-        prompt += (
+        return (
             "\n\n<<<STRANGER IDENTITY>>>\n"
             "The current speaker is still an anonymous stranger in the "
             "system (person_type='stranger'). Two rules govern your "
@@ -2609,12 +2661,18 @@ def render_session_stable_prefix(
             "RULE 1 (call `update_person_name`).\n"
             "<<<END STRANGER IDENTITY>>>"
         )
+    return None
 
+
+def _render_identity_disputed(ctx: "_PromptCtx") -> "str | None":
+    identity_disputed = ctx.identity_disputed
+    disputed_claimed_name = ctx.disputed_claimed_name
+    person_name = ctx.person_name
     if identity_disputed:
         claimed = disputed_claimed_name
         sensor_name = person_name or "unknown"
         claimed_bit = f" (they claim to be '{claimed}')" if claimed else ""
-        prompt += (
+        return (
             f"\n\n<<<IDENTITY DISPUTED>>>\n"
             f"The sensor identified this speaker as '{sensor_name}', but they have contradicted it{claimed_bit}. "
             f"Treat this person as UNKNOWN until their identity is resolved. "
@@ -2622,49 +2680,40 @@ def render_session_stable_prefix(
             f"Acknowledge the mismatch and, if they give a clear name, call update_person_name.\n"
             f"<<<END IDENTITY DISPUTED>>>"
         )
+    return None
 
+
+def _render_core_memory(ctx: "_PromptCtx") -> "str | None":
     # Wave 4 Item 18 — inject core memory block (Section 2 addendum).
     # Only injected when CORE_MEMORY_ENABLED and caller supplied facts.
     # Strangers with no stored facts produce an empty list → block omitted,
     # saving tokens on every stranger turn.
+    core_memory = ctx.core_memory
     if CORE_MEMORY_ENABLED and core_memory:
         _cm_block = _format_core_memory_block(core_memory)
         if _cm_block:
-            prompt += f"\n\n{_cm_block}"
+            return f"\n\n{_cm_block}"
+    return None
 
-    return prompt
+
+# --- Dynamic-phase block render fns (SB.4.1 step 3). VERBATIM string-moves of
+#     the corresponding inline block body from the pre-refactor Section 3 of
+#     _build_system_prompt; `prompt += (...)` became `return (...)`, a gated
+#     block returns None when its flag/condition is off, and the ctx fields are
+#     aliased to the local names the moved body used. Resolved by _RENDER_BY_NAME
+#     below. Behavior-neutral — the T1 full-prompt byte-golden proves Section 3
+#     is byte-identical; T9 proves the loop is registry-gated; T10 proves each
+#     dynamic fn fires at most once. ---
+
+def _render_datetime(ctx: "_PromptCtx") -> "str | None":
+    # SECTION 3: TURN-DYNAMIC (changes every turn) begins here.
+    return f"\n\n{_format_datetime_line()}"
 
 
-def _build_system_prompt(
-    person_name: str | None,
-    vision_state: dict | None = None,
-    voice_state: dict | None = None,
-    memory_context: str | None = None,
-    object_context: str | None = None,
-    emotion_context: str | None = None,
-    prompt_addendum: str | None = None,
-    system_name: str | None = None,
-    scene_block: str | None = None,
-    cached_prefix: str | None = None,
-) -> str:
-    # Sections 1+2: use provided cache or build fresh
-    if cached_prefix is not None:
-        prompt = cached_prefix
-    else:
-        prompt = render_session_stable_prefix(
-            system_name=system_name,
-            session_person_type=(vision_state or {}).get("session_person_type"),
-            session_user_turns=(vision_state or {}).get("session_user_turns", 0),
-            identity_disputed=bool((vision_state or {}).get("identity_disputed", False)),
-            person_name=person_name,
-            disputed_claimed_name=(vision_state or {}).get("disputed_claimed_name"),
-        )
-
-    # ============================================================
-    # SECTION 3: TURN-DYNAMIC (changes every turn)
-    # ============================================================
-    prompt += f"\n\n{_format_datetime_line()}"
-
+def _render_sensors(ctx: "_PromptCtx") -> "str | None":
+    vision_state = ctx.vision_state
+    voice_state = ctx.voice_state
+    person_name = ctx.person_name
     # ── Sensor data injection ─────────────────────────────────────────────────
     if vision_state is not None:
         face_in_frame = vision_state.get("face_in_frame", False)
@@ -2704,43 +2753,52 @@ def _build_system_prompt(
         else: mic_status = "mic=ON | speaker=unknown | utterance too short for voice ID"
     else:
         mic_status = "mic=UNAVAILABLE"
-    prompt += f"\n\n<<<SENSORS (internal — speak the meaning, never quote these tags or labels)>>>\n{cam_status}\n{mic_status}\n<<<END SENSORS>>>"
+    return f"\n\n<<<SENSORS (internal — speak the meaning, never quote these tags or labels)>>>\n{cam_status}\n{mic_status}\n<<<END SENSORS>>>"
 
+
+def _render_identity_evidence(ctx: "_PromptCtx") -> "str | None":
+    vision_state = ctx.vision_state
+    person_name = ctx.person_name
     # Identity evidence block — gives the brain a structured view of how
     # confidently we know who this speaker is.
     from core.config import IDENTITY_EVIDENCE_BLOCK_ENABLED
-    if (IDENTITY_EVIDENCE_BLOCK_ENABLED and vision_state is not None
+    if not (IDENTITY_EVIDENCE_BLOCK_ENABLED and vision_state is not None
             and vision_state.get("identity_evidence")):
-        ev = vision_state["identity_evidence"]
-        import time as _time
-        # #5 Slice D §1.4/§3.D: monotonic to match the now-monotonic VoiceEvidence timestamps
-        # (face_last_seen_ts / voice_last_heard_ts), carried verbatim into this dict via
-        # dataclasses.asdict(evidence) at pipeline.py:3548/8691. _now feeds ONLY _face_age/_voice_age
-        # elapsed-math (rendered as "Xs ago" durations, not wall-clock) -> straight flip. Was
-        # `_time.time()` -> +1.78e9 garbage ages -> face channel pinned "weak/missing".
-        _now = _time.monotonic()
-        _face_conf  = ev.get("face_match_conf", 0.0)
-        _face_age   = _now - ev.get("face_last_seen_ts", 0.0) if ev.get("face_last_seen_ts") else None
-        _live       = ev.get("anti_spoof_live", False)
-        _live_score = ev.get("anti_spoof_score", 0.0)
-        _voice_conf = ev.get("voice_match_conf", 0.0)
-        _voice_n    = ev.get("voice_sample_count", 0)
-        _voice_age  = _now - ev.get("voice_last_heard_ts", 0.0) if ev.get("voice_last_heard_ts") else None
-        _face_ok  = (_face_conf >= VOICE_ACCUM_FACE_WITNESS_MIN_CONF and _live
-                     and _face_age is not None and _face_age <= VOICE_ACCUM_FACE_WITNESS_MAX_AGE_SEC)
-        _voice_ok = (_voice_conf >= VOICE_ACCUM_VOICE_SELF_MATCH_MIN and _voice_n >= VOICE_ACCUM_MATURE_SAMPLE_COUNT)
-        if _face_ok and _voice_ok: _verdict = "high-confidence identity"
-        elif _face_ok or _voice_ok: _verdict = "medium-confidence identity (one channel weak or missing)"
-        elif _face_conf > 0 or _voice_conf > 0: _verdict = "low-confidence identity"
-        else: _verdict = "identity-missing (no recent witness)"
-        _face_line = (f"face: {person_name or 'unknown'} (conf {_face_conf:.2f}, anti-spoof {'LIVE' if _live else 'unknown'}"
-                      + (f" {_live_score:.2f}" if _live_score else "")
-                      + (f", seen {_face_age:.1f}s ago" if _face_age is not None else ", not yet seen") + ")")
-        _voice_line = (f"voice: " + (f"matches self (conf {_voice_conf:.2f}, {_voice_n} samples"
-                       + (f", heard {_voice_age:.1f}s ago" if _voice_age is not None else "") + ")"
-                       if _voice_conf > 0 else f"no self-match yet ({_voice_n} samples)"))
-        prompt += (f"\n\n<<<IDENTITY EVIDENCE>>>\n{_face_line}\n{_voice_line}\nverdict: {_verdict}\n<<<END IDENTITY EVIDENCE>>>")
+        return None
+    ev = vision_state["identity_evidence"]
+    import time as _time
+    # #5 Slice D §1.4/§3.D: monotonic to match the now-monotonic VoiceEvidence timestamps
+    # (face_last_seen_ts / voice_last_heard_ts), carried verbatim into this dict via
+    # dataclasses.asdict(evidence) at pipeline.py:3548/8691. _now feeds ONLY _face_age/_voice_age
+    # elapsed-math (rendered as "Xs ago" durations, not wall-clock) -> straight flip. Was
+    # `_time.time()` -> +1.78e9 garbage ages -> face channel pinned "weak/missing".
+    _now = _time.monotonic()
+    _face_conf  = ev.get("face_match_conf", 0.0)
+    _face_age   = _now - ev.get("face_last_seen_ts", 0.0) if ev.get("face_last_seen_ts") else None
+    _live       = ev.get("anti_spoof_live", False)
+    _live_score = ev.get("anti_spoof_score", 0.0)
+    _voice_conf = ev.get("voice_match_conf", 0.0)
+    _voice_n    = ev.get("voice_sample_count", 0)
+    _voice_age  = _now - ev.get("voice_last_heard_ts", 0.0) if ev.get("voice_last_heard_ts") else None
+    _face_ok  = (_face_conf >= VOICE_ACCUM_FACE_WITNESS_MIN_CONF and _live
+                 and _face_age is not None and _face_age <= VOICE_ACCUM_FACE_WITNESS_MAX_AGE_SEC)
+    _voice_ok = (_voice_conf >= VOICE_ACCUM_VOICE_SELF_MATCH_MIN and _voice_n >= VOICE_ACCUM_MATURE_SAMPLE_COUNT)
+    if _face_ok and _voice_ok: _verdict = "high-confidence identity"
+    elif _face_ok or _voice_ok: _verdict = "medium-confidence identity (one channel weak or missing)"
+    elif _face_conf > 0 or _voice_conf > 0: _verdict = "low-confidence identity"
+    else: _verdict = "identity-missing (no recent witness)"
+    _face_line = (f"face: {person_name or 'unknown'} (conf {_face_conf:.2f}, anti-spoof {'LIVE' if _live else 'unknown'}"
+                  + (f" {_live_score:.2f}" if _live_score else "")
+                  + (f", seen {_face_age:.1f}s ago" if _face_age is not None else ", not yet seen") + ")")
+    _voice_line = (f"voice: " + (f"matches self (conf {_voice_conf:.2f}, {_voice_n} samples"
+                   + (f", heard {_voice_age:.1f}s ago" if _voice_age is not None else "") + ")"
+                   if _voice_conf > 0 else f"no self-match yet ({_voice_n} samples)"))
+    return (f"\n\n<<<IDENTITY EVIDENCE>>>\n{_face_line}\n{_voice_line}\nverdict: {_verdict}\n<<<END IDENTITY EVIDENCE>>>")
 
+
+def _render_visitor_context(ctx: "_PromptCtx") -> "str | None":
+    prompt_addendum = ctx.prompt_addendum
+    person_name = ctx.person_name
     # Session 96 Bug 3 (canary 2026-04-22): when a VISITOR_ALERT nudge is
     # present in the prompt addendum, the LLM was misrouting owner queries
     # ("who were you talking to when I was away?") to
@@ -2752,116 +2810,120 @@ def _build_system_prompt(
     # actually injected, matched via the `[visitor_id:` marker that
     # _run_visitor_alert embeds in nudge content.
     from core.config import VISITOR_CONTEXT_BLOCK_ENABLED
-    if (
+    if not (
         VISITOR_CONTEXT_BLOCK_ENABLED
         and prompt_addendum
         and "[visitor_id:" in prompt_addendum
     ):
-        # Session 100 Bug G: extract the visitor's name from the
-        # `[visitor_name:X]` marker embedded by _run_visitor_alert. The
-        # 2026-04-23 canary showed the block telling the brain to "call
-        # search_memory with the visitor's name" but the brain defaulted
-        # to the asker's name instead (Gevan asking about Lexi → brain
-        # called search_memory('Gevan', ...) → empty → lied "no one was
-        # here"). Naming the entity explicitly in the block prevents the
-        # default-to-asker failure mode.
-        import re as _re_vc
-        _vm = _re_vc.search(r"\[visitor_name:([^\]]+)\]", prompt_addendum)
-        _visitor_name = _vm.group(1).strip() if _vm else None
-        # Session 105 Bug N Part 3 — safety flags embedded by
-        # _run_visitor_alert when the visitor disclosed anything
-        # safety-critical (expressed_suicidal_thoughts, mentioned_abuse,
-        # etc.). When present, the block tells the brain to surface the
-        # concern proactively — the owner should hear about it even if
-        # their query was about general topics.
-        _sfm = _re_vc.search(r"\[safety_flags:([^\]]+)\]", prompt_addendum)
-        _safety_flags_raw = _sfm.group(1).strip() if _sfm else ""
-        _safety_flags = [
-            s.strip() for s in _safety_flags_raw.split(",") if s.strip()
-        ]
-        if _visitor_name and _visitor_name.lower() not in ("unknown", ""):
-            # Session 104 Bug J: harden the entity binding. Session 100
-            # named the visitor but 2026-04-23 canary still had brain call
-            # `search_memory('Jagan', ...)` (asker name) on the first
-            # "who were you talking to" ask → empty → lied. Session 97
-            # canary got this right with weaker prompt; 2026-04-23 canary
-            # got it wrong with the same infrastructure. LLM
-            # non-determinism. Harder language: explicit negative anchor
-            # naming the asker's name as a forbidden entity, concrete
-            # code-shape template, and repetition.
-            _speaker_name = (person_name or "the asker")
-            _vc_entity_hint = (
-                f"THE VISITOR'S NAME IS '{_visitor_name}'. When {_speaker_name} "
-                f"asks any variant of 'who were you talking to', 'who was "
-                f"here', 'did someone visit', 'what did they say', etc., "
-                f"you MUST call the tool like this:\n"
-                f"    search_memory(person_name='{_visitor_name}', query='...')\n"
-                f"The ``person_name`` argument MUST be '{_visitor_name}' — "
-                f"the VISITOR's name. It MUST NOT be '{_speaker_name}' — "
-                f"{_speaker_name} is the one ASKING, not the subject of "
-                f"the query. Calling search_memory(person_name="
-                f"'{_speaker_name}', ...) returns facts about the asker "
-                f"and tells you nothing about the visitor — that's the "
-                f"wrong tool call and it will produce a false 'I don't "
-                f"have any information' answer.\n"
-                f"Do NOT guess. Do NOT call with {_speaker_name}'s name. "
-                f"Use '{_visitor_name}' as the entity."
-            )
-        else:
-            _vc_entity_hint = (
-                "The visitor's name was not recorded (they never introduced "
-                "themselves). You cannot retrieve their specific facts via "
-                "search_memory. Say honestly: \"Someone stopped by but "
-                "didn't tell me their name — do you know who it might have "
-                "been?\" Do NOT fabricate a name."
-            )
-        # Session 105 Bug N Part 3 — safety-flag surfacing directive.
-        # When the visitor disclosed something safety-critical during
-        # their session, the block tells the brain to volunteer the
-        # concern proactively rather than waiting for the owner to ask
-        # the exact right question. Zero-flag branch keeps the block
-        # quieter. The flag list is already in the visitor alert nudge
-        # content (visible above), so brain has both the directive and
-        # the data.
-        if _safety_flags:
-            _human_flags = ", ".join(
-                _f.replace("_", " ") for _f in _safety_flags
-            )
-            _safety_directive = (
-                "\n\nSAFETY-CRITICAL: the visitor disclosed these "
-                f"concerns during their session — {_human_flags}. "
-                "When the speaker asks about the visit, surface these "
-                "concerns PROACTIVELY — do not wait for them to ask "
-                "the exact right question. Phrase gently and honestly "
-                "(e.g. \"Lexi mentioned she was having suicidal "
-                "thoughts while we were talking — I wanted to make "
-                "sure you knew\"). Safety disclosures are append-only "
-                "history — even if the visitor's mood later seemed "
-                "better, the disclosure itself stands on record. The "
-                "owner needs this information to check on the visitor."
-            )
-        else:
-            _safety_directive = ""
-        prompt += (
-            "\n\n<<<VISITOR CONTEXT>>>\n"
-            "A VISITOR_ALERT is present in your prompt addendum above — "
-            "someone visited and spoke with you while the current speaker "
-            "was away. If the speaker now asks about that visit — e.g. "
-            "\"who were you talking to?\", \"who was here?\", \"did "
-            "someone stop by?\", \"what did they say?\" — call "
-            "`search_memory` (not report_identity_mismatch) to retrieve "
-            "the visitor's facts.\n\n"
-            f"{_vc_entity_hint}"
-            f"{_safety_directive}\n\n"
-            "Do NOT call `report_identity_mismatch` for these questions. "
-            "That tool is ONLY for when the current speaker denies being "
-            "who the sensor identified THEM as — it has nothing to do with "
-            "questions about other people. The speaker asking \"who are "
-            "you talking to?\" is NOT denying their own identity; they're "
-            "asking about cross-person activity you already know about.\n"
-            "<<<END VISITOR CONTEXT>>>"
+        return None
+    # Session 100 Bug G: extract the visitor's name from the
+    # `[visitor_name:X]` marker embedded by _run_visitor_alert. The
+    # 2026-04-23 canary showed the block telling the brain to "call
+    # search_memory with the visitor's name" but the brain defaulted
+    # to the asker's name instead (Gevan asking about Lexi → brain
+    # called search_memory('Gevan', ...) → empty → lied "no one was
+    # here"). Naming the entity explicitly in the block prevents the
+    # default-to-asker failure mode.
+    import re as _re_vc
+    _vm = _re_vc.search(r"\[visitor_name:([^\]]+)\]", prompt_addendum)
+    _visitor_name = _vm.group(1).strip() if _vm else None
+    # Session 105 Bug N Part 3 — safety flags embedded by
+    # _run_visitor_alert when the visitor disclosed anything
+    # safety-critical (expressed_suicidal_thoughts, mentioned_abuse,
+    # etc.). When present, the block tells the brain to surface the
+    # concern proactively — the owner should hear about it even if
+    # their query was about general topics.
+    _sfm = _re_vc.search(r"\[safety_flags:([^\]]+)\]", prompt_addendum)
+    _safety_flags_raw = _sfm.group(1).strip() if _sfm else ""
+    _safety_flags = [
+        s.strip() for s in _safety_flags_raw.split(",") if s.strip()
+    ]
+    if _visitor_name and _visitor_name.lower() not in ("unknown", ""):
+        # Session 104 Bug J: harden the entity binding. Session 100
+        # named the visitor but 2026-04-23 canary still had brain call
+        # `search_memory('Jagan', ...)` (asker name) on the first
+        # "who were you talking to" ask → empty → lied. Session 97
+        # canary got this right with weaker prompt; 2026-04-23 canary
+        # got it wrong with the same infrastructure. LLM
+        # non-determinism. Harder language: explicit negative anchor
+        # naming the asker's name as a forbidden entity, concrete
+        # code-shape template, and repetition.
+        _speaker_name = (person_name or "the asker")
+        _vc_entity_hint = (
+            f"THE VISITOR'S NAME IS '{_visitor_name}'. When {_speaker_name} "
+            f"asks any variant of 'who were you talking to', 'who was "
+            f"here', 'did someone visit', 'what did they say', etc., "
+            f"you MUST call the tool like this:\n"
+            f"    search_memory(person_name='{_visitor_name}', query='...')\n"
+            f"The ``person_name`` argument MUST be '{_visitor_name}' — "
+            f"the VISITOR's name. It MUST NOT be '{_speaker_name}' — "
+            f"{_speaker_name} is the one ASKING, not the subject of "
+            f"the query. Calling search_memory(person_name="
+            f"'{_speaker_name}', ...) returns facts about the asker "
+            f"and tells you nothing about the visitor — that's the "
+            f"wrong tool call and it will produce a false 'I don't "
+            f"have any information' answer.\n"
+            f"Do NOT guess. Do NOT call with {_speaker_name}'s name. "
+            f"Use '{_visitor_name}' as the entity."
         )
+    else:
+        _vc_entity_hint = (
+            "The visitor's name was not recorded (they never introduced "
+            "themselves). You cannot retrieve their specific facts via "
+            "search_memory. Say honestly: \"Someone stopped by but "
+            "didn't tell me their name — do you know who it might have "
+            "been?\" Do NOT fabricate a name."
+        )
+    # Session 105 Bug N Part 3 — safety-flag surfacing directive.
+    # When the visitor disclosed something safety-critical during
+    # their session, the block tells the brain to volunteer the
+    # concern proactively rather than waiting for the owner to ask
+    # the exact right question. Zero-flag branch keeps the block
+    # quieter. The flag list is already in the visitor alert nudge
+    # content (visible above), so brain has both the directive and
+    # the data.
+    if _safety_flags:
+        _human_flags = ", ".join(
+            _f.replace("_", " ") for _f in _safety_flags
+        )
+        _safety_directive = (
+            "\n\nSAFETY-CRITICAL: the visitor disclosed these "
+            f"concerns during their session — {_human_flags}. "
+            "When the speaker asks about the visit, surface these "
+            "concerns PROACTIVELY — do not wait for them to ask "
+            "the exact right question. Phrase gently and honestly "
+            "(e.g. \"Lexi mentioned she was having suicidal "
+            "thoughts while we were talking — I wanted to make "
+            "sure you knew\"). Safety disclosures are append-only "
+            "history — even if the visitor's mood later seemed "
+            "better, the disclosure itself stands on record. The "
+            "owner needs this information to check on the visitor."
+        )
+    else:
+        _safety_directive = ""
+    return (
+        "\n\n<<<VISITOR CONTEXT>>>\n"
+        "A VISITOR_ALERT is present in your prompt addendum above — "
+        "someone visited and spoke with you while the current speaker "
+        "was away. If the speaker now asks about that visit — e.g. "
+        "\"who were you talking to?\", \"who was here?\", \"did "
+        "someone stop by?\", \"what did they say?\" — call "
+        "`search_memory` (not report_identity_mismatch) to retrieve "
+        "the visitor's facts.\n\n"
+        f"{_vc_entity_hint}"
+        f"{_safety_directive}\n\n"
+        "Do NOT call `report_identity_mismatch` for these questions. "
+        "That tool is ONLY for when the current speaker denies being "
+        "who the sensor identified THEM as — it has nothing to do with "
+        "questions about other people. The speaker asking \"who are "
+        "you talking to?\" is NOT denying their own identity; they're "
+        "asking about cross-person activity you already know about.\n"
+        "<<<END VISITOR CONTEXT>>>"
+    )
 
+
+def _render_address_decision(ctx: "_PromptCtx") -> "str | None":
+    vision_state = ctx.vision_state
     # Session 113 Part 1 — LLM turn allocation in multi-person rooms.
     # Pre-S113, voice routing picked the speaker and conversation_turn
     # dispatched to that pid with zero brain input on "who should the
@@ -2877,42 +2939,46 @@ def _build_system_prompt(
     # shorthand so the brain doesn't have to prefix every turn.
     from core.config import ADDRESS_DECISION_BLOCK_ENABLED
     _addr_n = (vision_state or {}).get("active_session_count", 0) or 0
-    if (
+    if not (
         ADDRESS_DECISION_BLOCK_ENABLED
         and isinstance(_addr_n, int)
         and _addr_n >= 2
     ):
-        prompt += (
-            "\n\n<<<ADDRESS DECISION>>>\n"
-            "There are multiple people in the room this turn. The last "
-            "person who spoke is the default addressee, but you MAY "
-            "choose to address someone else when context warrants — for "
-            "example, if person A asked a question and person B murmurs "
-            "agreement, your answer to A's question should go to A, not "
-            "B.\n\n"
-            "FORMAT: prefix your response with one of these markers on "
-            "its own first line:\n"
-            "  [addressing:current]   — default; your response goes to "
-            "the last speaker. Use this when you don't need to override.\n"
-            "  [addressing:Name]      — override; your response goes to "
-            "the named person. Must be someone currently in the room.\n\n"
-            "The marker itself is internal — it will be stripped before "
-            "text-to-speech, so don't mention it aloud. Emit it once at "
-            "the very start, then your normal response text.\n\n"
-            "When to override (use [addressing:Name]):\n"
-            "  - Answering a question someone else asked earlier.\n"
-            "  - Redirecting to the person who needs the information.\n"
-            "  - Following up on emotional content from a non-speaker.\n"
-            "When NOT to override (use [addressing:current]):\n"
-            "  - Responding to the actual speaker's direct question.\n"
-            "  - Responding to the speaker's emotional content.\n"
-            "  - When in doubt — default is the speaker.\n"
-            "<<<END ADDRESS DECISION>>>"
-        )
+        return None
+    return (
+        "\n\n<<<ADDRESS DECISION>>>\n"
+        "There are multiple people in the room this turn. The last "
+        "person who spoke is the default addressee, but you MAY "
+        "choose to address someone else when context warrants — for "
+        "example, if person A asked a question and person B murmurs "
+        "agreement, your answer to A's question should go to A, not "
+        "B.\n\n"
+        "FORMAT: prefix your response with one of these markers on "
+        "its own first line:\n"
+        "  [addressing:current]   — default; your response goes to "
+        "the last speaker. Use this when you don't need to override.\n"
+        "  [addressing:Name]      — override; your response goes to "
+        "the named person. Must be someone currently in the room.\n\n"
+        "The marker itself is internal — it will be stripped before "
+        "text-to-speech, so don't mention it aloud. Emit it once at "
+        "the very start, then your normal response text.\n\n"
+        "When to override (use [addressing:Name]):\n"
+        "  - Answering a question someone else asked earlier.\n"
+        "  - Redirecting to the person who needs the information.\n"
+        "  - Following up on emotional content from a non-speaker.\n"
+        "When NOT to override (use [addressing:current]):\n"
+        "  - Responding to the actual speaker's direct question.\n"
+        "  - Responding to the speaker's emotional content.\n"
+        "  - When in doubt — default is the speaker.\n"
+        "<<<END ADDRESS DECISION>>>"
+    )
 
-    if scene_block:
-        prompt += f"\n\n{scene_block}"
 
+def _render_scene(ctx: "_PromptCtx") -> "str | None":
+    return f"\n\n{ctx.scene_block}" if ctx.scene_block else None
+
+
+def _render_room(ctx: "_PromptCtx") -> "str | None":
     # Phase 3B.1 — unified <<<ROOM>>> block for multi-person scenes. Passed
     # in via vision_state["room_block"]; the pipeline's _build_room_block
     # helper returns None in single-person sessions so this branch is a
@@ -2920,10 +2986,11 @@ def _build_system_prompt(
     # covers out-of-room concerns (recent visitors, ended-session safety),
     # ROOM covers in-room state. Both can coexist and the brain reads
     # them in the documented order.
-    _room_block = (vision_state or {}).get("room_block")
-    if _room_block:
-        prompt += f"\n\n{_room_block}"
+    _room_block = (ctx.vision_state or {}).get("room_block")
+    return f"\n\n{_room_block}" if _room_block else None
 
+
+def _render_shared_context(ctx: "_PromptCtx") -> "str | None":
     # P0.S7 D-A — <<<SHARED CONTEXT>>> block: persisted room-scoped conversation
     # history pulled from conversation_log via FaceDB.get_recent_room_conversation.
     # Sits AFTER ROOM block (in-memory state) and BEFORE EMOTIONAL CONTEXT per
@@ -2931,86 +2998,256 @@ def _build_system_prompt(
     # then the persisted history that survives session expiry, then mood.
     # Pipeline-side `_build_shared_context_block` returns None on flag-off,
     # single-person, missing room_session_id, or disputed caller.
-    _shared_ctx_block = (vision_state or {}).get("shared_context")
-    if _shared_ctx_block:
-        prompt += f"\n\n{_shared_ctx_block}"
+    _shared_ctx_block = (ctx.vision_state or {}).get("shared_context")
+    return f"\n\n{_shared_ctx_block}" if _shared_ctx_block else None
 
+
+def _render_recent_rooms(ctx: "_PromptCtx") -> "str | None":
     # Phase 3B.6 — <<<RECENT ROOMS>>> context for greeting enrichment.
     # vision_state["recent_room_context"] is a dict from
     # BrainDB.get_recent_room_context (or None). Rendered as a compact
     # block so brain can reference "you and Lexi last talked Xh ago…"
     # without running retrieval mid-turn. Block omitted entirely when
     # no qualifying room exists (backward-compat with 3B.1-3B.5).
-    _recent_rc = (vision_state or {}).get("recent_room_context")
-    if _recent_rc and isinstance(_recent_rc, dict):
-        _summary = (_recent_rc.get("summary") or "").strip()
-        _ended_at = _recent_rc.get("ended_at") or 0
-        import time as _time_rr
-        _delta = max(0.0, _time_rr.time() - _ended_at)
-        if _delta < 3600:
-            _age = f"{int(_delta / 60)} min ago"
-        elif _delta < 86400:
-            _age = f"{int(_delta / 3600)} hr ago"
-        else:
-            _age = f"{int(_delta / 86400)} day(s) ago"
-        _topics = _recent_rc.get("topic_tags") or []
-        _safety = _recent_rc.get("safety_flags") or []
-        _lines = [
-            "<<<RECENT ROOMS>>>",
-            f"Most recent room with this speaker ended {_age}.",
-            f"Summary: {_summary}" if _summary else "Summary: (none)",
+    _recent_rc = (ctx.vision_state or {}).get("recent_room_context")
+    if not (_recent_rc and isinstance(_recent_rc, dict)):
+        return None
+    _summary = (_recent_rc.get("summary") or "").strip()
+    _ended_at = _recent_rc.get("ended_at") or 0
+    import time as _time_rr
+    _delta = max(0.0, _time_rr.time() - _ended_at)
+    if _delta < 3600:
+        _age = f"{int(_delta / 60)} min ago"
+    elif _delta < 86400:
+        _age = f"{int(_delta / 3600)} hr ago"
+    else:
+        _age = f"{int(_delta / 86400)} day(s) ago"
+    _topics = _recent_rc.get("topic_tags") or []
+    _safety = _recent_rc.get("safety_flags") or []
+    _lines = [
+        "<<<RECENT ROOMS>>>",
+        f"Most recent room with this speaker ended {_age}.",
+        f"Summary: {_summary}" if _summary else "Summary: (none)",
+    ]
+    if _topics:
+        _lines.append(f"Topics: {', '.join(str(t) for t in _topics[:6])}")
+    if _safety:
+        _safety_phrases = [
+            f"{f.get('name', '?')} expressed {f.get('attribute', '?').replace('_', ' ')}"
+            for f in _safety[:3] if isinstance(f, dict)
         ]
-        if _topics:
-            _lines.append(f"Topics: {', '.join(str(t) for t in _topics[:6])}")
-        if _safety:
-            _safety_phrases = [
-                f"{f.get('name', '?')} expressed {f.get('attribute', '?').replace('_', ' ')}"
-                for f in _safety[:3] if isinstance(f, dict)
-            ]
-            if _safety_phrases:
-                _lines.append(f"Safety signals: {'; '.join(_safety_phrases)}")
-        _lines.append("<<<END RECENT ROOMS>>>")
-        prompt += "\n\n" + "\n".join(_lines)
+        if _safety_phrases:
+            _lines.append(f"Safety signals: {'; '.join(_safety_phrases)}")
+    _lines.append("<<<END RECENT ROOMS>>>")
+    return "\n\n" + "\n".join(_lines)
 
+
+def _render_memory_context(ctx: "_PromptCtx") -> "str | None":
+    memory_context = ctx.memory_context
+    person_name = ctx.person_name
     if memory_context:
-        prompt += (
+        return (
             f"\n\nWhat you know about {person_name or 'this person'} from your time together:\n"
             f"{memory_context}\n"
             "Let this shape how you listen and understand them. "
             "IMPORTANT: NEVER volunteer these facts or weave them into responses unprompted — "
             "only bring them up if directly relevant to what they're saying right now."
         )
+    return None
 
+
+def _render_object_context(ctx: "_PromptCtx") -> "str | None":
+    object_context = ctx.object_context
     if object_context:
-        prompt += (
+        return (
             f"\n\n{object_context}\n"
             "When asked what you can see, what objects are around, or where something was "
             "last seen — answer directly from this list. Do NOT say you cannot detect objects."
         )
+    return None
 
+
+def _render_emotion_context(ctx: "_PromptCtx") -> "str | None":
+    emotion_context = ctx.emotion_context
     if emotion_context:
-        prompt += (
+        return (
             f"\n\n{emotion_context}\n"
             "Be naturally attentive to this — do not explicitly name it or ask about it."
         )
+    return None
 
+
+def _render_prompt_addendum(ctx: "_PromptCtx") -> "str | None":
+    prompt_addendum = ctx.prompt_addendum
+    person_name = ctx.person_name
     if prompt_addendum:
-        prompt += (
+        return (
             f"\n\nSession interaction notes for {person_name or 'this person'} "
             f"(learned from past conversations — follow consistently):\n"
             f"{prompt_addendum}"
         )
+    return None
 
+
+def _render_person_name_line(ctx: "_PromptCtx") -> "str | None":
+    person_name = ctx.person_name
     if person_name:
-        prompt += f"\n\nThe person currently talking to you is {person_name}. Address them naturally by name when appropriate."
+        return f"\n\nThe person currently talking to you is {person_name}. Address them naturally by name when appropriate."
+    return None
 
+
+def _render_time_anchor(ctx: "_PromptCtx") -> "str | None":
     # Wave 4 follow-up F1 — time anchor at end of TURN-DYNAMIC section.
     # Recency-effect placement: brain attention peaks on content near end of
     # prompt. The existing _format_datetime_line() at top of TURN-DYNAMIC
     # stays for factual time/date queries; this block grounds conversational
     # tone so "goodnight" / "good morning" / "it's late" are never wrong.
-    prompt += f"\n\n{_format_time_anchor()}"
+    return f"\n\n{_format_time_anchor()}"
 
+
+# render_fn STRING (from BLOCK_REGISTRY) → bound callable. SB.4.1 step 2 shipped
+# the 12 stable-phase fns; step 3 adds the 15 dynamic-phase fns. Mirrors
+# the orchestrator's _CLASS_BY_NAME string→callable resolution (SB.3).
+_RENDER_BY_NAME = {
+    "render_persona":             _render_persona,
+    "render_tool_contributions":  _render_tool_contributions,
+    "render_hedged_naming":       _render_hedged_naming,
+    "render_system_name_prose":   _render_system_name_prose,
+    "render_system_identity":     _render_system_identity,
+    "render_known_speaker":       _render_known_speaker,
+    "render_honesty_policy":      _render_honesty_policy,
+    "render_cross_person_privacy": _render_cross_person_privacy,
+    "render_tool_access":         _render_tool_access,
+    "render_stranger_identity":   _render_stranger_identity,
+    "render_identity_disputed":   _render_identity_disputed,
+    "render_core_memory":         _render_core_memory,
+    # ── dynamic slice (15) — _build_system_prompt, Section 3, per-turn ──────────
+    "render_datetime":            _render_datetime,
+    "render_sensors":             _render_sensors,
+    "render_identity_evidence":   _render_identity_evidence,
+    "render_visitor_context":     _render_visitor_context,
+    "render_address_decision":    _render_address_decision,
+    "render_scene":               _render_scene,
+    "render_room":                _render_room,
+    "render_shared_context":      _render_shared_context,
+    "render_recent_rooms":        _render_recent_rooms,
+    "render_memory_context":      _render_memory_context,
+    "render_object_context":      _render_object_context,
+    "render_emotion_context":     _render_emotion_context,
+    "render_prompt_addendum":     _render_prompt_addendum,
+    "render_person_name_line":    _render_person_name_line,
+    "render_time_anchor":         _render_time_anchor,
+}
+
+
+def render_session_stable_prefix(
+    system_name: str | None,
+    session_person_type: str | None,
+    session_user_turns: int,
+    identity_disputed: bool,
+    person_name: str | None,
+    disputed_claimed_name: str | None,
+    core_memory: "list[dict] | None" = None,
+) -> str:
+    """Render Sections 1+2 of the system prompt (pure-static + session-stable).
+
+    Cache the result in session_dict["cached_prefix"] and pass it as
+    cached_prefix= to ask_stream / _build_system_prompt to skip rebuilding
+    on every turn.  Together.ai reuses its KV cache when the prompt prefix
+    is byte-identical across consecutive calls — ~25-30% per-turn cost saving.
+
+    Invalidate the cache (pop "cached_prefix") whenever:
+      - system_name changes (update_system_name tool)
+      - session_person_type changes (dispute flip, stranger→known promotion,
+        dispute auto-clear, auto-confirm, update_person_name)
+      - session_user_turns crosses STRANGER_IDENTITY_BLOCK_MIN_TURNS
+      - identity_disputed changes (report_identity_mismatch, dispute auto-clear)
+
+    SB.4.1 step 2: rewired to iterate the BLOCK_REGISTRY `stable` phase-slice
+    via _RENDER_BY_NAME, filtered by config.ACTIVE_BLOCKS read at call time
+    (Lock-2 / T8 from-import trap). The registry's insertion order IS the
+    assembly order, so the rendered prefix is byte-identical to the prior
+    inline assembly (T1 byte-golden + T2 prefix-hash prove it).
+    """
+    ctx = _PromptCtx(
+        system_name=system_name,
+        session_person_type=session_person_type,
+        session_user_turns=session_user_turns,
+        identity_disputed=identity_disputed,
+        person_name=person_name,
+        disputed_claimed_name=disputed_claimed_name,
+        core_memory=core_memory,
+    )
+    prompt = ""
+    for _name, _entry in BLOCK_REGISTRY.items():
+        if _entry["phase"] != "stable":
+            continue
+        if _name not in config.ACTIVE_BLOCKS:
+            continue
+        _chunk = _RENDER_BY_NAME[_entry["render_fn"]](ctx)
+        if _chunk:
+            prompt += _chunk
+    return prompt
+
+
+def _build_system_prompt(
+    person_name: str | None,
+    vision_state: dict | None = None,
+    voice_state: dict | None = None,
+    memory_context: str | None = None,
+    object_context: str | None = None,
+    emotion_context: str | None = None,
+    prompt_addendum: str | None = None,
+    system_name: str | None = None,
+    scene_block: str | None = None,
+    cached_prefix: str | None = None,
+) -> str:
+    # Sections 1+2: use provided cache or build fresh
+    if cached_prefix is not None:
+        prompt = cached_prefix
+    else:
+        prompt = render_session_stable_prefix(
+            system_name=system_name,
+            session_person_type=(vision_state or {}).get("session_person_type"),
+            session_user_turns=(vision_state or {}).get("session_user_turns", 0),
+            identity_disputed=bool((vision_state or {}).get("identity_disputed", False)),
+            person_name=person_name,
+            disputed_claimed_name=(vision_state or {}).get("disputed_claimed_name"),
+        )
+
+    # ============================================================
+    # SECTION 3: TURN-DYNAMIC (changes every turn)
+    # ============================================================
+    # SB.4.1 step 3 -- iterate the BLOCK_REGISTRY `dynamic` phase-slice via
+    # _RENDER_BY_NAME, filtered by config.ACTIVE_BLOCKS read at call time
+    # (Lock-2 / from-import trap). Mirrors render_session_stable_prefix's
+    # stable-slice loop; the registry's insertion order IS the assembly order,
+    # so the rendered Section 3 is byte-identical to the prior inline assembly
+    # (T1 byte-golden proves it). Build the ctx once; each render fn reads its
+    # inputs off it. `prompt` already holds Sections 1+2 (cached prefix).
+    ctx = _PromptCtx(
+        system_name=system_name,
+        session_person_type=(vision_state or {}).get("session_person_type"),
+        session_user_turns=(vision_state or {}).get("session_user_turns", 0),
+        identity_disputed=bool((vision_state or {}).get("identity_disputed", False)),
+        person_name=person_name,
+        disputed_claimed_name=(vision_state or {}).get("disputed_claimed_name"),
+        vision_state=vision_state,
+        voice_state=voice_state,
+        memory_context=memory_context,
+        object_context=object_context,
+        emotion_context=emotion_context,
+        prompt_addendum=prompt_addendum,
+        scene_block=scene_block,
+    )
+    for _name, _entry in BLOCK_REGISTRY.items():
+        if _entry["phase"] != "dynamic":
+            continue
+        if _name not in config.ACTIVE_BLOCKS:
+            continue
+        _chunk = _RENDER_BY_NAME[_entry["render_fn"]](ctx)
+        if _chunk:
+            prompt += _chunk
     return prompt
 
 

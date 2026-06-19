@@ -499,7 +499,7 @@ def test_p0_s7_5_d4_known_speaker_block_gated_on_person_type_and_flag():
     """
     from core import brain
 
-    src = inspect.getsource(brain.render_session_stable_prefix)
+    src = inspect.getsource(brain._render_known_speaker)
     tree = ast.parse(textwrap.dedent(src))
     fn = tree.body[0]
     for parent in ast.walk(fn):
@@ -589,7 +589,7 @@ def test_p0_s7_5_d5_honesty_policy_has_fabricated_absence_bullet():
     """
     from core import brain
 
-    raw_src = inspect.getsource(brain.render_session_stable_prefix)
+    raw_src = inspect.getsource(brain._render_honesty_policy)
     # Collapse adjacent string-literal splits so multi-line bullet text
     # matches contiguously (same shape as P0.S7.4 γ test normalizer).
     src = re.sub(r'"\s+"', "", raw_src)

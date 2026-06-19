@@ -134,4 +134,9 @@ SCHEMA: dict = {
     # (∈ AGENT_BUNDLES, e.g. "companion") OR a list[str] of AGENT_REGISTRY keys.
     # Validated by the loader's _check_agent_select against profiles/_registry.py.
     "agents": {"kind": "agent_select"},
+    # SB.4.1 — prompt-block-membership axis. Value is a bundle-shorthand string
+    # (∈ BLOCK_BUNDLES, e.g. "companion") OR a list[str] of BLOCK_REGISTRY keys.
+    # Validated by the loader's _check_block_select against profiles/_blocks.py;
+    # closure (MANDATORY_BLOCKS ⊆ active) enforced by _validate_block_closure.
+    "blocks": {"kind": "block_select"},
 }

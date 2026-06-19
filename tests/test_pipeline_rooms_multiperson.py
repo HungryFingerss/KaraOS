@@ -250,14 +250,17 @@ def test_s112_kuzu_audit_documented_not_v3_bumped():
 
 
 def test_s113_address_decision_block_renders_when_multi_session_and_flag_on():
-    """Session 113 Part 1 — `_build_system_prompt` emits the
-    <<<ADDRESS DECISION>>> block only when BOTH the config flag is on
-    AND there are ≥2 active sessions. Format instructions + positive
-    "[addressing:current]" default + when-to-override examples must be
-    present so the LLM learns the marker contract."""
+    """Session 113 Part 1 — the <<<ADDRESS DECISION>>> block renders only
+    when BOTH the config flag is on AND there are ≥2 active sessions.
+    Format instructions + positive "[addressing:current]" default +
+    when-to-override examples must be present so the LLM learns the marker
+    contract. (SB.4.1 prompt-block registry refactor moved the block text
+    out of `_build_system_prompt` into the `_render_address_decision`
+    render fn dispatched by the dynamic-slice loop; rendered output is
+    byte-identical, so this source assertion follows the text.)"""
     import inspect
-    from core.brain import _build_system_prompt
-    src = inspect.getsource(_build_system_prompt)
+    from core.brain import _render_address_decision
+    src = inspect.getsource(_render_address_decision)
     assert "<<<ADDRESS DECISION>>>" in src, "block header missing"
     assert "ADDRESS_DECISION_BLOCK_ENABLED" in src, "flag-gate missing"
     assert "active_session_count" in src, (

@@ -5395,7 +5395,7 @@ class TestHonestyPolicyBlock:
         """Source-inspection: the block appears in _build_system_prompt."""
         import inspect
         from core import brain
-        src = inspect.getsource(brain.render_session_stable_prefix)
+        src = inspect.getsource(brain._render_honesty_policy)
         assert "<<<HONESTY POLICY>>>" in src, (
             "Bug N Layer 3: the HONESTY POLICY block is missing from "
             "_build_system_prompt — the LLM has nothing anchoring it against "
@@ -5412,7 +5412,7 @@ class TestHonestyPolicyBlock:
         speech matches the uncertainty of a pending gate decision."""
         import inspect
         from core import brain
-        src = inspect.getsource(brain.render_session_stable_prefix)
+        src = inspect.getsource(brain._render_hedged_naming)
         assert "<<<HEDGED NAMING CONTRACT>>>" in src
         assert "<<<END HEDGED NAMING CONTRACT>>>" in src
         # Must explicitly call out the forbidden phrasings (positive negative example).
@@ -5439,7 +5439,7 @@ class TestHonestyPolicyBlock:
         so abstract rules don't drift in a future prompt refactor."""
         import inspect
         from core import brain
-        src = inspect.getsource(brain.render_session_stable_prefix)
+        src = inspect.getsource(brain._render_cross_person_privacy)
         assert "<<<CROSS-PERSON PRIVACY>>>" in src, (
             "P3.21: CROSS-PERSON PRIVACY block must appear in _build_system_prompt "
             "— without it the brain phrases privacy-scoped omissions as denials "
@@ -5462,7 +5462,7 @@ class TestHonestyPolicyBlock:
         promotion is overdue if a reveal happens."""
         import inspect
         from core import brain
-        src = inspect.getsource(brain.render_session_stable_prefix)
+        src = inspect.getsource(brain._render_stranger_identity)
         assert "<<<STRANGER IDENTITY>>>" in src, (
             "Session 97 Fix 1 block missing — STRANGER IDENTITY block must "
             "live in _build_system_prompt so brain is nudged to call "
@@ -5488,7 +5488,7 @@ class TestHonestyPolicyBlock:
         rules — the LLM pattern-matches on phrasing, not principles."""
         import inspect
         from core import brain
-        src = inspect.getsource(brain.render_session_stable_prefix)
+        src = inspect.getsource(brain._render_stranger_identity)
         idx = src.find("<<<STRANGER IDENTITY>>>")
         end = src.find("<<<END STRANGER IDENTITY>>>", idx)
         assert idx >= 0 and end > idx, "stranger identity block boundaries not found"
@@ -5618,17 +5618,21 @@ class TestHonestyPolicyBlock:
 
     def test_visitor_context_block_gated_on_marker_and_config(self):
         """Session 96 Bug 3: VISITOR CONTEXT block must be present in
-        `_build_system_prompt` source AND gated on both the
+        `_render_visitor_context` source AND gated on both the
         `VISITOR_CONTEXT_BLOCK_ENABLED` config flag AND the
         `[visitor_id:` marker in prompt_addendum. Marker gating ensures
         the block only fires when a visitor alert is actually active —
-        adding it unconditionally would bloat the prompt every turn."""
+        adding it unconditionally would bloat the prompt every turn.
+        (SB.4.1 prompt-block registry refactor moved the block text out
+        of `_build_system_prompt` into the `_render_visitor_context`
+        render fn dispatched by the dynamic-slice loop; rendered output
+        is byte-identical, so this source assertion follows the text.)"""
         import inspect
         from core import brain
-        src = inspect.getsource(brain._build_system_prompt)
+        src = inspect.getsource(brain._render_visitor_context)
         assert "<<<VISITOR CONTEXT>>>" in src, (
             "Session 96 Bug 3 block missing — VISITOR CONTEXT block must "
-            "live in _build_system_prompt to route owner queries about "
+            "live in _render_visitor_context to route owner queries about "
             "visitors to search_memory instead of report_identity_mismatch"
         )
         assert "VISITOR_CONTEXT_BLOCK_ENABLED" in src, (
@@ -5748,10 +5752,12 @@ class TestHonestyPolicyBlock:
         correct tool AND explicitly exclude `report_identity_mismatch`
         — the tool the brain misrouted to in the canary. Naming the
         wrong tool by name in a do-NOT directive is more reliable than
-        abstract rules the model might drift away from."""
+        abstract rules the model might drift away from.
+        (SB.4.1 registry refactor: block text now lives in the
+        `_render_visitor_context` render fn, not `_build_system_prompt`.)"""
         import inspect
         from core import brain
-        src = inspect.getsource(brain._build_system_prompt)
+        src = inspect.getsource(brain._render_visitor_context)
         idx = src.find("<<<VISITOR CONTEXT>>>")
         end = src.find("<<<END VISITOR CONTEXT>>>", idx)
         assert idx >= 0 and end > idx, "visitor context block boundaries not found"
@@ -5774,7 +5780,7 @@ class TestHonestyPolicyBlock:
         positive (what TO say) — keep the model's behavior stable."""
         import inspect
         from core import brain
-        src = inspect.getsource(brain.render_session_stable_prefix)
+        src = inspect.getsource(brain._render_cross_person_privacy)
         # Positive anchor: the correct honest-privacy phrasing.
         assert "can't share" in src.lower() or "can't share their specifics" in src, (
             "P3.21 block must include the positive honest phrasing "
@@ -5803,7 +5809,7 @@ class TestHonestyPolicyBlock:
         → confirmation phrase could leak through for that tool."""
         import inspect
         from core import brain
-        src = inspect.getsource(brain.render_session_stable_prefix)
+        src = inspect.getsource(brain._render_hedged_naming)
         # Find the hedged block specifically.
         idx = src.find("<<<HEDGED NAMING CONTRACT>>>")
         end = src.find("<<<END HEDGED NAMING CONTRACT>>>", idx)

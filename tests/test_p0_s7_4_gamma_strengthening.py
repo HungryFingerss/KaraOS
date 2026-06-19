@@ -49,7 +49,7 @@ def test_honesty_policy_block_contains_strengthened_memory_discipline():
     import inspect, re
     from core import brain
 
-    raw_src = inspect.getsource(brain.render_session_stable_prefix)
+    raw_src = inspect.getsource(brain._render_honesty_policy)
     # Collapse adjacent string-literal splits so multi-line phrases match.
     # Python concatenates `"foo " "bar"` at parse time; `inspect.getsource`
     # returns the pre-parse source, so multi-line strings keep the

@@ -71,7 +71,7 @@ def test_bug_k_honesty_policy_recovery_procedure():
     that earlier but don't have the specifics handy right now")."""
     import inspect
     from core import brain
-    src = inspect.getsource(brain.render_session_stable_prefix)
+    src = inspect.getsource(brain._render_honesty_policy)
     idx = src.find("<<<HONESTY POLICY>>>")
     end = src.find("<<<END HONESTY POLICY>>>", idx)
     block = src[idx:end]
@@ -116,7 +116,7 @@ def test_bug_i_honesty_policy_anti_contradiction_rule():
     wrong. Say 'let me think' not 'I didn't have that conversation'."""
     import inspect
     from core import brain
-    src = inspect.getsource(brain.render_session_stable_prefix)
+    src = inspect.getsource(brain._render_honesty_policy)
     idx = src.find("<<<HONESTY POLICY>>>")
     end = src.find("<<<END HONESTY POLICY>>>", idx)
     block = src[idx:end]

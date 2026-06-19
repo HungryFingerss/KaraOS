@@ -1689,6 +1689,10 @@ def _apply_profile_overrides(_g: dict, _overrides: dict) -> None:
     # "ACTIVE_AGENTS" directly (Lock 2), so this writes config.ACTIVE_AGENTS.
     if "ACTIVE_AGENTS" in _overrides:
         _g["ACTIVE_AGENTS"] = _overrides["ACTIVE_AGENTS"]
+    # SB.4.1 — prompt-block membership: the loader keys the resolved active-block
+    # set as "ACTIVE_BLOCKS" directly (Lock 2), so this writes config.ACTIVE_BLOCKS.
+    if "ACTIVE_BLOCKS" in _overrides:
+        _g["ACTIVE_BLOCKS"] = _overrides["ACTIVE_BLOCKS"]
 
 
 # ── SB.3 — agent-membership axis: ACTIVE_AGENTS base default (full set),
@@ -1701,6 +1705,17 @@ def _apply_profile_overrides(_g: dict, _overrides: dict) -> None:
 from profiles._registry import AGENT_REGISTRY as _SB3_AGENT_REGISTRY
 
 ACTIVE_AGENTS = frozenset(_SB3_AGENT_REGISTRY)
+
+# ── SB.4.1 — prompt-block-membership axis: ACTIVE_BLOCKS base default (full set),
+#    overridden by the apply below. Same Lock-2 from-import-trap hazard as
+#    ACTIVE_AGENTS: brain.py MUST read it via `config.ACTIVE_BLOCKS` attribute
+#    access, never `from core.config import ACTIVE_BLOCKS` (that binds this
+#    pre-apply default and silently ignores every profile — T8). `frozenset` =
+#    membership set; assembly order is recovered from BLOCK_REGISTRY insertion
+#    order (ACTIVE_BLOCKS_ORDERED) since a frozenset is unordered.
+from profiles._blocks import BLOCK_REGISTRY as _SB41_BLOCK_REGISTRY
+
+ACTIVE_BLOCKS = frozenset(_SB41_BLOCK_REGISTRY)
 
 from core.profile_loader import load_profile as _sb21_load_profile
 

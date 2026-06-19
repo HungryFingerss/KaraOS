@@ -10,6 +10,7 @@ profile: companion
 llm:        { provider: cloud }                  # → today's Together-70B leaves
 features:   { emotion: true, tier_memory: true } # the 2 real-flag-backed toggles (= current values)
 agents:     companion                            # SB.3: the full 15-agent set (= today; behavior-neutral)
+blocks:     companion                            # SB.4.1: the full 27-block set (= today; behavior-neutral)
 persona:    { system_name: Kara, persona_id: companion_dog }  # declared-only hook (SB.8)
 hardware:   { tier: dev_laptop }                 # declared-only hook (today's loadout)
 retention:  { default_mode: personal }           # declared-only; env KARAOS_INSTANCE_MODE is authoritative

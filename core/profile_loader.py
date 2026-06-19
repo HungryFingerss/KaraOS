@@ -36,6 +36,11 @@ from profiles._schema import (
     CLOUD_TIMING_MAP,
 )
 from profiles._registry import AGENT_REGISTRY, AGENT_BUNDLES  # SB.3 agent-membership axis
+from profiles._blocks import (  # SB.4.1 prompt-block-membership axis
+    BLOCK_REGISTRY,
+    BLOCK_BUNDLES,
+    MANDATORY_BLOCKS,
+)
 
 # Env-selected deployment SHAPE. Default "companion" (today). Composed with the
 # orthogonal KARAOS_INSTANCE_MODE retention axis (which stays in config.py).
@@ -119,6 +124,9 @@ def _validate(raw: dict, profile_name: str, where: str) -> None:
             continue
         if spec.get("kind") == "agent_select":
             _check_agent_select(section, body, where)
+            continue
+        if spec.get("kind") == "block_select":
+            _check_block_select(section, body, where)
             continue
         # section
         if not isinstance(body, dict):
@@ -227,6 +235,50 @@ def _check_agent_select(section: str, val, where: str) -> None:
         )
 
 
+def _check_block_select(section: str, val, where: str) -> None:
+    """SB.4.1 — `blocks:` is a bundle-shorthand string (∈ BLOCK_BUNDLES) OR a
+    list[str] of BLOCK_REGISTRY keys. Fail-loud on unknown bundle / unknown
+    block name / wrong type (mirrors _check_agent_select)."""
+    if isinstance(val, str):
+        if val not in BLOCK_BUNDLES:
+            raise ProfileError(
+                f"{where}: blocks={val!r} is not a known block bundle. "
+                f"Valid bundles: {tuple(BLOCK_BUNDLES)}."
+            )
+    elif isinstance(val, list):
+        for name in val:
+            if not isinstance(name, str):
+                raise ProfileError(
+                    f"{where}: blocks list entries must be block-name strings; "
+                    f"got {type(name).__name__} ({name!r})."
+                )
+            if name not in BLOCK_REGISTRY:
+                raise ProfileError(
+                    f"{where}: blocks entry {name!r} is not a registered block. "
+                    f"Valid: {tuple(BLOCK_REGISTRY)}."
+                )
+    else:
+        raise ProfileError(
+            f"{where}: blocks must be a bundle-name string or a list of block "
+            f"names; got {type(val).__name__} ({val!r})."
+        )
+
+
+def _validate_block_closure(active: "frozenset[str]") -> None:
+    """SB.4.1 PI-A (mandatory SAFETY set) — every block in MANDATORY_BLOCKS must
+    be in the active set. A clone's `blocks:` selection that drops ANY safety
+    block (honesty_policy / cross_person_privacy / tool_access / identity_disputed)
+    fails LOUD at load — never silently ships a clone without the safety floor.
+    Moot for companion (the full set contains all). Mirrors _validate_dep_closure."""
+    missing = [b for b in MANDATORY_BLOCKS if b not in active]
+    if missing:
+        raise ProfileError(
+            f"blocks selection is missing mandatory SAFETY block(s) {missing}; "
+            f"every profile MUST include all of {MANDATORY_BLOCKS}. Add them back "
+            f"or use the `companion` bundle (the full set)."
+        )
+
+
 def _validate_dep_closure(active: "frozenset[str]") -> None:
     """SB.3 §6.1 (D4 dep-closure) — every active agent's INTER-agent deps must
     also be active. An inter-agent dep is a dep tag that is itself a registry key
@@ -295,5 +347,18 @@ def _resolve(raw: dict) -> dict:
         active = frozenset(agents_raw)
     _validate_dep_closure(active)
     out["ACTIVE_AGENTS"] = active
+
+    # SB.4.1 — prompt-block-membership axis → ACTIVE_BLOCKS (Lock 2: keyed
+    # directly so the apply's globals()[key]=value writes config.ACTIVE_BLOCKS).
+    # YAML section is `blocks:`; absent → full set (un-profiled / companion).
+    blocks_raw = raw.get("blocks")
+    if blocks_raw is None:
+        active_blocks = frozenset(BLOCK_REGISTRY)
+    elif isinstance(blocks_raw, str):
+        active_blocks = frozenset(BLOCK_BUNDLES[blocks_raw])
+    else:
+        active_blocks = frozenset(blocks_raw)
+    _validate_block_closure(active_blocks)
+    out["ACTIVE_BLOCKS"] = active_blocks
 
     return out

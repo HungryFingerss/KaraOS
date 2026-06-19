@@ -483,8 +483,10 @@ class TestP012RegressionFromHypothesis:
         dict): return None` already guards before the .get('level') access.
         Source-inspection regression guard to prevent removal of the
         existing safety net."""
-        import inspect, core.brain_agent as _ba
-        src = inspect.getsource(_ba)
+        # NOTE: core.brain_agent was split into a package; the PrivacyClassifier
+        # _parse_json call + dual-guard now live in core/brain_agent/privacy.py.
+        import inspect, core.brain_agent.privacy as _privmod
+        src = inspect.getsource(_privmod)
         # The PrivacyClassifier branch must keep the dual-guard pattern.
         idx_call = src.find("parsed = _parse_json(raw)")
         assert idx_call > -1, (
@@ -527,15 +529,19 @@ class TestP012RegressionFromHypothesis:
         # async extract method.
         async def _fake_chat(*_args, **_kwargs):
             return raw_array_response
-        import core.brain_agent as _ba
-        orig = _ba._call_llm_chat
-        _ba._call_llm_chat = _fake_chat
+        # NOTE: SocialGraphAgent moved to core/brain_agent/agents/social.py,
+        # which binds _call_llm_chat in its own namespace via
+        # `from core.brain_agent._llm import _call_llm_chat`. Patch THAT binding
+        # (not the package top level) so agent.extract sees the fake.
+        import core.brain_agent.agents.social as _social
+        orig = _social._call_llm_chat
+        _social._call_llm_chat = _fake_chat
         try:
             result = _asyncio.run(
                 agent.extract("Sarah works at TCS and Mike loves cricket.")
             )
         finally:
-            _ba._call_llm_chat = orig
+            _social._call_llm_chat = orig
 
         names = [m.get("name") for m in result]
         assert "Sarah" in names and "Mike" in names, (
