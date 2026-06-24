@@ -45,6 +45,8 @@ from core.brain_agent.context import (
 )
 from core.brain_agent.agents.extraction import Extraction
 
+from core import config  # SB.5 Step-2: live attribute access for RETENTION_MODE gate (from-import-trap)
+
 
 def _escalate_pref(content: str, friction_count: int) -> str:
     """Apply escalating urgency language to a pref based on how many times friction was detected."""
@@ -472,6 +474,8 @@ class BrainDB:
         person_id: str | None,
         agent: str,
     ) -> int:
+        if config.RETENTION_MODE == "ephemeral":
+            return 0  # SB.5: retention-gated — no knowledge capture under ephemeral
         now = time.time()
         count = 0
         for e in extractions:
@@ -639,6 +643,8 @@ class BrainDB:
         Near-duplicate detection: same person_id + pref_type + identical normalized
         content → increment sessions_seen and auto-confirm at 3.
         """
+        if config.RETENTION_MODE == "ephemeral":
+            return False  # SB.5: retention-gated — no preference capture under ephemeral
         norm = content.strip().lower()
         rows = self._conn.execute(
             "SELECT id, sessions_seen, content FROM prompt_prefs WHERE person_id=? AND pref_type=?",
@@ -1344,6 +1350,8 @@ class BrainDB:
         - Different speaker contradicts a stable fact → mark disputed, store both values
         - Temporal/ephemeral facts (scope contains "temporal") → always REPLACE
         """
+        if config.RETENTION_MODE == "ephemeral":
+            return False  # SB.5: retention-gated — no household-fact capture under ephemeral
         now = time.time()
         row = self._conn.execute(
             "SELECT id, value, source_speakers, confidence, conflict_status FROM household_facts "
@@ -1449,6 +1457,8 @@ class BrainDB:
         source_speaker: str,
     ) -> None:
         """Upsert an inter-person relationship."""
+        if config.RETENTION_MODE == "ephemeral":
+            return  # SB.5: retention-gated (Finding A — own method) — no relationship capture under ephemeral
         now = time.time()
         self._conn.execute(
             """INSERT INTO inter_person_relationships
@@ -1525,6 +1535,8 @@ class BrainDB:
                 f"(pronoun/role — not a real name)"
             )
             return ("", False)
+        if config.RETENTION_MODE == "ephemeral":
+            return ("", False)  # SB.5: retention-gated — no shadow-person capture under ephemeral
         now = time.time()
         existing = self._conn.execute(
             "SELECT shadow_id, known_via FROM shadow_persons WHERE LOWER(known_name) = LOWER(?)",
@@ -1707,7 +1719,10 @@ class BrainDB:
 
         # Copy shadow facts (gathered from what others said) into the knowledge table
         # so they appear in get_context() alongside extracted conversation facts.
-        facts: list = json.loads(facts_json)
+        # SB.5: retention-gated — under ephemeral, skip copying shadow facts into the
+        # knowledge table (the promotion link above still applies; the shadow row itself
+        # only exists under durable retention per the upsert_shadow_person gate).
+        facts: list = [] if config.RETENTION_MODE == "ephemeral" else json.loads(facts_json)
         inserted = 0
         for f in facts:
             if not f.get("attribute") or not f.get("value"):
@@ -1771,6 +1786,8 @@ class BrainDB:
         Merges new attributes with existing ones (case-insensitive dedup).
         Updates relationship if the existing row has none.
         """
+        if config.RETENTION_MODE == "ephemeral":
+            return  # SB.5: retention-gated — no social-mention capture under ephemeral
         row = self._conn.execute(
             "SELECT id, attributes FROM social_mentions "
             "WHERE source_person_id=? AND LOWER(mentioned_name)=LOWER(?) LIMIT 1",
@@ -1847,6 +1864,8 @@ class BrainDB:
         session_end_ts:   float,
         turn_count:       int,
     ) -> int:
+        if config.RETENTION_MODE == "ephemeral":
+            return -1  # SB.5: retention-gated — no episode capture under ephemeral
         now = time.time()
         cur = self._conn.execute(
             """INSERT INTO episodes
@@ -1927,6 +1946,8 @@ class BrainDB:
         after a partial write), the INSERT OR REPLACE semantic keeps
         the freshest render.
         """
+        if config.RETENTION_MODE == "ephemeral":
+            return  # SB.5: retention-gated — no room-summary capture under ephemeral
         import json as _json_rs
         self._conn.execute(
             "INSERT OR REPLACE INTO room_summaries "
@@ -1997,6 +2018,8 @@ class BrainDB:
         return None
 
     def log_presence(self, person_id: str, arrived_at: float, left_at: float) -> None:
+        if config.RETENTION_MODE == "ephemeral":
+            return  # SB.5: retention-gated — no presence capture under ephemeral
         dt = datetime.datetime.fromtimestamp(arrived_at)
         self._conn.execute(
             """INSERT INTO presence_log
@@ -2044,6 +2067,8 @@ class BrainDB:
         metadata:         dict,
         expires_at:       float | None = None,
     ) -> int:
+        if config.RETENTION_MODE == "ephemeral":
+            return -1  # SB.5: retention-gated — no nudge capture under ephemeral
         cur = self._conn.execute(
             """INSERT INTO proactive_nudges
                (target_person_id, nudge_type, content, metadata,

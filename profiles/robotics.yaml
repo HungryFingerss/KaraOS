@@ -13,7 +13,7 @@ agents:     companion                               # SB.3 placeholder — full 
 blocks:     companion                               # SB.4.1 placeholder — full set until the robotics stack defines its reduced block set (SB.9)
 persona:    { system_name: Kara, persona_id: robotics_placeholder }
 hardware:   { tier: jetson_orin }
-retention:  { default_mode: base }               # no personal PII on a shared robot by default
+identity:   { enrollment_mode: none, retention_mode: ephemeral }  # SB.5 Q1: public-service-robot mapping — no personal PII on a shared robot by default
 # motor / nav / adapter subsystems: NOT YET BUILT. They are NOT schema keys (an
 # unknown section would fail-loud at load); they arrive as real axes with the
 # robotics stack / SB.9 adapter seam.

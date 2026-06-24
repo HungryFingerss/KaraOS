@@ -38,6 +38,7 @@ Cross-referenced from the Architectural Disciplines section (each closed spec's 
 
 - **Never start development until Jagan explicitly says to.** Always discuss and align first.
 - Update this file at the end of every session — current status, completed work, pending work.
+- **Solidify-Base (SB) sequence — the live status + per-cycle log lives in the tracker, NOT this banner:** `karaos-org-discussions/solidify-base/00-SEQUENCE-STATUS.md` is the SB source-of-truth (every cycle's Phase-0 → Plan → developer → architect-Layer-3 → closure, with commit hashes + doctrine accounting). This CLAUDE.md banner is intentionally NOT updated per-SB-cycle (stale at SB.1 by design). **Read the tracker FIRST for where the SB sequence stands.** The board spec is `karaos-org-discussions/solidify-base/00-BOARD-MEETING-SOLIDIFY-FINAL-2026-06-03.md`.
 - Never leave stale values in this file. Verify against source code before writing.
 - always use the skills, hooks, plugins, tools, etc. provided to you. and if needed any more, always ask jagan to provide them.
 - never implement hardcodings, predefined rules. in this project, all the decisions should be decided by brain, always plan and implement in that way. NO HARDCODINGS.

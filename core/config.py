@@ -1693,6 +1693,13 @@ def _apply_profile_overrides(_g: dict, _overrides: dict) -> None:
     # set as "ACTIVE_BLOCKS" directly (Lock 2), so this writes config.ACTIVE_BLOCKS.
     if "ACTIVE_BLOCKS" in _overrides:
         _g["ACTIVE_BLOCKS"] = _overrides["ACTIVE_BLOCKS"]
+    # SB.5 — identity axis: the loader keys ENROLLMENT_MODE / RETENTION_MODE
+    # directly (Lock 2), so these write config.ENROLLMENT_MODE / config.RETENTION_MODE.
+    # Reading B: absent `identity` section → loader keys neither → base defaults stand.
+    if "ENROLLMENT_MODE" in _overrides:
+        _g["ENROLLMENT_MODE"] = _overrides["ENROLLMENT_MODE"]
+    if "RETENTION_MODE" in _overrides:
+        _g["RETENTION_MODE"] = _overrides["RETENTION_MODE"]
 
 
 # ── SB.3 — agent-membership axis: ACTIVE_AGENTS base default (full set),
@@ -1716,6 +1723,37 @@ ACTIVE_AGENTS = frozenset(_SB3_AGENT_REGISTRY)
 from profiles._blocks import BLOCK_REGISTRY as _SB41_BLOCK_REGISTRY
 
 ACTIVE_BLOCKS = frozenset(_SB41_BLOCK_REGISTRY)
+
+# ── SB.5 — identity axis: ENROLLMENT_MODE / RETENTION_MODE base defaults (= today),
+#    overridden by the apply below. The enum tuples live ONCE in profiles/_schema.py
+#    (the pure-stdlib SCHEMA enum source); config IMPORTS them — the SB.3
+#    AGENT_REGISTRY import precedent (config CAN import profiles). Same Lock-2
+#    from-import-trap hazard as ACTIVE_AGENTS/ACTIVE_BLOCKS: consumers MUST read via
+#    `config.ENROLLMENT_MODE` / `config.RETENTION_MODE` attribute access, NEVER
+#    `from core.config import ENROLLMENT_MODE` (that binds this pre-apply default and
+#    silently ignores every profile). Orthogonal to env KARAOS_INSTANCE_MODE
+#    (config.py:1347), which stays the separate base/personal instance axis.
+from profiles._schema import (
+    VALID_ENROLLMENT_MODES as _SB5_VALID_ENROLLMENT_MODES,
+    VALID_RETENTION_LIFETIMES as _SB5_VALID_RETENTION_LIFETIMES,
+)
+
+ENROLLMENT_MODE = "persistent"
+RETENTION_MODE = "durable"
+
+# Fail-loud membership guard (NOT assert — test_no_production_assert.py rejects
+# ast.Assert in production). Keeps the two imports USED so ruff F401 stays quiet —
+# the imported tuples ARE the guard's allowed-set.
+if ENROLLMENT_MODE not in _SB5_VALID_ENROLLMENT_MODES:
+    raise RuntimeError(
+        f"ENROLLMENT_MODE base default {ENROLLMENT_MODE!r} not in "
+        f"{_SB5_VALID_ENROLLMENT_MODES}"
+    )
+if RETENTION_MODE not in _SB5_VALID_RETENTION_LIFETIMES:
+    raise RuntimeError(
+        f"RETENTION_MODE base default {RETENTION_MODE!r} not in "
+        f"{_SB5_VALID_RETENTION_LIFETIMES}"
+    )
 
 from core.profile_loader import load_profile as _sb21_load_profile
 

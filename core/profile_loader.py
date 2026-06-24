@@ -34,6 +34,10 @@ from profiles._schema import (
     PROVIDER_BUNDLES,
     VALID_PROVIDERS,
     CLOUD_TIMING_MAP,
+    VALID_ENROLLMENT_MODES,        # SB.5 identity axis
+    VALID_RETENTION_LIFETIMES,     # SB.5 identity axis
+    FAILCLOSED_ENROLLMENT_MODE,    # SB.5 Q2 Reading B — absent KEY default
+    FAILCLOSED_RETENTION_LIFETIME, # SB.5 Q2 Reading B — absent KEY default
 )
 from profiles._registry import AGENT_REGISTRY, AGENT_BUNDLES  # SB.3 agent-membership axis
 from profiles._blocks import (  # SB.4.1 prompt-block-membership axis
@@ -294,11 +298,42 @@ def _validate_dep_closure(active: "frozenset[str]") -> None:
                 )
 
 
+def _validate_identity_coherence(enrollment_mode: str, retention_mode: str, where: str) -> None:
+    """SB.5 §3 coherence — a retention lifetime must NOT outlive the enrollment
+    lifetime that grants it. Ranks come from the LOAD-BEARING tuple order
+    (longest-lived first): rank = len(tuple) - tuple.index(value), giving
+    persistent=3/transient=2/none=1 and durable=3/session_only=2/ephemeral=1.
+    FORALL the 9 (enrollment × retention) cells, this fails LOUD on two classes:
+      • 3 incoherent-named-pair  — retention rank > enrollment rank
+        (transient/durable, none/durable, none/session_only).
+      • 2 session_only-deferred  — coherent rank but session_only enforcement
+        lands in a later cycle (persistent/session_only, transient/session_only).
+    The remaining 4 (persistent/durable, persistent/ephemeral, transient/ephemeral,
+    none/ephemeral) clean-accept. Template = _validate_dep_closure. Never silently
+    downgrades — a mis-declared identity crashes the boot with a clear message."""
+    e_rank = len(VALID_ENROLLMENT_MODES) - VALID_ENROLLMENT_MODES.index(enrollment_mode)
+    r_rank = len(VALID_RETENTION_LIFETIMES) - VALID_RETENTION_LIFETIMES.index(retention_mode)
+    if r_rank > e_rank:
+        raise ProfileError(
+            f"{where}: incoherent identity — retention_mode={retention_mode!r} "
+            f"outlives enrollment_mode={enrollment_mode!r}. A {retention_mode} "
+            f"data lifetime cannot be granted by a {enrollment_mode} enrollment. "
+            f"Declare a retention no longer-lived than the enrollment."
+        )
+    if retention_mode == "session_only":
+        raise ProfileError(
+            f"{where}: retention_mode='session_only' is a coherent cell but "
+            f"session_only enforcement lands in a later cycle. Declare 'durable' "
+            f"or 'ephemeral' for now."
+        )
+
+
 def _resolve(raw: dict) -> dict:
     """Expand the ``llm.provider`` shorthand into the 4 per-role leaves; explicit
-    per-role overrides win. Pass persona/hardware/retention through unchanged
-    (declared-only hooks in SB.2.1 — config's apply ignores them). Returns the
-    override dict."""
+    per-role overrides win. Pass persona/hardware through unchanged (declared-only
+    hooks in SB.2.1 — config's apply ignores them). The SB.5 ``identity`` section
+    is ACTIVE: it resolves + coherence-validates → ``ENROLLMENT_MODE`` /
+    ``RETENTION_MODE`` (keyed directly, Lock-2). Returns the override dict."""
     out: dict = {}
     llm_raw = raw.get("llm", {})
 
@@ -331,7 +366,7 @@ def _resolve(raw: dict) -> dict:
         out["features"] = dict(raw["features"])
 
     # Declared-only hooks — passed through for completeness; apply ignores them.
-    for sect in ("persona", "hardware", "retention"):
+    for sect in ("persona", "hardware"):
         if sect in raw:
             out[sect] = dict(raw[sect])
 
@@ -360,5 +395,20 @@ def _resolve(raw: dict) -> dict:
         active_blocks = frozenset(blocks_raw)
     _validate_block_closure(active_blocks)
     out["ACTIVE_BLOCKS"] = active_blocks
+
+    # SB.5 — identity axis → ENROLLMENT_MODE / RETENTION_MODE (Lock 2: keyed
+    # directly so the apply's globals()[key]=value writes config.ENROLLMENT_MODE /
+    # config.RETENTION_MODE). YAML section is `identity:`. Reading B (Q2): an
+    # ABSENT section resolves to the config base defaults (persistent/durable) —
+    # we don't key it at all, mirroring how absent agents:/blocks: fall to the
+    # config base set. An ABSENT KEY *within* a declared section is fail-closed
+    # (transient/ephemeral) via the FAILCLOSED_* defaults.
+    identity_raw = raw.get("identity")
+    if isinstance(identity_raw, dict):
+        enrollment_mode = identity_raw.get("enrollment_mode", FAILCLOSED_ENROLLMENT_MODE)
+        retention_mode = identity_raw.get("retention_mode", FAILCLOSED_RETENTION_LIFETIME)
+        _validate_identity_coherence(enrollment_mode, retention_mode, "identity")
+        out["ENROLLMENT_MODE"] = enrollment_mode
+        out["RETENTION_MODE"] = retention_mode
 
     return out

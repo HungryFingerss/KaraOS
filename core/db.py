@@ -34,6 +34,7 @@ from core.config import (
     CONVERSATION_ARCHIVE_RETENTION_DAYS,
     STRANGER_TTL_DAYS,
 )
+from core import config  # SB.5 Step-2: live attribute access for ENROLLMENT_MODE/RETENTION_MODE gates (from-import-trap)
 
 
 # P0.S1 D4 — `legacy_unknown` DELETED 2026-05-18 (no production callers; doc-grep
@@ -312,6 +313,8 @@ class FaceDB:
         transaction — if anything fails, no rows are lost from main and
         none are duplicated in the archive.  Returns the number of rows moved.
         """
+        if config.RETENTION_MODE == "ephemeral":
+            return 0  # SB.5: retention-gated — no archive move under ephemeral (data purges; nothing to archive)
         if cutoff_days is None:
             cutoff_days = CONVERSATION_ARCHIVE_AFTER_DAYS
         if now is None:
@@ -511,6 +514,8 @@ class FaceDB:
 
     # ── Enroll ────────────────────────────────────────────────────────────────
     def add_person(self, person_id: str, name: str, photo_path: str = None, person_type: str = 'known'):
+        if config.ENROLLMENT_MODE != "persistent":
+            return  # SB.5: enrollment-gated — transient/none skip the disk INSERT; caller's in-session pid carries
         self._conn.execute(
             "INSERT OR IGNORE INTO persons (id, name, enrolled_at, photo_path, person_type) "
             "VALUES (?, ?, ?, ?, ?)",
@@ -539,13 +544,14 @@ class FaceDB:
         if person_id is None:
             safe = re.sub(r"[^a-z0-9]", "", name.lower())[:12] or "visitor"
             person_id = f"stranger_{safe}_{uuid4().hex[:6]}"
-        self._conn.execute(
-            "INSERT OR IGNORE INTO persons (id, name, enrolled_at, last_seen, photo_path, person_type) "
-            "VALUES (?, ?, ?, ?, ?, 'stranger')",
-            (person_id, name, time.time(), time.time(), photo_path),
-        )
-        self._conn.commit()
-        return person_id
+        if config.ENROLLMENT_MODE == "persistent":
+            self._conn.execute(
+                "INSERT OR IGNORE INTO persons (id, name, enrolled_at, last_seen, photo_path, person_type) "
+                "VALUES (?, ?, ?, ?, ?, 'stranger')",
+                (person_id, name, time.time(), time.time(), photo_path),
+            )
+            self._conn.commit()
+        return person_id  # SB.5: enrollment-gated — always return pid (transient mints+returns, skips only the INSERT)
 
     def get_person_type(self, person_id: str) -> str:
         """Return 'known' or 'stranger' for a person. Defaults to 'known' if not found."""
@@ -583,6 +589,8 @@ class FaceDB:
 
         Wave 2 Item 12: vectorized — single matmul instead of per-row Python loop.
         """
+        if config.RETENTION_MODE == "ephemeral":
+            return None  # SB.5: retention-gated — no silent-observation capture under ephemeral
         emb = embedding.astype(np.float32)
         norm = np.linalg.norm(emb)
         if norm > 0:
@@ -710,6 +718,8 @@ class FaceDB:
         upstream via `verify_live(...)` (or `_anti_spoof_ok`) and pass it
         through. Plan v2 §1 / §3.1.
         """
+        if config.ENROLLMENT_MODE != "persistent":
+            return False  # SB.5: enrollment-gated — face recognition template not persisted under transient/none (before the P0.5 FAISS+SQL transaction)
         if not (source in VALID_EMBEDDING_SOURCES):
             raise RuntimeError(f'add_embedding called with unknown source={source!r}. Add it to VALID_EMBEDDING_SOURCES in db.py first.')
 
@@ -1342,6 +1352,8 @@ class FaceDB:
         only, untagged room_session_id — the backfill pass at
         __init__ fills these on next startup).
         """
+        if config.RETENTION_MODE == "ephemeral":
+            return  # SB.5: retention-gated — no transcript capture under ephemeral
         _aud_json = None
         if audience_ids is not None:
             import json as _json_lt
@@ -1698,6 +1710,8 @@ class FaceDB:
     # ── Visitor log ───────────────────────────────────────────────────────────
     def log_visitor_sighting(self, note: str = None) -> None:
         """Record an unknown-person sighting in the visitor log."""
+        if config.RETENTION_MODE == "ephemeral":
+            return  # SB.5: retention-gated — no visitor-sighting capture under ephemeral
         self._conn.execute("INSERT INTO visitor_log (note) VALUES (?)", (note,))
         self._conn.commit()
 
@@ -1729,6 +1743,8 @@ class FaceDB:
         prevents the slow centroid drift that produced canary 3's Jagan
         v_score 0.3-0.4 against his own mature profile.
         """
+        if config.ENROLLMENT_MODE != "persistent":
+            return False  # SB.5: enrollment-gated — voice recognition template not persisted under transient/none
         emb = np.asarray(embedding, dtype=np.float32)
 
         rows = self._conn.execute(

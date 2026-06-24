@@ -99,10 +99,25 @@ FEATURE_FLAG_MAP: "dict[str, str]" = {
 #              config.DEFAULT_SYSTEM_NAME='Dog' (config.py:1166) → NOT neutral.
 #   hardware → no config global today (whisper hardcoded in core/audio.py:249);
 #              wired by a future hardware-tier cycle.
-#   retention→ KARAOS_INSTANCE_MODE stays env-authoritative (config.py:1347);
-#              the profile default_mode is documented intent SB.5 consumes.
 VALID_HARDWARE_TIERS: tuple[str, ...] = ("dev_laptop", "jetson_orin", "server")
-VALID_RETENTION_MODES: tuple[str, ...] = ("base", "personal")
+
+# ── SB.5 — identity axis (ACTIVE, applied at config-load — NOT declared-only) ──
+# Two-axis identity model:
+#   enrollment_mode → config.ENROLLMENT_MODE (how long an identity stays enrolled)
+#   retention_mode  → config.RETENTION_MODE  (how long that identity's data lives)
+# Both tuples are ordered LONGEST-LIVED → SHORTEST-LIVED. That order is
+# LOAD-BEARING: the loader's coherence validator derives the lifetime rank from
+# the tuple index (rank = len - index), so reordering changes the 9-cell
+# semantics. Coherence rule (SB.5 §3): a retention lifetime must not outlive the
+# enrollment lifetime that grants it. Orthogonal to env KARAOS_INSTANCE_MODE
+# (config.py:1347), which stays the separate base/personal instance axis.
+VALID_ENROLLMENT_MODES: tuple[str, ...] = ("persistent", "transient", "none")
+VALID_RETENTION_LIFETIMES: tuple[str, ...] = ("durable", "session_only", "ephemeral")
+# Fail-closed defaults for an absent KEY *within* a declared `identity` section
+# (SB.5 Q2 Reading B). An absent identity SECTION instead resolves to the config
+# base defaults (persistent/durable) — the loader simply doesn't key it.
+FAILCLOSED_ENROLLMENT_MODE: str = "transient"
+FAILCLOSED_RETENTION_LIFETIME: str = "ephemeral"
 
 # ── The schema (the override contract the loader validates against) ────────────
 # A profile MAY declare any subset of these sections/keys; every key it declares
@@ -127,8 +142,9 @@ SCHEMA: dict = {
     "hardware": {"kind": "section", "keys": {
         "tier": {"kind": "scalar", "type": str, "enum": VALID_HARDWARE_TIERS},
     }},
-    "retention": {"kind": "section", "keys": {
-        "default_mode": {"kind": "scalar", "type": str, "enum": VALID_RETENTION_MODES},
+    "identity": {"kind": "section", "keys": {
+        "enrollment_mode": {"kind": "scalar", "type": str, "enum": VALID_ENROLLMENT_MODES},
+        "retention_mode":  {"kind": "scalar", "type": str, "enum": VALID_RETENTION_LIFETIMES},
     }},
     # SB.3 — agent-membership axis. Value is a bundle-shorthand string
     # (∈ AGENT_BUNDLES, e.g. "companion") OR a list[str] of AGENT_REGISTRY keys.
