@@ -56,7 +56,7 @@ SCANNED_ROOT_FILES: list[str] = [
 # Paths (relative to REPO_ROOT, forward-slash) whose broad-silent excepts are
 # intentionally benign and pre-approved. Boundary-correct: uses trailing-slash
 # prefix check so 'core/_minifasnet_helper.py' is NOT covered by 'core/_minifasnet'.
-ALLOWLIST_PATHS: frozenset[str] = frozenset({"core/_minifasnet"})
+ALLOWLIST_PATHS: frozenset[str] = frozenset({"core/_minifasnet", "core/_florence2"})
 
 PERMITTED_ANNOTATIONS: tuple[str, ...] = (
     "# RACE:",

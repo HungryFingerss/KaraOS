@@ -210,6 +210,10 @@ def _iter_production_py_files() -> "list[pathlib.Path]":
     Tests, bootstrap, audit_person, delete_person, migrate_* are out of scope."""
     files: list[pathlib.Path] = []
     for path in _CORE.rglob("*.py"):
+        # Vendored third-party dirs keep their own conventions (HuggingFace config
+        # fields like `bos_token_id` trip the secret-name regex on `_token`).
+        if "_minifasnet" in path.parts or "_florence2" in path.parts:
+            continue
         files.append(path)
     if _PIPELINE.exists():
         files.append(_PIPELINE)

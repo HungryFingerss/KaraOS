@@ -39,6 +39,9 @@ def test_intent_labels_exhaustive():
         # previous turn — drives LLM-free online learning in the graph
         # classifier (Spec 2 wires the outcome supervision).
         "correction_to_previous_response",
+        # SB.6 (2026-06-26): user asks about what the camera SEES — routes to
+        # the object-detection visual-query channel, NOT a web/live-data lookup.
+        "visual_query",
         # Spec-1 follow-up (2026-04-28): `topical_participant_response` was
         # removed — Session 119 rollback orphan; prompt no longer emits it
         # and no production gate routes on it.

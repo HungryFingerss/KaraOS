@@ -363,6 +363,45 @@ def _m_0012_create_event_log_verify_present(conn: sqlite3.Connection) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# v=13 — object_sightings.person_id + .privacy_level (SB.6 Step 6 — object memory)
+# ---------------------------------------------------------------------------
+
+def _m_0013_object_sightings_privacy_apply(conn: sqlite3.Connection) -> None:
+    """SB.6 Step 6 (PI-4) — add the owner + tier columns the inline CREATE lacks.
+
+    Per the P0.9.3 migration-only pattern these columns come ONLY via this
+    migration (the inline `CREATE TABLE object_sightings` in store.py stays the
+    base schema). `person_id` is the visual-query session owner; `privacy_level`
+    feeds the SB.5 `_visibility_clause` (DEFAULT 'personal' = owner-only, the
+    fail-closed tier). Guarded ALTER ADD COLUMN mirrors `_m_0011`.
+    """
+    cols = _columns(conn, "object_sightings")
+    if "person_id" not in cols:
+        conn.execute("ALTER TABLE object_sightings ADD COLUMN person_id TEXT")
+    if "privacy_level" not in cols:
+        conn.execute(
+            "ALTER TABLE object_sightings ADD COLUMN privacy_level TEXT DEFAULT 'personal'"
+        )
+
+
+def _m_0013_object_sightings_privacy_verify_post(conn: sqlite3.Connection) -> None:
+    cols = _columns(conn, "object_sightings")
+    missing = {"person_id", "privacy_level"} - cols
+    if missing:
+        raise RuntimeError(f"object_sightings missing columns: {sorted(missing)}")
+
+
+def _m_0013_object_sightings_privacy_verify_present(conn: sqlite3.Connection) -> bool:
+    """Bootstrap predicate: True if both columns already exist on a legacy DB."""
+    cols = _columns(conn, "object_sightings")
+    return (
+        _table_exists(conn, "object_sightings")
+        and "person_id" in cols
+        and "privacy_level" in cols
+    )
+
+
+# ---------------------------------------------------------------------------
 # MIGRATIONS registry
 # ---------------------------------------------------------------------------
 
@@ -411,4 +450,8 @@ MIGRATIONS: list = [
         _m_0012_create_event_log_apply,
         _m_0012_create_event_log_verify_post,
         _m_0012_create_event_log_verify_present),
+    (13, "object_sightings.person_id + .privacy_level (SB.6 object memory)",
+        _m_0013_object_sightings_privacy_apply,
+        _m_0013_object_sightings_privacy_verify_post,
+        _m_0013_object_sightings_privacy_verify_present),
 ]

@@ -44,12 +44,12 @@ ALLOWLIST_TOP_LEVEL_TEST_FILES = frozenset({
 
 
 def _collect_production_files() -> list[Path]:
-    """Files in production scope (Q3 STANDARD): pipeline.py + core/*.py (excl _minifasnet)
+    """Files in production scope (Q3 STANDARD): pipeline.py + core/*.py (excl _minifasnet + _florence2)
     + bootstrap/classifier/*.py + tools/*.py.
     """
     files: list[Path] = [REPO_ROOT / "pipeline.py"]
     for p in sorted((REPO_ROOT / "core").rglob("*.py")):
-        if "_minifasnet" not in p.parts:
+        if "_minifasnet" not in p.parts and "_florence2" not in p.parts:  # vendored third-party (PI #3 + SB.6)
             files.append(p)
     files.extend(sorted((REPO_ROOT / "runtime").rglob("*.py")))  # P1.A1 SP-4 engine package
     files.extend(sorted((REPO_ROOT / "flows").rglob("*.py")))  # P1.A1 SP-6.2 app-layer flows

@@ -37,7 +37,8 @@ def _mock_cuda_with_total_mb(monkeypatch, total_mb: int, available: bool = True)
     """Stub torch.cuda.is_available + mem_get_info to a known total VRAM.
 
     `total_mb=100` means tiny GPU; budget will refuse Whisper (3000MB estimate).
-    `total_mb=10000` means plenty; all 4 pools fit (~6300MB cumulative < 8000MB ceiling).
+    `total_mb=10000` means plenty; the 4 always-on pools fit (~6300MB cumulative < 8000MB
+    ceiling). SB.6's florence_detect (~2000MB) is the query-triggered 5th — not warmed at boot.
     `available=False` simulates a no-CUDA dev/CI environment.
     """
     import torch
@@ -66,9 +67,14 @@ def test_p0_r9_d1_config_constants_present():
     assert hasattr(config, "VRAM_POOL_PRIORITY")
     priority = config.VRAM_POOL_PRIORITY
     assert isinstance(priority, list)
-    assert len(priority) == 4
-    assert set(priority) == {"adaface_embed", "ecapa_embed", "whisper_transcribe", "pyannote_diarize"}
-    assert priority[0] == "adaface_embed"  # highest priority
+    # SB.6 added florence_detect as the 5th (query-triggered, lowest-priority) pool.
+    assert len(priority) == 5
+    assert set(priority) == {
+        "adaface_embed", "ecapa_embed", "whisper_transcribe",
+        "pyannote_diarize", "florence_detect",
+    }
+    assert priority[0] == "adaface_embed"      # highest priority
+    assert priority[-1] == "florence_detect"   # SB.6 — lowest, query-triggered
 
 
 # ─────────────────────────────────────────────────────────────────────────────

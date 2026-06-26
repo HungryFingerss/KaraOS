@@ -3,7 +3,7 @@
 Per `karaos-org-discussions/solidify-base/SB5-1-plan-v2.md` §2 (PI-B) + the
 2026-06-21 architect ratification + `feedback_two_axis_gate_no_collapse_to_stricter`.
 This is the BEHAVIORAL counterpart to the §4.a method-AGNOSTIC static scanner
-(`test_sb5_retention_funnel_complete.py`): it actually DRIVES each of the 17
+(`test_sb5_retention_funnel_complete.py`): it actually DRIVES each of the 18
 personal-data-table PRIMARY writers across three mode cells and asserts the
 two axes (`enrollment_mode` / `retention_mode`) are GENUINELY INDEPENDENT —
 NOT collapsed to "stricter wins".
@@ -22,18 +22,18 @@ The two nets are deliberately complementary, neither subsumes the other:
   untested".
 
 The three legs (LOCKED):
-- Leg 1 — companion (persistent/durable): ALL 17 grow. The non-vacuity floor —
+- Leg 1 — companion (persistent/durable): ALL 18 grow. The non-vacuity floor —
   proves every driver actually writes a row when both axes are permissive.
-- Leg 2 — none/ephemeral: ALL 17 no-op. The full-purge floor — the `none`-mode
+- Leg 2 — none/ephemeral: ALL 18 no-op. The full-purge floor — the `none`-mode
   "don't persist biometric" legal obligation is satisfied by the ENROLLMENT axis
   no-opping the recognition-template write directly (NOT by retention-gating it).
 - Leg 3 — concierge (persistent/ephemeral): the 3 ENROLLMENT tables grow while
-  the 14 RETENTION tables purge. THE distinguishing cell — a lobby robot that
+  the 15 RETENTION tables purge. THE distinguishing cell — a lobby robot that
   greets returning visitors by name (face/voice templates persist) while keeping
   zero conversation records (all derived data purges).
 
 PRIMARY-writer-per-table: this net drives exactly ONE primary writer per personal
-table (17 writers / 17 tables). `persons` has two writers (add_person + add_stranger);
+table (18 writers / 18 tables). `persons` has two writers (add_person + add_stranger);
 add_person is the natural primary. The §4.a FORALL-INSERT scanner is the net that
 proves no secondary writer escaped a gate.
 
@@ -61,10 +61,11 @@ from core.brain_agent.memory.store import BrainDB
 from core.brain_agent.agents.extraction import Extraction
 
 # --- The exhaustive PERSONAL partition (Plan v2 §1, Finding A) ----------------
-# 3 ENROLLMENT (recognition-template) tables + 14 RETENTION (derived-data) tables
-# = 17. Mirrors `PERSONAL_TABLES` in test_sb5_retention_funnel_complete.py (§4.a);
+# 3 ENROLLMENT (recognition-template) tables + 15 RETENTION (derived-data) tables
+# = 18. Mirrors `PERSONAL_TABLES` in test_sb5_retention_funnel_complete.py (§4.a);
 # kept as a local declaration here so a table rename in either net surfaces as a
 # count/label drift in the other (the partition is the shared contract).
+# (SB.6 Step 6 added `object_sightings` — the 15th retention table.)
 _ENROLLMENT_TABLES = frozenset({"persons", "embeddings", "voice_embeddings"})
 _RETENTION_TABLES = frozenset(
     {
@@ -73,7 +74,7 @@ _RETENTION_TABLES = frozenset(
         "silent_observations",
         "visitor_log",
         "archive.conversation_log",
-        # brain.db (10)
+        # brain.db (11)
         "knowledge",
         "prompt_prefs",
         "household_facts",
@@ -84,6 +85,7 @@ _RETENTION_TABLES = frozenset(
         "room_summaries",
         "presence_log",
         "proactive_nudges",
+        "object_sightings",  # SB.6 Step 6 — gated by store_object_sighting
     }
 )
 
@@ -94,9 +96,15 @@ _RETENTION_TABLES = frozenset(
 def _set_modes(monkeypatch, *, enrollment: str, retention: str) -> None:
     """Both core/db.py and core/brain_agent/memory/store.py read `config.X_MODE`
     via live `from core import config` attribute access (the from-import-trap fix),
-    so patching the module attribute reaches every gate in both files."""
+    so patching the module attribute reaches every gate in both files.
+
+    SB.6 Step 6: `store_object_sighting` is gated by OBJECT_MEMORY_ENABLED *and*
+    RETENTION_MODE. The net flips the feature ON so retention alone governs
+    grow (durable) vs purge (ephemeral) — same as the other 14 retention writers.
+    """
     monkeypatch.setattr(_config, "ENROLLMENT_MODE", enrollment)
     monkeypatch.setattr(_config, "RETENTION_MODE", retention)
+    monkeypatch.setattr(_config, "OBJECT_MEMORY_ENABLED", True)
 
 
 def _fresh_dbs(tmp_path):
@@ -155,7 +163,7 @@ def _extraction():
 
 
 # --------------------------------------------------------------------------- #
-# The 17 (label, axis, count_fn, drive_fn) primary-writer specs.
+# The 18 (label, axis, count_fn, drive_fn) primary-writer specs.
 # Ordered enrollment-first so `add_person` creates "p1" before the writers that
 # reference it (faces.db/brain.db enforce no FK, but realistic ordering is safer).
 # --------------------------------------------------------------------------- #
@@ -271,20 +279,26 @@ def _writer_specs():
             lambda f, b: _count(b._conn, "proactive_nudges"),
             lambda f, b: b.store_nudge("p1", "INTENTION_FOLLOWUP", "ask about thesis", 0.9, {}),
         ),
+        (
+            "object_sightings",  # SB.6 Step 6 — gated object memory writer
+            "retention",
+            lambda f, b: _count(b._conn, "object_sightings"),
+            lambda f, b: b.store_object_sighting("watch", 0.9, "left", 10.0, 20.0, "p1"),
+        ),
     ]
 
 
 # --------------------------------------------------------------------------- #
-# A0 — spec shape: the 17-table partition is well-formed (3 enrollment + 14
+# A0 — spec shape: the 18-table partition is well-formed (3 enrollment + 15
 # retention), disjoint, and labels match the locked PERSONAL partition.
 # --------------------------------------------------------------------------- #
 def test_writer_specs_partition_well_formed() -> None:
     specs = _writer_specs()
-    assert len(specs) == 17, "Plan v2 §1: 17 personal-table primary writers"
+    assert len(specs) == 18, "Plan v2 §1 + SB.6 Step 6: 18 personal-table primary writers"
     enroll = {label for label, axis, _c, _d in specs if axis == "enrollment"}
     retain = {label for label, axis, _c, _d in specs if axis == "retention"}
     assert len(enroll) == 3, f"3 enrollment tables expected, got {sorted(enroll)}"
-    assert len(retain) == 14, f"14 retention tables expected, got {sorted(retain)}"
+    assert len(retain) == 15, f"15 retention tables expected, got {sorted(retain)}"
     assert not (enroll & retain), "enrollment/retention axes must be disjoint"
     assert enroll == set(_ENROLLMENT_TABLES), f"enrollment label drift: {sorted(enroll)}"
     assert retain == set(_RETENTION_TABLES), f"retention label drift: {sorted(retain)}"
@@ -293,9 +307,9 @@ def test_writer_specs_partition_well_formed() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Leg 1 — companion (persistent/durable): ALL 17 grow (non-vacuity floor)
+# Leg 1 — companion (persistent/durable): ALL 18 grow (non-vacuity floor)
 # --------------------------------------------------------------------------- #
-def test_leg1_companion_all_seventeen_grow(tmp_path, monkeypatch) -> None:
+def test_leg1_companion_all_eighteen_grow(tmp_path, monkeypatch) -> None:
     _set_modes(monkeypatch, enrollment="persistent", retention="durable")
     fdb, bdb = _fresh_dbs(tmp_path)
     try:
@@ -312,9 +326,9 @@ def test_leg1_companion_all_seventeen_grow(tmp_path, monkeypatch) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Leg 2 — none/ephemeral: ALL 17 no-op (full-purge floor)
+# Leg 2 — none/ephemeral: ALL 18 no-op (full-purge floor)
 # --------------------------------------------------------------------------- #
-def test_leg2_none_ephemeral_all_seventeen_purge(tmp_path, monkeypatch) -> None:
+def test_leg2_none_ephemeral_all_eighteen_purge(tmp_path, monkeypatch) -> None:
     _set_modes(monkeypatch, enrollment="none", retention="ephemeral")
     fdb, bdb = _fresh_dbs(tmp_path)
     try:
@@ -332,7 +346,7 @@ def test_leg2_none_ephemeral_all_seventeen_purge(tmp_path, monkeypatch) -> None:
 
 # --------------------------------------------------------------------------- #
 # Leg 3 — concierge (persistent/ephemeral): THE distinguishing cell.
-# 3 ENROLLMENT tables PERSIST (greet returning visitors by name) while 14
+# 3 ENROLLMENT tables PERSIST (greet returning visitors by name) while 15
 # RETENTION tables PURGE (zero conversation records). This is the leg the §4.a
 # static scanner CANNOT prove — a biometric table wrongly retention-gated passes
 # §4.a but fails HERE.
@@ -359,8 +373,8 @@ def test_leg3_concierge_enrollment_persists_retention_purges(tmp_path, monkeypat
                     f"({before} -> {after}) — derived data wrongly gated on enrollment?"
                 )
                 held.append(label)
-        # The distinction itself: exactly 3 persist, exactly 14 purge.
+        # The distinction itself: exactly 3 persist, exactly 15 purge.
         assert sorted(grew) == sorted(_ENROLLMENT_TABLES), f"enrollment-persist set drift: {grew}"
-        assert len(held) == 14, f"expected 14 retention tables to purge, got {len(held)}: {held}"
+        assert len(held) == 15, f"expected 15 retention tables to purge, got {len(held)}: {held}"
     finally:
         _close(fdb, bdb)

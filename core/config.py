@@ -349,11 +349,57 @@ EXTRACT_MAX_RETRIES = 2 # same pattern for ExtractionAgent Together.ai calls —
                         # network-bound + idempotent, retry once on ReadTimeout / ConnectTimeout
                         # with exponential backoff. 4xx errors propagate (not transient).
 
-# Vision / image description (brain.py) — disabled until base is solid
-# describe_frame is off; model is ready for when we enable.
+# Vision / image description — consumed by core/object_detection.py's
+# consent-gated Qwen-VL cloud tier (_detect_objects_cloud, behind
+# OBJECT_DETECTION_ALLOW_CLOUD_FRAMES, default OFF). The describe_frame
+# consumer was deleted at SB.6 Step 5; these constants stay live.
 VISION_MODEL    = "Qwen/Qwen3-VL-8B-Instruct"
 VISION_BASE_URL = TOGETHER_BASE_URL
 VISION_API_KEY  = TOGETHER_API_KEY
+
+# ── Object detection (SB.6 — core/object_detection.py) ───────────────────────
+# Query-triggered visual-query channel: Florence-2 on-device (the 5th heavy-worker
+# pool) + a consent-gated Qwen-VL cloud fallback + a low-confidence hedge. Per
+# Plan v1 §0/§3.6 the dev-box suite proves only the WIRING (Florence-2 stubbed);
+# OBJECT_DETECT_CONFIDENCE_MIN is a PLACEHOLDER calibrated at the Jetson benchmark.
+OBJECT_DETECTION_ENABLED            = False  # capability master gate — DEFAULT OFF until the
+                                             # §3.6 Jetson benchmark validates Florence-2 accuracy
+                                             # (a high-confidence-WRONG name slips past the hedge,
+                                             # which only catches LOW confidence). The suite forces
+                                             # it on; flip on per-profile once the gate passes — the
+                                             # same discipline as the SB.5 canary.
+OBJECT_DETECTION_ALLOW_CLOUD_FRAMES = False  # D3 consent gate — a frame leaving the
+                                             # device is a privacy event; companion default OFF
+OBJECT_DETECT_CONFIDENCE_MIN        = 0.45   # below this → hedge (never a confident object
+                                             # name); §3.6-benchmark-calibrated placeholder
+OBJECT_DETECT_FRAME_STALENESS_SECS  = 2.0    # SB.6 Step 4 — max camera-frame age (secs) the
+                                             # visual-query injection accepts via
+                                             # peek_frame_if_fresh; older → no fresh frame →
+                                             # graceful degrade (object_context stays None)
+OBJECT_DETECT_HEDGE_TEXT = (
+    "I'm not sure what you're holding — can you tell me a bit more?"
+)
+# Task-token routing by question shape (Plan v1 §1). OCR checked first (most
+# specific), then held-object grounding, else the scene caption (the default).
+# Lowercased-substring match on the user utterance.
+OBJECT_DETECT_OCR_KEYWORDS = (
+    "read this", "read the", "label", "what does it say",
+    "what does this say", "what does the label", "written", "the text",
+)
+OBJECT_DETECT_GROUNDING_KEYWORDS = (
+    "in my hand", "in my hands", "holding", "am i holding",
+    "what is this", "what's this", "this object",
+)
+OBJECT_MEMORY_ENABLED = False  # SB.6 Step 6 — gated-off persistent object memory
+                               # (D1/PI-3/PI-4). DEFAULT OFF: the writer
+                               # `store_object_sighting` no-ops unless this is on
+                               # AND retention is durable; the reader
+                               # `get_object_context` is privacy-scoped by the SB.5
+                               # `_visibility_clause` (best_friend → non-system;
+                               # visitor → public OR personal-owned). The §4.b
+                               # concierge net flips this on so retention governs
+                               # grow (durable) vs purge (ephemeral); flip per-profile
+                               # once SB.6 object memory is validated.
 
 # ── Cloud health ───────────────────────────────────────────────────────────────
 CLOUD_OFFLINE_TIMEOUT  = 120   # seconds of consecutive failure before switching to Ollama
@@ -517,6 +563,14 @@ INTENT_LABELS: frozenset = frozenset({
     # label on turn N-1, optionally extract correction target via regex).
     # Linchpin of LLM-free online learning — see Spec 2.
     "correction_to_previous_response",
+    # SB.6 (2026-06-26) — user asks about what the camera SEES right now: a
+    # held object ("what's in my hand"), the visible scene ("what do you
+    # see"), or text to read ("read this label"). Routes to the
+    # core/object_detection.py visual-query channel — answered by LOOKING,
+    # NOT a web/live-data lookup. The contrastive distinction from
+    # live_data_query is locked in the classifier prompt's VISUAL vs
+    # LIVE-DATA RULE + the regression_sb6 golden rows.
+    "visual_query",
 })
 
 # Tool → (required turn_intent, tool-arg key to cross-check against
@@ -1461,13 +1515,18 @@ HEAVY_WORKER_VRAM_ESTIMATES_MB = {
     "ecapa_embed":        200,
     "whisper_transcribe": 3000,
     "pyannote_diarize":   3000,
+    # SB.6 — conservative placeholder (~Florence-2-large fp16). The MEASURED
+    # warm-Orin number is the §3.6(2) Jetson-benchmark gate; tune there.
+    "florence_detect":    2000,
 }
 VRAM_CEILING_PCT = 80.0  # cap at 80% of available CUDA memory
 VRAM_POOL_PRIORITY = [
     "adaface_embed",      # highest priority — face recognition is core
     "ecapa_embed",        # voice ID for greeting
     "whisper_transcribe", # STT (could degrade to other STT)
-    "pyannote_diarize",   # lowest — has ECAPA-valley fallback
+    "pyannote_diarize",   # low — has ECAPA-valley fallback
+    "florence_detect",    # SB.6 LOWEST — query-triggered object detection; first
+                          # to be VRAM-refused → cloud/hedge fallback (never a crash)
 ]
 
 # ── Audio device failure resilience (P0.R10) ─────────────────────────────────

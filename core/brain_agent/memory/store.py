@@ -1207,6 +1207,98 @@ class BrainDB:
         rows = [dict(zip(cols, row)) for row in cur.fetchall()]
         return rows
 
+    # ── SB.6 object memory (gated off by default) ─────────────────────────────
+
+    def store_object_sighting(
+        self,
+        object_class:   str,
+        confidence:     float,
+        location_zone:  str,
+        bbox_cx:        float,
+        bbox_cy:        float,
+        person_id:      str,
+        person_context: "str | None" = None,
+        now:            "float | None" = None,
+    ) -> bool:
+        """SB.6 Step 6 (D1) — retention-gated writer for persistent object memory.
+
+        Two gates, both load-bearing:
+          1. ``config.OBJECT_MEMORY_ENABLED`` — the SB.6 master feature flag
+             (DEFAULT OFF; the §4.b concierge net flips it on). When off the
+             call no-ops so the gated-off feature never touches the DB.
+          2. ``config.RETENTION_MODE == "ephemeral"`` — the SB.5 retention gate.
+             `object_sightings` is the 11th brain.db PERSONAL retention table:
+             durable retention grows it, ephemeral purges it. (The §4.a
+             partition scanner classifies the INSERT target PERSONAL via
+             PERSONAL_TABLES, and `_func_consults_gate` is satisfied by the
+             `config.RETENTION_MODE` reference below.)
+
+        Rows are written with ``privacy_level = PRIVACY_LEVEL_DEFAULT`` (the
+        owner-only 'personal' tier) and ``person_id`` = the visual-query
+        session's person, so a visitor reading via `get_object_context` cannot
+        see the owner's sightings (no-leak). Returns True on insert, False when
+        a gate short-circuits.
+
+        Live attribute access (``config.X``) is deliberate — the §4.b net
+        monkeypatches ``core.config`` and both gates must observe the patch.
+        """
+        if not config.OBJECT_MEMORY_ENABLED:
+            return False  # SB.6: object memory gated off by default
+        if config.RETENTION_MODE == "ephemeral":
+            return False  # SB.5: retention-gated — no object capture under ephemeral
+        ts = time.time() if now is None else now
+        self._conn.execute(
+            "INSERT INTO object_sightings "
+            "(object_class, confidence, location_zone, bbox_cx, bbox_cy, "
+            " first_seen_at, last_seen_at, times_seen, person_context, "
+            " person_id, privacy_level) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
+            (object_class, confidence, location_zone, bbox_cx, bbox_cy,
+             ts, ts, person_context, person_id, PRIVACY_LEVEL_DEFAULT),
+        )
+        self._conn.commit()
+        return True
+
+    def get_object_context(
+        self,
+        requester_pid:  str,
+        best_friend_id: "str | None",
+        *,
+        object_class: "str | None" = None,
+        limit:        int           = 20,
+    ) -> list[dict]:
+        """SB.6 Step 6 — privacy-scoped reader for persistent object memory.
+
+        Single source of truth for visibility: the SELECT's WHERE clause is
+        composed from `_visibility_clause` (the SB.5 four-tier policy), exactly
+        as `query_knowledge_for` does. A best_friend sees every non-`system_only`
+        sighting; a visitor (non-best-friend) sees only public OR
+        personal-tier rows they own — so since the writer stamps
+        ``privacy_level='personal'`` with ``person_id`` = the owner, a visitor
+        reading another person's sightings gets NONE (the no-leak invariant).
+
+        No gate on the reader — an empty `object_sightings` table (the
+        gated-off default) simply returns []. Sorted by recency
+        (``last_seen_at DESC``).
+        """
+        vis_clause, vis_params = _visibility_clause(requester_pid, best_friend_id)
+        where_parts: list[str] = [f"({vis_clause})"]
+        sql_params:  list      = list(vis_params)
+        if object_class:
+            where_parts.append("object_class = ?")
+            sql_params.append(object_class)
+
+        sql = (
+            "SELECT object_class, confidence, location_zone, bbox_cx, bbox_cy, "
+            "last_seen_at, times_seen, person_context, person_id, privacy_level "
+            "FROM object_sightings WHERE " + " AND ".join(where_parts) +
+            " ORDER BY last_seen_at DESC LIMIT ?"
+        )
+        sql_params.append(limit)
+        cur = self._conn.execute(sql, sql_params)
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
     # ── Table pruning (E) ─────────────────────────────────────────────────────
 
     def prune_knowledge_hard_cap(self, max_rows: int) -> int:

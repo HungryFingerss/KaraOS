@@ -53,9 +53,7 @@ _DATE_SENSITIVE_RE = re.compile(
     r'ipl|cricket|match|score|weather|news|temperature|forecast|result)\b',
     re.IGNORECASE,
 )
-import base64
 import dataclasses
-import cv2
 import numpy as np
 from core.config import (
     OLLAMA_URL, OLLAMA_MODEL,
@@ -735,55 +733,6 @@ async def _web_search(query: str) -> "str | dict | None":
     return None
 
 
-async def describe_frame(
-    frame: "np.ndarray",
-    prompt: str = "Describe what this person is wearing. Be brief and specific — mention colors and clothing items.",
-) -> str | None:
-    """Send a camera frame to Llama-3.2-11B-Vision and return a visual description.
-
-    Used for outfit/appearance questions: the caller injects the returned string into
-    object_context so Llama-3.3-70B can give a natural spoken answer.
-
-    The frame is resized to 640×480 before encoding to keep token cost low
-    (~1600 tokens at that resolution vs up to 6400 for full 1280×720).
-    Returns None on any failure so the caller degrades gracefully.
-    """
-    if not VISION_API_KEY or frame is None:
-        return None
-    try:
-        h, w = frame.shape[:2]
-        if w > 640 or h > 480:
-            frame = cv2.resize(frame, (640, 480))
-        _, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
-        b64 = base64.b64encode(buf.tobytes()).decode()
-        resp = await asyncio.wait_for(
-            _chat_http.post(
-                f"{VISION_BASE_URL}/chat/completions",
-                json={
-                    "model":       VISION_MODEL,
-                    "messages":    [{
-                        "role": "user",
-                        "content": [
-                            {"type": "image_url",
-                             "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                            {"type": "text", "text": prompt},
-                        ],
-                    }],
-                    "max_tokens":  120,
-                    "temperature": 0.3,
-                },
-            ),
-            timeout=10.0,
-        )
-        resp.raise_for_status()
-        description = resp.json()["choices"][0]["message"]["content"].strip()
-        print(f"[Brain] Vision: {description[:80]}{'…' if len(description) > 80 else ''}")
-        return description
-    except Exception as e:
-        print(f"[Brain] describe_frame failed: {e}")
-        return None
-
-
 async def ask(
     message: str,
     person_name: str | None = None,
@@ -865,7 +814,13 @@ _INTENT_CLASSIFIER_SYSTEM = (
     "  unclear                  — genuinely ambiguous; use when you'd guess\n"
     "  direct_address_to_person — user speaks TO another person in the room\n"
     "                             by name (not to the AI). extracted_value =\n"
-    "                             the addressed person's name.\n\n"
+    "                             the addressed person's name.\n"
+    "  visual_query             — user asks about what the camera SEES: an\n"
+    "                             object in hand ('what's in my hand'), the\n"
+    "                             scene ('what do you see'), or text to read\n"
+    "                             ('read this label'). Answered by LOOKING,\n"
+    "                             not a web/live-data lookup. extracted_value\n"
+    "                             = null (the AI identifies, nothing to copy).\n\n"
     "GROUNDING RULE: extracted_value MUST appear (case-insensitively) inside "
     "the user's current utterance. Never fabricate a name or value the user "
     "did not actually say this turn. Example: 'do you know the game called "
@@ -962,6 +917,30 @@ _INTENT_CLASSIFIER_SYSTEM = (
     "AI-directed; if it's a DIFFERENT name, it's direct_address_to_person.\n"
     "A bare name alone ('Jagan?') without follow-up lacks signal — stay with\n"
     "casual_conversation.\n\n"
+    "VISUAL vs LIVE-DATA RULE (SB.6 — camera-query disambiguation): a "
+    "visual_query asks about what the CAMERA can SEE right now — a physical "
+    "object the user is holding, the visible scene, or text/a label in front "
+    "of the camera. A live_data_query asks for information from the WORLD "
+    "(weather, scores, news, prices, time) that needs a web/sensor lookup, NOT "
+    "the camera. The shared word 'what' is NOT the signal — the OBJECT of the "
+    "question is. DISTINGUISHING TEST: could a blind person answer it from a "
+    "web search? If yes → live_data_query. If it requires LOOKING at what is "
+    "physically present → visual_query. Concrete counter-examples (each line: "
+    "utterance → correct label):\n"
+    "  \"what's in my hand?\"          → visual_query (held object, camera sees it)\n"
+    "  \"what am I holding right now\"  → visual_query (held object)\n"
+    "  \"what is this thing\"           → visual_query (object in view)\n"
+    "  \"read this label for me\"       → visual_query (text in front of camera)\n"
+    "  \"what does the label say\"      → visual_query (OCR — text the camera reads)\n"
+    "  \"what do you see in the room\"  → visual_query (scene description)\n"
+    "  \"describe the scene please\"    → visual_query (scene description)\n"
+    "  \"what's the weather today?\"    → live_data_query (world info, not the camera)\n"
+    "  \"what's the score of the game?\" → live_data_query (world info)\n"
+    "  \"what's the price of bitcoin?\" → live_data_query (world info)\n"
+    "Never pick visual_query just because the word 'see'/'look'/'what' appears "
+    "in a question that is really about the WORLD (e.g. 'do you see why the sky "
+    "is blue?' is general_knowledge_query, not visual_query). visual_query "
+    "requires the answer to come from LOOKING at the live camera frame.\n\n"
     "Calibration: ≥0.90 competent humans would agree; 0.75-0.89 probably; "
     "0.60-0.74 leaning but ambiguous; <0.60 set intent=unclear.\n\n"
     "CRITICAL — LOW-CONFIDENCE ESCAPE HATCH: if confidence < 0.60, "

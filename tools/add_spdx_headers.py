@@ -38,7 +38,10 @@ import traceback
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-EXCLUDED_PATHS: tuple[str, ...] = ("core/_minifasnet/",)  # PI #3 absorption
+EXCLUDED_PATHS: tuple[str, ...] = (
+    "core/_minifasnet/",  # PI #3 absorption (Bundle 2)
+    "core/_florence2/",  # SB.6 Resolution C — vendored Florence-2 (MIT repo / Apache-2.0 files)
+)
 
 SPDX_LICENSE_LINE = "# SPDX-License-Identifier: Apache-2.0"
 SPDX_COPYRIGHT_LINE = "# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors"
@@ -56,9 +59,9 @@ def collect_in_scope() -> list[pathlib.Path]:
     """Return the locked 202-file in-scope list per Plan v3 §1.2."""
     files: list[pathlib.Path] = []
 
-    # core/ excluding _minifasnet/
+    # core/ excluding vendored third-party dirs (_minifasnet/, _florence2/)
     for p in sorted((REPO_ROOT / "core").rglob("*.py")):
-        if "_minifasnet" not in p.parts:
+        if "_minifasnet" not in p.parts and "_florence2" not in p.parts:
             files.append(p)
 
     # Top-level entry points

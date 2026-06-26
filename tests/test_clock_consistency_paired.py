@@ -58,7 +58,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 def _in_scope_files() -> list[Path]:
     files: list[Path] = [REPO_ROOT / "pipeline.py"]
     for p in sorted((REPO_ROOT / "core").rglob("*.py")):
-        if "_minifasnet" not in p.parts:
+        if "_minifasnet" not in p.parts and "_florence2" not in p.parts:  # vendored third-party (PI #3 + SB.6)
             files.append(p)
     return files
 

@@ -186,10 +186,10 @@ def _find_attr_reassigns(source: str, names: "set[str]") -> "list[tuple[int, str
 
 
 def _runtime_production_files() -> "list[pathlib.Path]":
-    """pipeline.py + core/ (excl _minifasnet) + runtime/ + flows/ + profiles/."""
+    """pipeline.py + core/ (excl _minifasnet + _florence2) + runtime/ + flows/ + profiles/."""
     files: list[pathlib.Path] = [REPO_ROOT / "pipeline.py"]
     for p in sorted((REPO_ROOT / "core").rglob("*.py")):
-        if "_minifasnet" not in p.parts:
+        if "_minifasnet" not in p.parts and "_florence2" not in p.parts:  # vendored third-party (PI #3 + SB.6)
             files.append(p)
     for sub in ("runtime", "flows", "profiles"):
         files.extend(sorted((REPO_ROOT / sub).rglob("*.py")))

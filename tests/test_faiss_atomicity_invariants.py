@@ -218,6 +218,7 @@ _FAISS_CALL_MARKERS = (
 # (event-log producer package; no FAISS surface).
 _SCAN_EXCLUDE = frozenset({
     "core/_minifasnet",
+    "core/_florence2",  # vendored Florence-2 (SB.6) — no FAISS surface
     "core/event_log",
 })
 

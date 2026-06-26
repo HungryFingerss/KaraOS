@@ -46,7 +46,7 @@ A1_MIGRATED_SITES: tuple[tuple[str, int], ...] = (
     ("runtime/vision_loop.py", 62), ("runtime/vision_loop.py", 352), ("runtime/vision_loop.py", 390),  # SP-4 refresh: 1030/2879/2919
     ("runtime/vision_loop.py", 410), ("pipeline.py", 943), ("pipeline.py", 904),  # SP-7b.3 re-key −53 (resolve); SP-4 refresh: 2939/3533/3494
     ("pipeline.py", 946), ("pipeline.py", 948), ("pipeline.py", 2886),  # SP-7b.3 re-key: 999/1001 −53 (resolve), 3023 signature-reloc → set_last_user_speech_at mono; SP-6.4 re-key: 3644 −254; SP-4 refresh: 3536/3538/6858
-    ("pipeline.py", 2887), ("pipeline.py", 4194), ("pipeline.py", 4224),  # SP-7c re-key: 4205/4235 −11 (instance-mode lift); 2887 < lift site, unchanged (set_last_kairos_at mono); SP-6.4 re-key: 3645 −254; SP-4 refresh: 6859/7573/7666
+    ("pipeline.py", 2887), ("pipeline.py", 4218), ("pipeline.py", 4224),  # SB.6 Step-4 LINE-REF-DRIFT: 4194→4218 (+24) — visual_query object_context injection block inserted @1944 (+23) + `import core.object_detection` @156 (+1) shifted the `_rc_now = time.monotonic()` site (now :4243) past the old 4194 ±40 window; 2887/4224 stayed in-window (dense monotonic region absorbed the shift); SP-7c re-key: 4205/4235 −11 (instance-mode lift); 2887 < lift site, unchanged (set_last_kairos_at mono); SP-6.4 re-key: 3645 −254; SP-4 refresh: 6859/7573/7666
     ("pipeline.py", 4428), ("pipeline.py", 4389),  # SP-7c re-key −11 (instance-mode lift); SP-4 refresh: 7807/7831
     ("core/cache_store.py", 87),  # UNCHANGED by SP-4
     # Developer Pass-3 grep refinement (+6 sites; banked as `Plan-v1-Pass-2-grep-undercount`)

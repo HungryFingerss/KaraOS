@@ -1,7 +1,8 @@
 """A6 anchor — structural parametrize across in-scope SPDX files + .gitignore whitelist.
 
-Per Plan v3 §3.1 + §5. PI #3 absorbed: `core/_minifasnet/*.py` EXCLUDED per vendored MIT
-compliance (Bundle 2.X handles directory-level MIT compliance via a separate LICENSE file).
+Per Plan v3 §3.1 + §5. Vendored third-party code EXCLUDED: `core/_minifasnet/*.py`
+(PI #3, MIT, Bundle 2) + `core/_florence2/*.py` (SB.6 Resolution C, MIT repo / Apache-2.0
+file headers). Directory-level license compliance ships via each dir's own LICENSE file.
 
 The in-scope file list is derived dynamically from the same bucket logic as
 `tools/add_spdx_headers.py::collect_in_scope` so the test stays in sync as scope
@@ -22,7 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SPDX_LICENSE_LINE = "# SPDX-License-Identifier: Apache-2.0"
 SPDX_COPYRIGHT_LINE = "# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors"
 
-EXCLUDED_PATHS = ("core/_minifasnet/",)  # PI #3 absorption
+EXCLUDED_PATHS = ("core/_minifasnet/", "core/_florence2/")  # vendored third-party (PI #3 + SB.6)
 
 WHITELIST_LINES = (
     "!/GOVERNANCE.md",
@@ -34,7 +35,7 @@ WHITELIST_LINES = (
 def _collect_in_scope() -> list[Path]:
     files: list[Path] = []
     for p in sorted((REPO_ROOT / "core").rglob("*.py")):
-        if "_minifasnet" not in p.parts:
+        if "_minifasnet" not in p.parts and "_florence2" not in p.parts:
             files.append(p)
     for name in ("pipeline.py", "enroll.py", "delete_person.py", "audit_person.py"):
         p = REPO_ROOT / name

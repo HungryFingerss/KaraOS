@@ -153,6 +153,7 @@ except Exception:
 import cv2
 import numpy as np
 import core.heavy_worker as hw  # P0.R6 D3: AdaFace embed routed via ProcessPoolExecutor worker pool
+import core.object_detection as od  # SB.6 Step 4: visual-query object-detection channel
 from core.config import (
     CAMERA_INDEX, RECOGNITION_THRESHOLD,
     GREET_COOLDOWN, SELF_UPDATE_THRESHOLD, SELF_UPDATE_COOLDOWN,
@@ -1940,6 +1941,29 @@ async def conversation_turn(
     print(f"[Brain] Context: history={len(history)} turns, memory={'yes' if memory_context else 'no'}, emotion={'yes' if emotion_context else 'no'}, room={'yes' if _multi_person else 'no'}, scene={'yes' if SCENE_BLOCK_ENABLED else 'no'}, shared_context={_last_shared_context_row_count}")
 
     object_context = None
+
+    # SB.6 Step 4 — visual-query object-detection injection. When this turn is a
+    # visual_query, pull the freshest camera frame and run the object-detection
+    # channel (Florence-2 on-device → consent-gated cloud → hedge), then fill
+    # object_context so the brain's existing render block phrases the answer.
+    # detect_objects bypasses the identity reconciler by design (no IdentityClaim
+    # is constructed), so the #128 / SB.5-Layer-1 tripwires stay structurally
+    # untouched. Gated on OBJECT_DETECTION_ENABLED — the capability stays OFF
+    # until the §3.6 Jetson benchmark validates Florence accuracy; non-object
+    # builds pay nothing. Florence dispatches on every enabled call, so the
+    # detect must be visual_query-gated, never run every turn.
+    if config.OBJECT_DETECTION_ENABLED:
+        _vq_sidecar = await _classify_intent_cached(
+            text,
+            history,
+            frozenset(s.person_id for s in _wiring._session_store.peek_all_snapshots()),
+        )
+        if _vq_sidecar and _vq_sidecar.get("turn_intent") == "visual_query":
+            _vq_frame = _vision_frame_store.peek_frame_if_fresh(
+                config.OBJECT_DETECT_FRAME_STALENESS_SECS, time.monotonic()
+            )
+            _od_result = await od.detect_objects(_vq_frame, text)
+            object_context = od.object_context_from_result(_od_result)
 
     # prompt_addendum_override takes precedence (used for stranger mode and similar).
     # Otherwise fall back to brain agent's learned prefs for this person.

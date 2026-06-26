@@ -56,7 +56,9 @@ _STORE_PY = REPO_ROOT / "core" / "brain_agent" / "memory" / "store.py"
 _SCAN_FILES = (_DB_PY, _STORE_PY)
 
 # --- The exhaustive PERSONAL / SYSTEM table partition (Plan v2 §1, Finding A) ---
-# 17 personal tables / 20 personal INSERT statements / 19 distinct writer methods.
+# 18 personal tables / 21 personal INSERT statements / 20 distinct writer methods.
+# (SB.6 Step 6 added `object_sightings` — the 11th brain.db personal/retention table,
+# written by the gated `store_object_sighting`.)
 # `archive.conversation_log` is the dotted ATTACH-alias form (Note-A) — listed as the
 # exact token AND covered by `conversation_log` (the live faces.db table) for the
 # base-name fallback in `_classify`.
@@ -70,7 +72,7 @@ PERSONAL_TABLES = frozenset(
         "silent_observations",
         "visitor_log",
         "archive.conversation_log",  # dotted ATTACH-alias (db.py archive move) — Note-A
-        # brain.db (10)
+        # brain.db (11)
         "knowledge",
         "prompt_prefs",
         "household_facts",
@@ -81,6 +83,7 @@ PERSONAL_TABLES = frozenset(
         "room_summaries",
         "presence_log",
         "proactive_nudges",
+        "object_sightings",  # SB.6 Step 6 — gated by store_object_sighting
     }
 )
 
@@ -219,7 +222,9 @@ def _scan_file(path: Path) -> "list[tuple[str, int]]":
 def test_scan_files_exist_and_partition_is_well_formed() -> None:
     for p in _SCAN_FILES:
         assert p.is_file(), f"§4.a scan scope file missing: {p}"
-    assert len(PERSONAL_TABLES) == 17, "Plan v2 §1: 17 personal tables (incl. dotted archive)"
+    assert len(PERSONAL_TABLES) == 18, (
+        "Plan v2 §1 + SB.6 Step 6: 18 personal tables (incl. dotted archive + object_sightings)"
+    )
     assert len(SYSTEM_TABLES) == 7, "Plan v2 §1: 7 system tables"
     overlap = PERSONAL_TABLES & SYSTEM_TABLES
     assert not overlap, f"personal/system partition must be disjoint; overlap={overlap}"

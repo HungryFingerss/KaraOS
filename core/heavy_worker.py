@@ -695,3 +695,176 @@ def pyannote_diarize_worker(
     for segment, _, label in annotation.itertracks(yield_label=True):
         result.append((float(segment.start), float(segment.end), str(label)))
     return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Florence-2 object-detection worker (SB.6 Step 2 — 5th pool, query-triggered)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Mirrors the Whisper/ECAPA/Pyannote LAZY-load pattern (NOT the AdaFace eager
+# `initializer=` path): a query-triggered pool loads only on the first
+# `run_heavy("florence_detect", ...)` call, and a load failure returns None
+# (the P0.R1 D1 None-fallback contract → cloud-or-hedge in
+# core/object_detection.py) rather than crashing the worker at spawn. Florence-2
+# is VENDORED under review (SB.6 Step 1, core/_florence2/) + loaded via the
+# vendored classes with `trust_remote_code=False` — NO remote code executes from
+# the hub (the supply-chain lock; weights pinned by the recorded revision).
+#
+# Plan v1 §0/§7 inversion: this worker only runs on the GPU build with vendored
+# weights — it is STUBBED in the dev-box suite (`hw.run_heavy` monkeypatch). The
+# real capability is the §3.6 Jetson benchmark gate, NOT a dev-box assertion.
+
+# Vendored Florence-2 repo + pinned revision (matches the SHA recorded in
+# core/_florence2/__init__.py — the reviewed commit).
+_FLORENCE_REPO = "microsoft/Florence-2-large"
+_FLORENCE_REVISION = "21a599d414c4d928c9032694c424fb94458e3594"
+
+# Subprocess-scoped (model, processor) singleton — loaded ONCE per subprocess.
+_SUBPROCESS_FLORENCE: "tuple[Any, Any] | None" = None
+
+
+def _get_subprocess_florence() -> "tuple[Any, Any] | None":
+    """Get-or-create the subprocess-scoped Florence-2 (model, processor) pair.
+
+    Loads the VENDORED Florence-2 (core/_florence2/) — NOT trust_remote_code
+    against the hub. `from_pretrained` pulls config + weights from the HF cache
+    (pinned by `_FLORENCE_REVISION`) but instantiates OUR reviewed classes, so
+    the EXECUTED modeling code is under our control (the SB.6 D5 supply-chain
+    fix). Returns None on any load failure → callers apply the P0.R1 D1
+    None-fallback contract (object_detection cloud-or-hedge).
+    """
+    global _SUBPROCESS_FLORENCE
+    if _SUBPROCESS_FLORENCE is None:
+        try:
+            import torch  # noqa: PLC0415
+            from core._florence2 import (  # noqa: PLC0415
+                Florence2ForConditionalGeneration,
+                Florence2Processor,
+            )
+
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            dtype = torch.float16 if device == "cuda" else torch.float32
+            model = (
+                Florence2ForConditionalGeneration.from_pretrained(
+                    _FLORENCE_REPO,
+                    revision=_FLORENCE_REVISION,
+                    torch_dtype=dtype,
+                    trust_remote_code=False,
+                )
+                .to(device)
+                .eval()
+            )
+            processor = Florence2Processor.from_pretrained(
+                _FLORENCE_REPO,
+                revision=_FLORENCE_REVISION,
+                trust_remote_code=False,
+            )
+            _SUBPROCESS_FLORENCE = (model, processor)
+        except Exception as _e:
+            # Log-only (Q5 sweep discipline): make a future load failure visible.
+            print(f"[HeavyWorker] _get_subprocess_florence load failed: {type(_e).__name__}: {_e}")
+            return None
+    return _SUBPROCESS_FLORENCE
+
+
+def _florence_result_to_phrase(parsed: "Any", task_token: str) -> str:
+    """Reduce Florence-2's post-processed output to a human phrase for
+    `object_context`. Shape-defensive across the vendored processor's return
+    forms: pure_text (caption/OCR) → the string; phrase_grounding/od →
+    ``{'labels': [...], 'bboxes': [...]}`` → the joined unique labels.
+    """
+    ans = parsed.get(task_token, parsed) if isinstance(parsed, dict) else parsed
+    if isinstance(ans, str):
+        return ans.strip()
+    if isinstance(ans, dict):
+        labels = ans.get("labels") or []
+        seen: "list[str]" = []
+        for lab in labels:
+            s = str(lab).strip()
+            if s and s not in seen:
+                seen.append(s)
+        return ", ".join(seen)
+    return str(ans).strip() if ans is not None else ""
+
+
+def florence_detect_worker(
+    frame_bytes: bytes,
+    shape: "tuple[int, ...]",
+    dtype_name: str,
+    task_token: str,
+    text_input: "str | None",
+) -> "tuple[str, float] | None":
+    """Worker entry point: deserialize a BGR frame, run vendored Florence-2 for
+    the given task token, return ``(phrase, confidence)``.
+
+    IPC via pickle (default ProcessPoolExecutor mechanism); frame serialization
+    is explicit bytes+shape+dtype_name (matches the AdaFace/Whisper/ECAPA/Pyannote
+    workers).
+
+    Args:
+        frame_bytes: BGR uint8 frame serialized via ``.tobytes()``
+        shape: ndarray shape ``(H, W, 3)`` for ``np.frombuffer`` reconstruction
+        dtype_name: dtype string (e.g. ``"uint8"``)
+        task_token: a Florence-2 task token (e.g. ``"<MORE_DETAILED_CAPTION>"``,
+            ``"<OCR>"``, ``"<CAPTION_TO_PHRASE_GROUNDING>"``)
+        text_input: the grounding phrase for with-input tasks (appended to the
+            token); ``None`` for no-input tasks
+
+    Returns:
+        ``(phrase, confidence)`` where ``phrase`` is the human-readable answer
+        for ``object_context`` and ``confidence ∈ [0, 1]`` (the beam-averaged
+        sequence probability — drives the caller's hedge). ``("", 0.0)`` when
+        the model ran but produced no usable phrase. ``None`` on cascading
+        failure (load fail / inference crash) → caller applies the P0.R1 D1
+        None-fallback contract (cloud-or-hedge).
+    """
+    import numpy as np  # noqa: PLC0415
+
+    loaded = _get_subprocess_florence()
+    if loaded is None:
+        return None
+    model, processor = loaded
+    try:
+        import torch  # noqa: PLC0415
+        from PIL import Image  # noqa: PLC0415
+
+        frame = np.frombuffer(frame_bytes, dtype=dtype_name).reshape(shape)
+        # BGR (OpenCV) → RGB → PIL (Florence-2's processor expects PIL/RGB).
+        rgb = np.ascontiguousarray(frame[:, :, ::-1])
+        pil = Image.fromarray(rgb)
+        prompt = task_token if not text_input else f"{task_token}{text_input}"
+        inputs = processor(text=prompt, images=pil, return_tensors="pt")
+        device = next(model.parameters()).device
+        m_dtype = next(model.parameters()).dtype
+        input_ids = inputs["input_ids"].to(device)
+        pixel_values = inputs["pixel_values"].to(device, m_dtype)
+        with torch.no_grad():
+            gen = model.generate(
+                input_ids=input_ids,
+                pixel_values=pixel_values,
+                max_new_tokens=1024,
+                num_beams=3,
+                do_sample=False,
+                output_scores=True,
+                return_dict_in_generate=True,
+            )
+        confidence = 1.0
+        seq_scores = getattr(gen, "sequences_scores", None)
+        if seq_scores is not None and len(seq_scores) > 0:
+            confidence = max(0.0, min(1.0, float(torch.exp(seq_scores[0]))))
+        generated_text = processor.batch_decode(
+            gen.sequences, skip_special_tokens=False
+        )[0]
+        height, width = int(shape[0]), int(shape[1])
+        parsed = processor.post_process_generation(
+            generated_text, task=task_token, image_size=(height, width)
+        )
+        phrase = _florence_result_to_phrase(parsed, task_token)
+        if not phrase:
+            return ("", 0.0)
+        return (phrase, confidence)
+    except Exception as _e:
+        # Log-only (A2 discipline): inference failure is never silent. The
+        # caller treats None as pool-unavailable → cloud-or-hedge.
+        print(f"[HeavyWorker] florence_detect_worker inference failed: {type(_e).__name__}: {_e}")
+        return None

@@ -35,7 +35,7 @@ from __future__ import annotations
 
 # Bump this when scenarios change. Used as source_version in the DB so
 # old hand-authored rows can be quarantined and replaced cleanly.
-SOURCE_VERSION = "hand_authored-v1-2026-04-27"
+SOURCE_VERSION = "hand_authored-v2-2026-06-26"
 
 
 HAND_AUTHORED_SCENARIOS: list[dict] = [
@@ -122,6 +122,24 @@ HAND_AUTHORED_SCENARIOS: list[dict] = [
     {"abstract_text": "What's happening in the world today?", "intent_label": "live_data_query", "extracted_value": None, "initial_confidence": 0.85},
     {"abstract_text": "Tell me the latest news on {P1}.", "intent_label": "live_data_query", "extracted_value": None, "initial_confidence": 0.88},
     {"abstract_text": "What's the current price of gold?", "intent_label": "live_data_query", "extracted_value": None, "initial_confidence": 0.90},
+
+    # ── visual_query (13, SB.6) -- answered by LOOKING at the camera, NOT a web
+    # lookup. Sits next to live_data_query on purpose: both open with "what",
+    # but the OBJECT of the question is the camera frame, not the world. The
+    # regression_sb6 golden rows pair these with their live_data_query lookalikes.
+    {"abstract_text": "What's in my hand?", "intent_label": "visual_query", "extracted_value": None, "initial_confidence": 0.93},
+    {"abstract_text": "What am I holding right now?", "intent_label": "visual_query", "extracted_value": None, "initial_confidence": 0.93},
+    {"abstract_text": "What is this thing?", "intent_label": "visual_query", "extracted_value": None, "initial_confidence": 0.88},
+    {"abstract_text": "What is this?", "intent_label": "visual_query", "extracted_value": None, "initial_confidence": 0.85},
+    {"abstract_text": "Can you tell what I'm holding?", "intent_label": "visual_query", "extracted_value": None, "initial_confidence": 0.90},
+    {"abstract_text": "What do you see?", "intent_label": "visual_query", "extracted_value": None, "initial_confidence": 0.90},
+    {"abstract_text": "What do you see in the room?", "intent_label": "visual_query", "extracted_value": None, "initial_confidence": 0.92},
+    {"abstract_text": "Describe the scene please.", "intent_label": "visual_query", "extracted_value": None, "initial_confidence": 0.92},
+    {"abstract_text": "What's around me right now?", "intent_label": "visual_query", "extracted_value": None, "initial_confidence": 0.88},
+    {"abstract_text": "Can you see what's on the table?", "intent_label": "visual_query", "extracted_value": None, "initial_confidence": 0.90},
+    {"abstract_text": "Read this label for me.", "intent_label": "visual_query", "extracted_value": None, "initial_confidence": 0.93},
+    {"abstract_text": "What does the label say?", "intent_label": "visual_query", "extracted_value": None, "initial_confidence": 0.92},
+    {"abstract_text": "Can you read this for me?", "intent_label": "visual_query", "extracted_value": None, "initial_confidence": 0.88},
 
     # ── general_knowledge_query (10) -- answer from training, NOT search ────
     {"abstract_text": "Who was {P1}?", "intent_label": "general_knowledge_query", "extracted_value": None, "initial_confidence": 0.90},

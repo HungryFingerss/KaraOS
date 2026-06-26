@@ -57,7 +57,7 @@ _SCAN_TARGETS = [
 # entries remain legitimately indirect (system-constructed / upstream-wrapped /
 # history-deferred); only line keys refreshed via Pass-2 re-grep.
 _INDIRECT_BOUNDARIES_ALLOWLIST: dict[tuple[str, int], str] = {
-    # ── core/brain.py (11 entries) ──────────────────────────────────────
+    # ── core/brain.py (10 entries) ──────────────────────────────────────
     # P0.S10 LINE-REF-DRIFT ripple: D2 (topic-correction bullet in tool desc)
     # shifted lines 521+ by +8; D1 (ASSERTION-DOMAIN RULE in classifier prompt)
     # shifted lines 843+ by additional +21 (cumulative +29 for lines after 843).
@@ -78,34 +78,53 @@ _INDIRECT_BOUNDARIES_ALLOWLIST: dict[tuple[str, int], str] = {
     # `"role": "user"` sites; all entries remain legitimately indirect — these are
     # system-constructed prompts, NOT raw user-role content (the refactor builds
     # system-prompt strings, never user-role message dicts).
-    ("core/brain.py", 543):
-        "ping_together health check — 'hi' literal, no user_text (unchanged: above the #123 ping annotation)",
-    ("core/brain.py", 765):
-        "describe_frame vision — system-constructed describe-instruction; no user_text path (+6 #123)",
-    ("core/brain.py", 1150):
+    # SB.6 LINE-REF-DRIFT refresh (2026-06-26): the visual_query classifier-prompt
+    # additions in core/brain.py::_INTENT_CLASSIFIER_SYSTEM (the enumeration entry +6
+    # lines + the VISUAL vs LIVE-DATA RULE block +24 lines) shifted every brain.py
+    # role:user Dict site BELOW the classifier prompt by +30. The first 2 brain.py
+    # entries (543, 765 — ABOVE the prompt) were UNCHANGED by that step.
+    # SB.6 Step 5 describe_frame deletion (2026-06-26): the orphaned `describe_frame`
+    # function (the only `describe_frame` role:user Dict site, formerly at key 765) was
+    # HARD-DELETED — the cloud vision tier lives in core/object_detection.py now (PI-2).
+    # The ~49-line deletion sits ABOVE the classifier prompt, so it shifts every brain.py
+    # role:user site BELOW 738 UPWARD by -49; the 543 ping entry (above 738) is UNCHANGED.
+    # The 4 brain_agent entries are UNCHANGED (SB.6 touched core/brain.py + config +
+    # object_detection only). Line keys re-derived via a fresh AST scan of role:user sites
+    # (NOT hand arithmetic); all entries remain legitimately indirect (system-constructed /
+    # upstream-wrapped / history-deferred).
+    # SB.6 Step-5 fold (2026-06-26): the architect-ratified completion of the
+    # describe_frame deletion removed its 2 now-orphaned imports (`import base64`,
+    # `import cv2`) from the top of core/brain.py. Those 2 lines sit ABOVE every
+    # role:user Dict site, so EVERY brain.py key below shifts UPWARD by -2 — INCLUDING
+    # the 541 ping entry (the import block is above it). Line keys re-derived via a
+    # fresh AST scan of role:user sites (NOT hand arithmetic); the wrapped
+    # _build_context append at 1846 stays correctly OUT of the allowlist.
+    ("core/brain.py", 541):
+        "ping_together health check — 'hi' literal, no user_text (-2 SB.6-fold)",
+    ("core/brain.py", 1129):
         "_classify_intent _user_prompt — UPSTREAM-WRAPPED via "
         "wrap_user_input(_snip); messages-list line consumes composite "
-        "(system context + history + wrapped user content) per Plan v2 P4 (+6 #123)",
-    ("core/brain.py", 2005):
-        "autocompact_history Together — history-injection deferred to P0.S5.X per Plan v3 §2 (+6 #123)",
-    ("core/brain.py", 2025):
-        "autocompact_history Ollama retry — same as the Together path (+6 #123)",
-    ("core/brain.py", 2039):
+        "(system context + history + wrapped user content) per Plan v2 P4 (-49 SB.6-describe_frame-delete, -2 SB.6-fold)",
+    ("core/brain.py", 1984):
+        "autocompact_history Together — history-injection deferred to P0.S5.X per Plan v3 §2 (-49 SB.6, -2 fold)",
+    ("core/brain.py", 2004):
+        "autocompact_history Ollama retry — same as the Together path (-49 SB.6, -2 fold)",
+    ("core/brain.py", 2018):
         "autocompact synthetic-summary — system-constructed compacted prompt "
-        "wrapping LLM-generated summary; history-derived deferred to P0.S5.X (+6 #123)",
-    ("core/brain.py", 2080):
+        "wrapping LLM-generated summary; history-derived deferred to P0.S5.X (-49 SB.6, -2 fold)",
+    ("core/brain.py", 2059):
         "_build_context user_msg — UPSTREAM-WRAPPED via "
         "wrap_user_input(message.strip()); web-context augmentation "
-        "concatenates AROUND the wrapped user_msg so wrap survives (+6 #123)",
-    ("core/brain.py", 3289):
+        "concatenates AROUND the wrapped user_msg so wrap survives (-49 SB.6, -2 fold)",
+    ("core/brain.py", 3268):
         "web-search re-injection — concatenates web_context with "
-        "already-wrapped user_msg from upstream (+6 #123, +5 #5-SliceD, +118 SB.4.1)",
-    ("core/brain.py", 3486):
-        "greeting generation Together — system-constructed greeting prompt (+6 #123, +5 #5-SliceD, +118 SB.4.1)",
-    ("core/brain.py", 3516):
-        "greeting generation Ollama — system-constructed (parallel to Together) (+6 #123, +5 #5-SliceD, +118 SB.4.1)",
-    ("core/brain.py", 3585):
-        "choose_greeting_order — structured names-list prompt, no raw user-text (+6 #123, +5 #5-SliceD, +118 SB.4.1)",
+        "already-wrapped user_msg from upstream (+118 SB.4.1, -49 SB.6, -2 fold)",
+    ("core/brain.py", 3465):
+        "greeting generation Together — system-constructed greeting prompt (+118 SB.4.1, -49 SB.6, -2 fold)",
+    ("core/brain.py", 3495):
+        "greeting generation Ollama — system-constructed (parallel to Together) (+118 SB.4.1, -49 SB.6, -2 fold)",
+    ("core/brain.py", 3564):
+        "choose_greeting_order — structured names-list prompt, no raw user-text (+118 SB.4.1, -49 SB.6, -2 fold)",
     # ── core/brain_agent privacy.py(1) + agents/extraction.py(1) + agents/briefing.py(2) ─────────────────────────────────
     ("core/brain_agent/privacy.py", 164):
         "_ask_privacy_llm — entity/attribute/value triples (already-wrapped upstream extraction) (+2 #123)",
