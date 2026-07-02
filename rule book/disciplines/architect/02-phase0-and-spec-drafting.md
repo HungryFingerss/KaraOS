@@ -1,0 +1,18 @@
+# Architect — Phase 0 & Spec Drafting
+
+## Phase 0 (the audit that comes before everything)
+- **Grep-verified findings BEFORE any test code.** Phase 0 is pure documentation of what IS — read-only, every claim line-anchored (`file.py:NNN`). Skipping it costs more than doing it (validated empirically across P0.2-P0.5: 4-6 hours of rework saved per cycle).
+- **`### Phase-0-catches-wrong-premise`** — expect the audit to falsify the pre-audit framing; surface the reset explicitly, never quietly proceed with corrected scope. 13+ banked instances (P0.10, P0.S1, P0.S6, P0.S7, P0.S7.D-D, SB.9's point-3-never-landed…).
+- **`### Phase-0-granular-decomposition-enables-accurate-estimates`** — decompose into explicit D-decisions with named edit sites (`core/X.py:LINE`); aggregate framings ("7 helpers") are rejected at review. Side effect: estimates land ON-TARGET (a 13-cycle 0%-exact-mid streak rides on this).
+- **`### Pre-audit-quantifier-precision-refined-by-grep`** — pre-audit quantifiers are shape-captures, not commitments; Phase 0 grep refines them (8+ instances across 8 sub-shape axes, incl. RETIREMENT-SURFACE: "replace X with Y" framings systematically under-count the X side).
+- **Enumerate by PATTERN, not by known names** (SB.9 PI-2 lesson: enumeration-by-known-names found 11 registries; the auditor's alternation-pattern scan found the 12th). And **consult the project's own allowlists as enumeration INPUTS** — the twelfth registry was already documented in `_REGISTRY_ALLOWLIST`; the artifact that knew was simply not consulted. The full method: allowlist ∪ pattern-scan ∪ runtime tripwire.
+- **Design cycles**: ground against reference EXTREMES (SB.9: a dumb serial scale + a ROS robot), and let the acceptance sentence (§7.4's "zero core/ diffs") be the judge of every interface.
+
+## Spec drafting
+- **`### Grep-baseline-before-drafting`** — every count/line-ref/claim in a spec is grep-verified fresh at drafting time, never copied from an earlier narrative (stale-copy baselines caused systematic ±N drift; 6 instances at elevation).
+- **`### Twin-filename-pitfall-prevention`** — same-named files at different paths get distinguishing suffixes at creation time; status flips verify BOTH paths (born from a real P0.S2 miss).
+- **Pass-2 grep at Plan v1 drafting** (`### Pass-2-grep-auditor-verified-before-Plan-v1-approval`) — the architect re-greps the full enumeration at draft time; the auditor independently re-greps at review. Both validation modes are real: clean convergence proves absence of drift; a surfaced PI proves the catching layer works (P0.R4's D4 undercount; SB.9's twelfth registry).
+- **Line-ref hygiene**: refs shift when files change (LINE-REF-DRIFT, many banked instances). Prefer structural anchors (AST shapes, content keys) over line numbers in anything long-lived; the **STALE-KEY-COLLISION** sub-shape (SB.8) is the escalation — a shifted site landing ON a stale key silently blesses the wrong site (under-reporting, the dangerous direction). Content-keyed allowlists are the structural cure.
+- **State the load-bearing HOW, not just the WHAT** (SB.7 PI-3 / SB.8 PI-B twice-learned): if the plan says what the golden proves, it must also say how the mechanism achieves it (single-source CASES; the two-slot template) — otherwise the developer discovers the mechanism by debugging a red gate.
+- **Known-limitations are banked in the spec**, with rationale + revisit-triggers (the D1 flavor-leak, the LFW deferral) — accepted-with-rationale, never silent.
+- **Scope fences are explicit** — every spec lists what it does NOT do, so "while I'm here" has a written boundary to violate.
