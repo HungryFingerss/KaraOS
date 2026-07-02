@@ -45,6 +45,10 @@ from profiles._blocks import (  # SB.4.1 prompt-block-membership axis
     BLOCK_BUNDLES,
     MANDATORY_BLOCKS,
 )
+from core.persona_loader import (  # SB.8 persona-pack axis (pure: yaml + persona/_schema only)
+    DEFAULT_PERSONA_ID,
+    resolve_persona_overrides,
+)
 
 # Env-selected deployment SHAPE. Default "companion" (today). Composed with the
 # orthogonal KARAOS_INSTANCE_MODE retention axis (which stays in config.py).
@@ -92,7 +96,17 @@ def load_profile(profile_name: "str | None" = None) -> dict:
             f"{type(raw).__name__}."
         )
     _validate(raw, name, str(path))
-    return _resolve(raw)
+    overrides = _resolve(raw)
+    # SB.8 — persona-pack expansion. The pack file I/O lives HERE beside the
+    # profile read (keeping _resolve pure — synthetic-dict test callers stay
+    # file-free). The profile's persona.persona_id selects the pack; an absent
+    # section/key resolves to DEFAULT_PERSONA_ID (== today's product,
+    # mirroring absent agents: → full set). An UNKNOWN id fails loud inside
+    # the persona loader (A3 — never a silent fallback to companion).
+    _persona_sect = raw.get("persona") or {}
+    overrides.update(resolve_persona_overrides(
+        _persona_sect.get("persona_id", DEFAULT_PERSONA_ID)))
+    return overrides
 
 
 def _validate(raw: dict, profile_name: str, where: str) -> None:
@@ -366,7 +380,9 @@ def _resolve(raw: dict) -> dict:
         out["features"] = dict(raw["features"])
 
     # Declared-only hooks — passed through for completeness; apply ignores them.
-    for sect in ("persona", "hardware"):
+    # (persona left this set at SB.8: load_profile expands persona.persona_id
+    # into the six pack-keyed overrides; hardware stays declared-only.)
+    for sect in ("hardware",):
         if sect in raw:
             out[sect] = dict(raw[sect])
 

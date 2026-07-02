@@ -93,12 +93,16 @@ FEATURE_FLAG_MAP: "dict[str, str]" = {
 
 # ── Declared-only axes (hooks) ────────────────────────────────────────────────
 # Present in the schema + the YAMLs so the files validate + differentiate
-# (companion vs robotics), but NOT wired to config globals in SB.2.1 — applying
-# them would break behavior-neutrality:
-#   persona  → SB.8 (persona pack). companion system_name='Kara' would clobber
-#              config.DEFAULT_SYSTEM_NAME='Dog' (config.py:1166) → NOT neutral.
+# (companion vs robotics), but NOT wired to config globals — applying them
+# would break behavior-neutrality:
 #   hardware → no config global today (whisper hardcoded in core/audio.py:249);
 #              wired by a future hardware-tier cycle.
+# persona LEFT this set at SB.8: `persona.persona_id` now selects a
+# persona/<id>.yaml pack at apply-at-load (core/persona_loader.py). The old
+# decorative `system_name` key was REMOVED from the persona section — the
+# pack's `system_name_default` is the single source, and a stray profile-side
+# name now fails loud instead of sitting as a latent Kara-clobber trap
+# (SB.8 §0 catch + PI-A).
 VALID_HARDWARE_TIERS: tuple[str, ...] = ("dev_laptop", "jetson_orin", "server")
 
 # ── SB.5 — identity axis (ACTIVE, applied at config-load — NOT declared-only) ──
@@ -136,7 +140,10 @@ SCHEMA: dict = {
         feat: {"kind": "scalar", "type": bool} for feat in FEATURE_FLAG_MAP
     }},
     "persona": {"kind": "section", "keys": {
-        "system_name": {"kind": "scalar", "type": str},
+        # SB.8: reference-only — the pack (persona/<persona_id>.yaml) is the
+        # single source for name/voice/prompt-flavor. `system_name` was
+        # deliberately REMOVED: a profile-side name would silently clobber
+        # the pack's system_name_default; now it fails loud as unknown-key.
         "persona_id":  {"kind": "scalar", "type": str},
     }},
     "hardware": {"kind": "section", "keys": {

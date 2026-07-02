@@ -11,7 +11,7 @@ llm:        { provider: local-orin }             # onboard, no cloud
 features:   { emotion: false, tier_memory: false }  # companionship layer off
 agents:     companion                               # SB.3 placeholder — full set until the robotics stack defines its reduced set (SB.9)
 blocks:     companion                               # SB.4.1 placeholder — full set until the robotics stack defines its reduced block set (SB.9)
-persona:    { system_name: Kara, persona_id: robotics_placeholder }
+persona:    { persona_id: robotics_placeholder }    # SB.8 PI-A: reference-only, symmetric with companion.yaml — the pack's system_name_default is the single source (the old decorative 'Kara' here was a latent boot-as-Kara trap)
 hardware:   { tier: jetson_orin }
 identity:   { enrollment_mode: none, retention_mode: ephemeral }  # SB.5 Q1: public-service-robot mapping — no personal PII on a shared robot by default
 # motor / nav / adapter subsystems: NOT YET BUILT. They are NOT schema keys (an

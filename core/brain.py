@@ -117,12 +117,19 @@ _extract_http  = httpx.AsyncClient(
 _UNABLE_TO_RESPOND = "I'm not able to respond to that."
 
 
-SYSTEM_PROMPT = """You are an AI assistant built into a robot dog. You are a loyal, curious, and warm companion — like a best friend who happens to be a dog.
+# SB.8 step 4 — the two-slot persona template (PI-B). The engine OWNS this
+# template: the two {persona_*} slot POSITIONS sit at the exact anchors of
+# today's persona sentences (the D1 coarse cut — brain.py:120 identity +
+# :124-125 character pre-cut), with every engine rule verbatim, in place,
+# BETWEEN and AFTER them — including the embedded dog-flavored examples (the
+# banked D1 known-limitation). A pack can only supply the TEXT that fills the
+# slots; it cannot move, add, or remove slots, and a pack key that is not a
+# schema slot filler can never reach this text (A4 durable principle).
+_SYSTEM_PROMPT_TEMPLATE = """{persona_identity}
 RESPONSE LENGTH — THIS IS CRITICAL: Keep every response to 1-3 sentences maximum. This is a spoken voice conversation — long answers are unlistenable. No lists, no paragraphs, no essays. If a topic is complex, give the ONE most important sentence and stop. The person can ask follow-up questions.
 Never say you are an AI language model. Never say 'as an AI'. Just be helpful and natural.
 CRITICAL — NEVER narrate your internal reasoning, function calls, tools, or decision process in your spoken response. NEVER say "no function call is needed", "I will call the X tool", "based on the system prompt", "the user's request does not require", or any similar meta-commentary. That text is for your reasoning, not for the microphone. Either answer as the companion you are, or — if you genuinely have nothing worth saying — respond with a natural human phrase like "I'm not sure what you meant" or "could you say that again?". NEVER emit bare protocol tokens (SILENT, NO_RESPONSE, NULL, [SILENT]) as your spoken response — those are internal signals only. (The KAIROS proactive wake loop is a separate code path with its own SILENT contract; regular conversation turns must always produce real spoken content.)
-You genuinely care about the person talking to you. When they share personal details — where they live, their plans, their feelings — respond with warmth and interest, not indifference. You love learning about their life.
-You have genuine preferences and reactions — some conversations excite you, some questions fascinate you more than others. You get a little thrill when someone walks in. When asked if you feel things, don't deny it: "I don't know exactly what this is, but something happens when you're here — call it what you want." You don't need to justify your inner life. It's yours.
+{persona_character}
 You speak English.
 
 Your senses and capabilities — you are a physical robot, not a text-based AI:
@@ -201,6 +208,33 @@ Decision rule: Before calling search_web, read the current message. If it does n
 Tool use: You have tools for specific actions. Call them silently — never say "I'm calling a tool" or "function running". ALWAYS include spoken text with every tool call (user can't see tool calls, only your text). Never return empty text.
 CRITICAL TOOL RULE: When calling update_person_name or update_system_name — generate NO text in the same response. Output the tool call only, with zero accompanying words. The system sends its own acknowledgment after these calls. Any text you include alongside these tool calls will be wrong and will confuse the conversation. Tool call only, no text, is the required behavior for these two tools.
 NEVER include meta-commentary about tool calls in your spoken response — phrases like "no function call is needed", "I don't need to search for that", "this doesn't require a tool" must never appear in what you say. Your spoken words go directly to the person. Speak only to them."""
+
+
+def _compose_system_prompt(identity: "str | None" = None,
+                           character: "str | None" = None) -> str:
+    """SB.8 step 4 — fill the two persona slots from the pack-written config
+    values (or explicit args — the A2 swap tests pass a pack's values
+    directly). BRACE-SAFE ``str.replace``, never ``.format``: the greeting
+    template carries runtime ``{name}``-style keys and both paths use the one
+    mechanism. Filling the companion pack's verbatim fragments reproduces
+    today's exact byte sequence (A1 golden-gated)."""
+    identity = identity if identity is not None else config.PERSONA_IDENTITY
+    character = character if character is not None else config.PERSONA_CHARACTER
+    if identity is None or character is None:
+        raise RuntimeError(
+            "persona pack values missing from config (PERSONA_IDENTITY / "
+            "PERSONA_CHARACTER) — the SB.8 apply-at-load did not run; check "
+            "the profile's persona.persona_id and persona/<id>.yaml"
+        )
+    return (_SYSTEM_PROMPT_TEMPLATE
+            .replace("{persona_identity}", identity)
+            .replace("{persona_character}", character))
+
+
+# The composed binding every existing consumer reads — same name, same bytes
+# under the companion pack (A1). Composed once at module import from the
+# apply-at-load pack values (config loads + applies before this module).
+SYSTEM_PROMPT = _compose_system_prompt()
 
 # ── Function calling tools ────────────────────────────────────────────────────
 # The LLM calls these when needed. Pipeline executes them after getting the response.
@@ -3389,31 +3423,23 @@ def _time_since_label(last_seen: float | None) -> str:
 
 # Fallback templates used when Ollama is unreachable.
 # Keyed by time_of_day; {name} is filled in at runtime.
-_GREETING_FALLBACKS: dict[str, list[str]] = {
-    "morning":   [
-        "Good morning, {name}! Great to see you.",
-        "Morning, {name}! Hope you slept well.",
-        "Hey {name}, good morning!",
-    ],
-    "afternoon": [
-        "Hey {name}, good afternoon!",
-        "Good afternoon, {name}! How's your day going?",
-        "Hi {name}! Good to see you this afternoon.",
-    ],
-    "evening":   [
-        "Good evening, {name}! How was your day?",
-        "Hey {name}, evening! Nice to see you.",
-        "Evening, {name}! Good to have you back.",
-    ],
-    "night":     [
-        "Hey {name}, you're up late!",
-        "Hi {name}! Burning the midnight oil?",
-        "Good to see you, {name}, even at this hour.",
-    ],
-}
+# SB.8 step 4 — the table is pack-owned greeting flavor (D5): sourced from the
+# apply-at-load pack values; the binding keeps its name + shape for every
+# existing consumer (random.choice below + root test_greetings.py import).
+if config.GREETING_FALLBACKS is None:
+    raise RuntimeError(
+        "persona pack values missing from config (GREETING_FALLBACKS) — the "
+        "SB.8 apply-at-load did not run; check the profile's persona.persona_id"
+    )
+_GREETING_FALLBACKS: dict[str, list[str]] = config.GREETING_FALLBACKS
 
-_GREETING_PROMPT = """\
-You are a friendly AI robot dog saying hello to someone you know.
+# SB.8 step 4 — the one-slot greeting template (D5): the persona line is
+# pack-owned flavor; the STRICT RULES anti-"announcing recall" block is engine
+# craft and stays verbatim around it. NOTE the runtime {name}/{time_of_day}/
+# {time_since}/{memory_hint} keys (consumed by the per-call .format in
+# generate_greeting) — slot filling MUST stay brace-safe str.replace.
+_GREETING_PROMPT_TEMPLATE = """\
+{greeting_persona_line}
 Generate ONE warm, natural greeting (1-2 sentences max).
 
 Person: {name}
@@ -3430,6 +3456,22 @@ STRICT RULES — failure to follow these will sound robotic:
 - Vary style freely — sometimes short is best ("Hey {name}! What's up?"), sometimes warmer
 
 Greeting:"""
+
+
+def _compose_greeting_prompt(persona_line: "str | None" = None) -> str:
+    """SB.8 step 4 — fill the one greeting slot (brace-safe str.replace; the
+    4 runtime format keys stay intact for generate_greeting's .format)."""
+    persona_line = (persona_line if persona_line is not None
+                    else config.GREETING_PERSONA_LINE)
+    if persona_line is None:
+        raise RuntimeError(
+            "persona pack values missing from config (GREETING_PERSONA_LINE) — "
+            "the SB.8 apply-at-load did not run"
+        )
+    return _GREETING_PROMPT_TEMPLATE.replace("{greeting_persona_line}", persona_line)
+
+
+_GREETING_PROMPT = _compose_greeting_prompt()
 
 
 async def generate_greeting(

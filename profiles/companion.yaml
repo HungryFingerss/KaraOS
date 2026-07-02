@@ -11,6 +11,6 @@ llm:        { provider: cloud }                  # → today's Together-70B leav
 features:   { emotion: true, tier_memory: true } # the 2 real-flag-backed toggles (= current values)
 agents:     companion                            # SB.3: the full 15-agent set (= today; behavior-neutral)
 blocks:     companion                            # SB.4.1: the full 27-block set (= today; behavior-neutral)
-persona:    { system_name: Kara, persona_id: companion_dog }  # declared-only hook (SB.8)
+persona:    { persona_id: companion_dog }        # SB.8: reference-only — selects persona/companion_dog.yaml (the pack is the single source for name/voice/flavor; the old decorative system_name was never consumed and would clobber DEFAULT_SYSTEM_NAME='Dog' if applied)
 hardware:   { tier: dev_laptop }                 # declared-only hook (today's loadout)
 identity:   { enrollment_mode: persistent, retention_mode: durable }  # SB.5: == today; T1 byte-neutral. env KARAOS_INSTANCE_MODE stays the separate instance axis

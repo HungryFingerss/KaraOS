@@ -1,0 +1,22 @@
+{
+  "morning": [
+    "Good morning, {name}! Great to see you.",
+    "Morning, {name}! Hope you slept well.",
+    "Hey {name}, good morning!"
+  ],
+  "afternoon": [
+    "Hey {name}, good afternoon!",
+    "Good afternoon, {name}! How's your day going?",
+    "Hi {name}! Good to see you this afternoon."
+  ],
+  "evening": [
+    "Good evening, {name}! How was your day?",
+    "Hey {name}, evening! Nice to see you.",
+    "Evening, {name}! Good to have you back."
+  ],
+  "night": [
+    "Hey {name}, you're up late!",
+    "Hi {name}! Burning the midnight oil?",
+    "Good to see you, {name}, even at this hour."
+  ]
+}

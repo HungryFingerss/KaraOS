@@ -20,6 +20,7 @@ from core.config import (
     LIP_MAX_EXTENSION, SPEAKER_LANGUAGES, LOG_LATENCY_ENABLED,
 )
 from core.log_utils import _now_log_ts
+from core import config  # SB.8 — live attribute access for TTS_VOICE_ID (pack-written at apply; Lock-2 from-import-trap)
 
 # Latest STT elapsed (ms), populated by transcribe() before it returns. Pipeline
 # reads this to decorate the attributed [STT] line with latency, without us
@@ -810,8 +811,10 @@ def _tts_piper_en(text: str) -> tuple[np.ndarray | None, int]:
 def _tts_kokoro(text: str) -> tuple[np.ndarray, int]:
     """Generate speech with Kokoro (local, English)."""
     kokoro = _load_kokoro()
+    # SB.8 step 1 — the voice id is the persona pack's axis; read by ATTRIBUTE
+    # so the apply-at-load pack value (and test monkeypatches) are always live.
     samples, sample_rate = kokoro.create(
-        text, voice="af_heart", speed=1.0, lang="en-us"
+        text, voice=config.TTS_VOICE_ID, speed=1.0, lang="en-us"
     )
     return samples.astype(np.float32), sample_rate
 

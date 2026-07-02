@@ -1239,6 +1239,16 @@ HOUSEHOLD_DISPUTE_SETTLE_SESSIONS = 2  # sessions of corroboration before "provi
 
 # ── Brain Agent ───────────────────────────────────────────────────────────────
 DEFAULT_SYSTEM_NAME        = "Dog"  # AI's default name before user assigns one
+                                    # (SB.8: pack-written at apply-at-load; the
+                                    # companion pack carries "Dog" — byte-neutral)
+
+# ── SB.8 step 1 — TTS voice id, promoted from the core/audio.py:814 inline
+# literal so the persona pack can set it at apply-at-load (SB.8 step 4). Kokoro
+# voice name; the companion pack carries "af_heart" (== today, byte-neutral).
+# Consumers read `config.TTS_VOICE_ID` by ATTRIBUTE access (Lock-2 — a
+# profile/pack-written value; never from-import).
+TTS_VOICE_ID               = "af_heart"
+
 BRAIN_DB_PATH              = FACES_DIR / "brain.db"
 GRAPH_DB_PATH              = FACES_DIR / "brain_graph"   # Kuzu property graph directory
 
@@ -1780,7 +1790,32 @@ def _apply_profile_overrides(_g: dict, _overrides: dict) -> None:
         _g["ENROLLMENT_MODE"] = _overrides["ENROLLMENT_MODE"]
     if "RETENTION_MODE" in _overrides:
         _g["RETENTION_MODE"] = _overrides["RETENTION_MODE"]
+    # SB.8 — persona-pack axis: the profile loader expands persona.persona_id
+    # into these six pack values, keyed directly at the config-global names
+    # (Lock 2). load_profile ALWAYS keys them (absent persona section → the
+    # companion pack), so post-apply they are never None. The companion pack's
+    # values are byte-identical to the pre-SB.8 inline literals (A1 golden).
+    for _pk in ("DEFAULT_SYSTEM_NAME", "TTS_VOICE_ID", "PERSONA_IDENTITY",
+                "PERSONA_CHARACTER", "GREETING_PERSONA_LINE", "GREETING_FALLBACKS"):
+        if _pk in _overrides:
+            _g[_pk] = _overrides[_pk]
 
+
+# ── SB.8 — persona-pack axis: pre-apply placeholders for the four pack TEXT
+#    values (identity/character slot texts + the greeting persona line + the
+#    greeting fallback table). The fragments themselves live ONLY in
+#    persona/<id>.yaml (single source — no duplicated prose to drift); the
+#    apply below ALWAYS overwrites these because load_profile keys the pack
+#    values for every profile (absent persona section → the companion pack).
+#    brain.py's compose functions fail LOUD on a None (the apply-didn't-run
+#    diagnostic), and read these via `config.X` ATTRIBUTE access (Lock 2).
+#    DEFAULT_SYSTEM_NAME + TTS_VOICE_ID keep their literal bases above (the
+#    two scalar axes; pack overwrites them at apply — byte-identical for
+#    companion).
+PERSONA_IDENTITY: "str | None"            = None
+PERSONA_CHARACTER: "str | None"           = None
+GREETING_PERSONA_LINE: "str | None"       = None
+GREETING_FALLBACKS: "dict | None"         = None
 
 # ── SB.3 — agent-membership axis: ACTIVE_AGENTS base default (full set),
 #    overridden by the apply below. A NEW base constant — NOT derived from a

@@ -99,32 +99,46 @@ _INDIRECT_BOUNDARIES_ALLOWLIST: dict[tuple[str, int], str] = {
     # the 541 ping entry (the import block is above it). Line keys re-derived via a
     # fresh AST scan of role:user sites (NOT hand arithmetic); the wrapped
     # _build_context append at 1846 stays correctly OUT of the allowlist.
-    ("core/brain.py", 541):
-        "ping_together health check — 'hi' literal, no user_text (-2 SB.6-fold)",
-    ("core/brain.py", 1129):
+    # SB.8 LINE-REF-DRIFT refresh (2026-07-02): the persona-pack two-slot
+    # template conversion shifted every brain.py role:user site below the old
+    # SYSTEM_PROMPT (:203) by +34 net (template header comment +8, the two
+    # character lines collapsing into one {persona_character} slot -1, the
+    # _compose_system_prompt fn + SYSTEM_PROMPT rebind +27), and sites below
+    # the greeting region by a further +8 (fallbacks guard/comment + the
+    # {greeting_persona_line} template + _compose_greeting_prompt) = +42
+    # cumulative. Line keys re-derived from the detector RUN's reported
+    # current linenos (NOT hand arithmetic). NOTE the caught key-collision:
+    # the shifted autocompact-Together site (1984 → 2018) landed EXACTLY on
+    # the stale synthetic-summary key (2018), so the detector under-reported
+    # 9 violations for 10 stale entries — a fresh-scan refresh (this one)
+    # eliminates the accidental blessing; all entries remain legitimately
+    # indirect (system-constructed / upstream-wrapped / history-deferred).
+    ("core/brain.py", 575):
+        "ping_together health check — 'hi' literal, no user_text (+34 SB.8)",
+    ("core/brain.py", 1163):
         "_classify_intent _user_prompt — UPSTREAM-WRAPPED via "
         "wrap_user_input(_snip); messages-list line consumes composite "
-        "(system context + history + wrapped user content) per Plan v2 P4 (-49 SB.6-describe_frame-delete, -2 SB.6-fold)",
-    ("core/brain.py", 1984):
-        "autocompact_history Together — history-injection deferred to P0.S5.X per Plan v3 §2 (-49 SB.6, -2 fold)",
-    ("core/brain.py", 2004):
-        "autocompact_history Ollama retry — same as the Together path (-49 SB.6, -2 fold)",
+        "(system context + history + wrapped user content) per Plan v2 P4 (+34 SB.8)",
     ("core/brain.py", 2018):
+        "autocompact_history Together — history-injection deferred to P0.S5.X per Plan v3 §2 (+34 SB.8)",
+    ("core/brain.py", 2038):
+        "autocompact_history Ollama retry — same as the Together path (+34 SB.8)",
+    ("core/brain.py", 2052):
         "autocompact synthetic-summary — system-constructed compacted prompt "
-        "wrapping LLM-generated summary; history-derived deferred to P0.S5.X (-49 SB.6, -2 fold)",
-    ("core/brain.py", 2059):
+        "wrapping LLM-generated summary; history-derived deferred to P0.S5.X (+34 SB.8)",
+    ("core/brain.py", 2093):
         "_build_context user_msg — UPSTREAM-WRAPPED via "
         "wrap_user_input(message.strip()); web-context augmentation "
-        "concatenates AROUND the wrapped user_msg so wrap survives (-49 SB.6, -2 fold)",
-    ("core/brain.py", 3268):
+        "concatenates AROUND the wrapped user_msg so wrap survives (+34 SB.8)",
+    ("core/brain.py", 3302):
         "web-search re-injection — concatenates web_context with "
-        "already-wrapped user_msg from upstream (+118 SB.4.1, -49 SB.6, -2 fold)",
-    ("core/brain.py", 3465):
-        "greeting generation Together — system-constructed greeting prompt (+118 SB.4.1, -49 SB.6, -2 fold)",
-    ("core/brain.py", 3495):
-        "greeting generation Ollama — system-constructed (parallel to Together) (+118 SB.4.1, -49 SB.6, -2 fold)",
-    ("core/brain.py", 3564):
-        "choose_greeting_order — structured names-list prompt, no raw user-text (+118 SB.4.1, -49 SB.6, -2 fold)",
+        "already-wrapped user_msg from upstream (+34 SB.8)",
+    ("core/brain.py", 3507):
+        "greeting generation Together — system-constructed greeting prompt (+42 SB.8)",
+    ("core/brain.py", 3537):
+        "greeting generation Ollama — system-constructed (parallel to Together) (+42 SB.8)",
+    ("core/brain.py", 3606):
+        "choose_greeting_order — structured names-list prompt, no raw user-text (+42 SB.8)",
     # ── core/brain_agent privacy.py(1) + agents/extraction.py(1) + agents/briefing.py(2) ─────────────────────────────────
     ("core/brain_agent/privacy.py", 164):
         "_ask_privacy_llm — entity/attribute/value triples (already-wrapped upstream extraction) (+2 #123)",
