@@ -104,7 +104,7 @@ def _enumerate_targets(include_dashboard_token: bool) -> tuple[list[str], list[s
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Standalone factory reset for dog-ai (wipes faces.db / brain.db / FAISS / Kuzu / photos)",
+        description="Standalone factory reset for KaraOS (wipes faces.db / brain.db / FAISS / Kuzu / photos)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )

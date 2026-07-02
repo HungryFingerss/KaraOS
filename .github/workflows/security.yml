@@ -19,8 +19,8 @@ on:
     branches: ["main"]
     paths:
       - "requirements.txt"
-      - "dog-ai-dashboard/package.json"
-      - "dog-ai-dashboard/package-lock.json"
+      - "karaos-dashboard/package.json"
+      - "karaos-dashboard/package-lock.json"
 
 permissions:
   contents: read

@@ -51,7 +51,7 @@ import pytest
 
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_DASHBOARD_DIR = _REPO_ROOT / "dog-ai-dashboard"
+_DASHBOARD_DIR = _REPO_ROOT / "karaos-dashboard"
 _PACKAGE_JSON = _DASHBOARD_DIR / "package.json"
 _NEXT_CONFIG = _DASHBOARD_DIR / "next.config.js"
 _DASHBOARD_ENV = _DASHBOARD_DIR / ".env.local"

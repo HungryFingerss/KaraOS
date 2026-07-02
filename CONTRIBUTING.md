@@ -14,8 +14,8 @@ forks. The full restore flow is documented in [`SETUP.md`](SETUP.md). Short
 version:
 
 ```bash
-git clone https://github.com/HungryFingerss/Cognitive-System.git dog-ai
-cd dog-ai
+git clone https://github.com/HungryFingerss/KaraOS.git karaos
+cd karaos
 git lfs pull
 
 python -m venv venv

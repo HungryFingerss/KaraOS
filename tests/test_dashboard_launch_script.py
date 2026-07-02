@@ -28,7 +28,7 @@ from pathlib import Path
 import pytest
 
 
-_DASHBOARD = Path(__file__).resolve().parent.parent / "dog-ai-dashboard"
+_DASHBOARD = Path(__file__).resolve().parent.parent / "karaos-dashboard"
 _LAUNCH_JS = _DASHBOARD / "scripts" / "launch.js"
 
 

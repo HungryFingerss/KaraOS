@@ -1,8 +1,8 @@
-# KaraOS (`dog-ai`)
+# KaraOS
 
-![fast CI](https://github.com/jagannivas/dog-ai/actions/workflows/fast.yml/badge.svg)
-![nightly CI](https://github.com/jagannivas/dog-ai/actions/workflows/slow.yml/badge.svg)
-![security scan](https://github.com/jagannivas/dog-ai/actions/workflows/security.yml/badge.svg)
+![fast CI](https://github.com/HungryFingerss/KaraOS/actions/workflows/fast.yml/badge.svg)
+![nightly CI](https://github.com/HungryFingerss/KaraOS/actions/workflows/slow.yml/badge.svg)
+![security scan](https://github.com/HungryFingerss/KaraOS/actions/workflows/security.yml/badge.svg)
 
 KaraOS is a domain-agnostic embodied-presence runtime — the cognitive layer for
 an embodied AI agent: it sees, hears, recognizes people, remembers them across
@@ -14,7 +14,7 @@ see face → identify → greet → listen → respond → repeat.
 ## Structure
 
 ```
-dog-ai/
+karaos/
 ├── core/
 │   ├── config.py      # all settings
 │   ├── vision.py      # RetinaFace detection + AdaFace recognition
@@ -22,7 +22,7 @@ dog-ai/
 │   ├── brain.py       # Gemini (primary) + Ollama (fallback)
 │   ├── audio.py       # Whisper STT + edge-tts TTS
 │   └── state.py       # shared state (pipeline → dashboard)
-├── dog-ai-dashboard/  # Next.js dashboard
+├── karaos-dashboard/  # Next.js dashboard
 ├── pipeline.py        # main loop
 ├── enroll.py          # standalone enrollment script
 ├── delete_person.py   # delete a person
@@ -72,7 +72,7 @@ copy .env.example .env
 ### 4. Dashboard
 
 ```bash
-cd dog-ai-dashboard
+cd karaos-dashboard
 npm install
 npm run dev     # development
 npm run build   # production
@@ -84,7 +84,7 @@ Dashboard runs on http://localhost:3000
 ### 5. Run pipeline
 
 ```bash
-# From dog-ai/ root
+# From karaos/ root
 python pipeline.py
 ```
 

@@ -1,8 +1,8 @@
-// dog-ai-dashboard/app/api/auth/route.ts — P0.S2 auth route (D2)
+// karaos-dashboard/app/api/auth/route.ts — P0.S2 auth route (D2)
 //
 // GET /api/auth?token=<43-char-urlsafe> validates the token against the
 // on-disk `.dashboard_token` (constant-time compare), on success sets the
-// HttpOnly `dogai_session` cookie + 302-redirects to `/` + deletes the
+// HttpOnly `karaos_session` cookie + 302-redirects to `/` + deletes the
 // one-shot `.dashboard_auth_url` artifact. On failure: 401, no cookie,
 // no URL delete.
 //
@@ -74,7 +74,7 @@ export async function GET(req: NextRequest) {
   const redirectUrl = new URL('/', req.url)
   const res = NextResponse.redirect(redirectUrl, { status: 302 })
   res.cookies.set({
-    name: 'dogai_session',
+    name: 'karaos_session',
     value: fileToken,
     httpOnly: true,
     sameSite: 'strict',

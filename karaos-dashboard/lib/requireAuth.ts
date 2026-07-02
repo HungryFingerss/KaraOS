@@ -1,4 +1,4 @@
-// dog-ai-dashboard/lib/requireAuth.ts — P0.S2/S8 auth gate, Node-runtime.
+// karaos-dashboard/lib/requireAuth.ts — P0.S2/S8 auth gate, Node-runtime.
 //
 // Replaces the Edge-incompatible fs/Buffer/crypto auth that was in
 // middleware.ts. Next.js 14 runs middleware in the Edge runtime (no fs),
@@ -15,7 +15,7 @@ import path from 'path'
 import crypto from 'crypto'
 import { LRUCache } from 'lru-cache'
 
-// faces/.dashboard_token relative to the dashboard CWD (dog-ai-dashboard/)
+// faces/.dashboard_token relative to the dashboard CWD (karaos-dashboard/)
 // -> project-root faces/. Resolved at call time (not module load) so manual
 // token replacement / corruption recovery is picked up without a restart
 // (preserves P0.S2 D4 fresh-read-per-request invariant).
@@ -51,7 +51,7 @@ export function requireAuth(req: NextRequest): NextResponse | null {
   }
 
   // 2. Cookie present? Absent -> 401 Unauthorized (distinct from missing-token).
-  const cookieValue = req.cookies.get('dogai_session')?.value
+  const cookieValue = req.cookies.get('karaos_session')?.value
   if (!cookieValue) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }

@@ -1,15 +1,15 @@
 [Unit]
-Description=dog-ai cognitive runtime
+Description=karaos cognitive runtime
 Documentation=https://github.com/HungryFingerss/Cognitive-System
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=dog-ai
-WorkingDirectory=/opt/dog-ai
-ExecStart=/opt/dog-ai/venv/bin/python /opt/dog-ai/pipeline.py
-EnvironmentFile=/etc/dog-ai/dog-ai.env
+User=karaos
+WorkingDirectory=/opt/karaos
+ExecStart=/opt/karaos/venv/bin/python /opt/karaos/pipeline.py
+EnvironmentFile=/etc/karaos/karaos.env
 Restart=on-failure
 RestartSec=5s
 StartLimitBurst=5

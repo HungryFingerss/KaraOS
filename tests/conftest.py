@@ -1,5 +1,5 @@
 """
-Shared test helpers for the dog-ai test suite.
+Shared test helpers for the KaraOS test suite.
 
 setup_pipeline_stubs()
     Stubs core.voice and core.audio into sys.modules so pipeline.py can be

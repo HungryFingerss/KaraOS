@@ -9,7 +9,7 @@ Per Plan v2 §3 LOCK: 9 anchors at exact mid 9 inclusive ±15% band [7.65, 10.35
 Plan v2 absorbs Plan v1 PI #1 by:
   - A8 REPLACED with programmatic enforcement (was hardcoded TOGETHER_API_KEY
     + HF_TOKEN check; now extracts every os.getenv(...) key from core/config.py
-    and asserts each appears in deploy/dog-ai.env.example)
+    and asserts each appears in deploy/karaos.env.example)
   - A9 EXPANDED to cover all 4 secret-class env vars (was 2: TOGETHER_API_KEY
     + HF_TOKEN; now 4: + GROQ_API_KEY + TAVILY_API_KEY)
 """
@@ -30,10 +30,10 @@ import pytest
 # Repo-relative paths resolved from this test file's location.
 # tests/test_p0_r4_process_supervisor.py -> parent.parent == repo root
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_SYSTEMD_UNIT = _REPO_ROOT / "deploy" / "systemd" / "dog-ai.service"
-_SUPERVISORD_CONF = _REPO_ROOT / "deploy" / "supervisord" / "dog-ai.conf"
+_SYSTEMD_UNIT = _REPO_ROOT / "deploy" / "systemd" / "karaos.service"
+_SUPERVISORD_CONF = _REPO_ROOT / "deploy" / "supervisord" / "karaos.conf"
 _README = _REPO_ROOT / "deploy" / "README.md"
-_ENV_TEMPLATE = _REPO_ROOT / "deploy" / "dog-ai.env.example"
+_ENV_TEMPLATE = _REPO_ROOT / "deploy" / "karaos.env.example"
 
 
 def _read_text(path: Path) -> str:
@@ -66,7 +66,7 @@ def _parse_ini(path: Path) -> configparser.ConfigParser:
 
 
 def test_p0_r4_d1_anchor_1_systemd_unit_exists() -> None:
-    """A1 — File exists at deploy/systemd/dog-ai.service, non-empty, parseable."""
+    """A1 — File exists at deploy/systemd/karaos.service, non-empty, parseable."""
     assert _SYSTEMD_UNIT.exists(), (
         f"D1 systemd unit missing at {_SYSTEMD_UNIT}. Required by Plan v1 §2.1."
     )
@@ -127,7 +127,7 @@ def test_p0_r4_d1_anchor_4_systemd_environment_file_reference() -> None:
     assert "EnvironmentFile=" in content, (
         "D1 systemd [Service] missing EnvironmentFile= directive. Per Plan v1 "
         "§2.1 + P0.S6 secrets discipline, the unit MUST reference an external "
-        "env file (chmod 0600, owned by dog-ai) rather than carry inline "
+        "env file (chmod 0600, owned by karaos) rather than carry inline "
         "secret values."
     )
     # Negative check: no inline Environment= lines that look like secrets.
@@ -142,7 +142,7 @@ def test_p0_r4_d1_anchor_4_systemd_environment_file_reference() -> None:
         f"D1 systemd [Service] contains inline Environment= line with "
         f"secret-looking value: {leak_match.group(0)!r}. P0.S6 discipline "
         f"forbids leaked secrets in committed configuration. Use "
-        f"EnvironmentFile=/etc/dog-ai/dog-ai.env with chmod 0600 instead."
+        f"EnvironmentFile=/etc/karaos/karaos.env with chmod 0600 instead."
     )
 
 
@@ -152,29 +152,29 @@ def test_p0_r4_d1_anchor_4_systemd_environment_file_reference() -> None:
 
 
 def test_p0_r4_d2_anchor_1_supervisord_conf_exists() -> None:
-    """A5 — File exists at deploy/supervisord/dog-ai.conf, configparser-parseable."""
+    """A5 — File exists at deploy/supervisord/karaos.conf, configparser-parseable."""
     assert _SUPERVISORD_CONF.exists(), (
         f"D2 supervisord config missing at {_SUPERVISORD_CONF}. Required by "
         f"Plan v1 §2.2."
     )
     parser = _parse_ini(_SUPERVISORD_CONF)
-    assert "program:dog-ai" in parser.sections(), (
-        f"D2 supervisord config parsed but [program:dog-ai] section absent. "
+    assert "program:karaos" in parser.sections(), (
+        f"D2 supervisord config parsed but [program:karaos] section absent. "
         f"Present sections: {sorted(parser.sections())}. Per Plan v1 §2.2, "
         f"the single program section drives supervisord's program lifecycle."
     )
 
 
 def test_p0_r4_d2_anchor_2_supervisord_program_section_has_autorestart() -> None:
-    """A6 — [program:dog-ai] has autorestart=true + startretries= + startsecs=
+    """A6 — [program:karaos] has autorestart=true + startretries= + startsecs=
     directives (native exponential backoff per Q3 LOCK 2026-05-23).
     """
     parser = _parse_ini(_SUPERVISORD_CONF)
-    section = parser["program:dog-ai"]
+    section = parser["program:karaos"]
     # autorestart contract — exact value match (Plan v2 §2.6 (c) deliberate-regression
     # drops autorestart=true and expects this anchor to fire).
     assert section.get("autorestart") == "true", (
-        f"D2 [program:dog-ai] missing or mismatched autorestart=true. "
+        f"D2 [program:karaos] missing or mismatched autorestart=true. "
         f"Current value: {section.get('autorestart')!r}. Per Plan v1 §2.2 + "
         f"Q3 verdict, supervisord's native exponential backoff requires "
         f"autorestart=true."
@@ -182,11 +182,11 @@ def test_p0_r4_d2_anchor_2_supervisord_program_section_has_autorestart() -> None
     # Companion directives — presence-only check (values are Plan v1 §2.2 LOCKED
     # but precision matching is reserved for the supervisor's own validator).
     assert "startretries" in section, (
-        "D2 [program:dog-ai] missing startretries= directive. Per Plan v1 §2.2, "
+        "D2 [program:karaos] missing startretries= directive. Per Plan v1 §2.2, "
         "the retry cap (10) bounds consecutive failures."
     )
     assert "startsecs" in section, (
-        "D2 [program:dog-ai] missing startsecs= directive. Per Plan v1 §2.2, "
+        "D2 [program:karaos] missing startsecs= directive. Per Plan v1 §2.2, "
         "the boot stabilization window (5s) defines when a launch counts as "
         "successful for backoff reset."
     )
@@ -220,7 +220,7 @@ def test_p0_r4_d3_anchor_1_readme_exists_and_covers_both_supervisors() -> None:
 
 def test_p0_r4_d4_anchor_1_env_template_documents_all_config_env_vars() -> None:
     """A8 (Plan v2 LOCKED) — programmatic enforcement: every os.getenv(...)
-    key in core/config.py MUST appear in deploy/dog-ai.env.example.
+    key in core/config.py MUST appear in deploy/karaos.env.example.
 
     Replaces Plan v1's hardcoded TOGETHER_API_KEY + HF_TOKEN check with
     programmatic extraction. Future env vars automatically caught.
@@ -277,7 +277,7 @@ def test_p0_r4_d4_anchor_1_env_template_documents_all_config_env_vars() -> None:
 
 def test_p0_r4_d4_anchor_2_env_template_values_are_empty_per_p0s6() -> None:
     """A9 (Plan v2 LOCKED) — P0.S6 compliance: secret-class env vars in
-    deploy/dog-ai.env.example MUST have EMPTY values (no leaked secrets).
+    deploy/karaos.env.example MUST have EMPTY values (no leaked secrets).
 
     Expanded from Plan v1's 2-key check to cover all 4 secret-class keys from
     core/config.py: TOGETHER_API_KEY + HF_TOKEN + GROQ_API_KEY + TAVILY_API_KEY.

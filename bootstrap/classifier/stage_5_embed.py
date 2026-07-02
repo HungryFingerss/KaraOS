@@ -31,7 +31,7 @@ from pathlib import Path
 import httpx
 import numpy as np
 
-# Load TOGETHER_API_KEY from dog-ai/.env when run as a bootstrap script.
+# Load TOGETHER_API_KEY from the repo-root .env when run as a bootstrap script.
 try:
     from dotenv import load_dotenv
     load_dotenv(Path(__file__).resolve().parents[2] / ".env")
@@ -55,7 +55,7 @@ async def _embed_batch(texts: list[str]) -> "list[np.ndarray] | None":
 
     if not EMBED_API_KEY:
         print("[stage_5_embed] core.brain_agent.EMBED_API_KEY empty -- "
-              "set TOGETHER_API_KEY in dog-ai/.env")
+              "set TOGETHER_API_KEY in the repo-root .env")
         return None
 
     async with httpx.AsyncClient(timeout=60.0) as http:

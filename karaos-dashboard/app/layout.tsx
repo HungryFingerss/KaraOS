@@ -15,7 +15,7 @@ const display = Syne({
 })
 
 export const metadata: Metadata = {
-  title: 'DOG-AI',
+  title: 'KaraOS',
   description: 'Face recognition pipeline dashboard',
 }
 

@@ -10,7 +10,7 @@ startup; it never re-runs the bootstrap.
 ## Quick start
 
 ```bash
-# From dog-ai/ root:
+# From the repo root:
 export TOGETHER_API_KEY=...      # required for stages 3 + 5
 
 # One-shot (~15-20 min, ~$1.05 cost):
@@ -29,7 +29,7 @@ python -m bootstrap.classifier.stage_6_seed       # Combine corpus + hand-author
 
 - `TOGETHER_API_KEY` environment variable set (for 70B classification + E5 embeddings).
 - `spacy` installed: `pip install spacy && python -m spacy download en_core_web_sm` (~50 MB).
-- `httpx`, `numpy` (already in dog-ai's requirements).
+- `httpx`, `numpy` (already in KaraOS's requirements).
 - Internet access for stages 1, 3, 5.
 
 ## Cost

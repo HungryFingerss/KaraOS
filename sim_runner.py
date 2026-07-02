@@ -1,5 +1,5 @@
 """
-sim_runner.py — Headless conversation simulator for dog-ai.
+sim_runner.py — Headless conversation simulator for KaraOS.
 
 Drives pipeline.conversation_turn() directly — no camera, no STT.
 TTS audio plays normally through speakers.
@@ -861,7 +861,7 @@ async def close_session() -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="dog-ai headless conversation simulator")
+    parser = argparse.ArgumentParser(description="KaraOS headless conversation simulator")
     parser.add_argument("turns_file", nargs="?", help="Path to turns .txt file")
     parser.add_argument("--close-session", action="store_true", help="Close sim session cleanly")
     args = parser.parse_args()

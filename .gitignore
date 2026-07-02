@@ -121,9 +121,9 @@ bench/perception/runs/
 # =============================================================================
 node_modules/
 .next/
-dog-ai-dashboard/.next/
-dog-ai-dashboard/node_modules/
-dog-ai-dashboard/tsconfig.tsbuildinfo
+karaos-dashboard/.next/
+karaos-dashboard/node_modules/
+karaos-dashboard/tsconfig.tsbuildinfo
 *.tsbuildinfo
 
 # =============================================================================

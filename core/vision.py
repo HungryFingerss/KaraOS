@@ -497,8 +497,8 @@ class Camera:
             return self.capture_frames(n=n, interval=interval)
 
         print("[Camera] Preview window open. Press SPACE to capture, Q to quit.")
-        cv2.namedWindow("DOG-AI Enrollment", cv2.WINDOW_NORMAL)
-        cv2.resizeWindow("DOG-AI Enrollment", 800, 450)
+        cv2.namedWindow("KaraOS Enrollment", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("KaraOS Enrollment", 800, 450)
 
         # Wait for SPACE keypress
         while True:
@@ -513,7 +513,7 @@ class Camera:
                 (20, 40),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2
             )
-            cv2.imshow("DOG-AI Enrollment", display)
+            cv2.imshow("KaraOS Enrollment", display)
 
             key = cv2.waitKey(1) & 0xFF
             if key == ord(' '):
@@ -542,7 +542,7 @@ class Camera:
             # Draw a green border to show capturing is active
             h, w = display.shape[:2]
             cv2.rectangle(display, (0, 0), (w-1, h-1), (0, 255, 0), 4)
-            cv2.imshow("DOG-AI Enrollment", display)
+            cv2.imshow("KaraOS Enrollment", display)
             cv2.waitKey(1)
             time.sleep(interval)
 

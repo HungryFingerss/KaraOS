@@ -1,4 +1,4 @@
-# Setup — restoring KaraOS / dog-ai on a new machine
+# Setup — restoring KaraOS on a new machine
 
 This file documents the full restore flow if you've lost your previous machine and want to bring KaraOS back from the git backup.
 
@@ -33,8 +33,8 @@ After install: `git lfs install` (registers LFS hooks for your user account; one
 
 ```bash
 # 1. Clone the private repo (you'll be prompted to authenticate)
-git clone https://github.com/HungryFingerss/Cognitive-System.git dog-ai
-cd dog-ai
+git clone https://github.com/HungryFingerss/KaraOS.git karaos
+cd karaos
 
 # 2. Pull the LFS-stored model files (~573 MB total)
 git lfs pull

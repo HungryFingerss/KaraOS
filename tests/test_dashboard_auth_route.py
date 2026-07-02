@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 
 
-_DASHBOARD = Path(__file__).resolve().parent.parent / "dog-ai-dashboard"
+_DASHBOARD = Path(__file__).resolve().parent.parent / "karaos-dashboard"
 _AUTH_ROUTE_TS = _DASHBOARD / "app" / "api" / "auth" / "route.ts"
 _FACTORY_RESET_TS = _DASHBOARD / "app" / "api" / "factory-reset" / "route.ts"
 
@@ -48,10 +48,10 @@ def auth_src() -> str:
 
 def test_auth_valid_token_sets_cookie_and_redirects(auth_src):
     """D2 test 5 (structural) — on token match, route sets the
-    `dogai_session` cookie with locked attributes AND returns 302.
+    `karaos_session` cookie with locked attributes AND returns 302.
 
     Locked cookie shape per Plan v1 §1.D2:
-      - name: 'dogai_session'
+      - name: 'karaos_session'
       - httpOnly: true
       - sameSite: 'strict'
       - path: '/'
@@ -64,7 +64,7 @@ def test_auth_valid_token_sets_cookie_and_redirects(auth_src):
     # status 302 explicit
     assert "302" in auth_src, "302 status code MUST be explicit"
     # Cookie name + locked attributes
-    assert "'dogai_session'" in auth_src or '"dogai_session"' in auth_src
+    assert "'karaos_session'" in auth_src or '"karaos_session"' in auth_src
     assert "httpOnly: true" in auth_src
     # SameSite=Strict (lowercase 'strict' per Next.js cookie API)
     assert ("sameSite: 'strict'" in auth_src or 'sameSite: "strict"' in auth_src), (

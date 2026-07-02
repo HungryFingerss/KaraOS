@@ -8,7 +8,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-ROOT      = Path(__file__).parent.parent.parent   # dog-ai/
+ROOT      = Path(__file__).parent.parent.parent   # repo root
 LOG_FILE  = Path(__file__).parent / "session.log"
 STATE_DIR = Path(__file__).parent                 # .claude/
 
@@ -37,7 +37,7 @@ def main():
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     print("=" * 60)
-    print("  DOG-AI SESSION STARTED")
+    print("  KARAOS SESSION STARTED")
     print(f"  {now}")
     print(f"  Tests: {_test_count()}")
     print()

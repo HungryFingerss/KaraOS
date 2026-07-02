@@ -16,7 +16,7 @@
 #   1. binary file format          — data/classifier_scenarios.db, faces/
 #   2. ML model artifacts          — models/* (.pt, .onnx, .pth)
 #   3. eval-bench JSON artifacts   — tests/eval_bench_runs/*.json
-#   4. npm SRI hashes              — dog-ai-dashboard/package-lock.json
+#   4. npm SRI hashes              — karaos-dashboard/package-lock.json
 # Plus committed seeds + transient hypothesis cache:
 #   - data/classifier_scenarios_seed.jsonl  (Spec 1 bootstrap seed)
 #   - .hypothesis/                          (regenerable on every run)
@@ -40,7 +40,7 @@ repos:
             faces/.*|
             models/.*|
             tests/eval_bench_runs/.*\.json|
-            dog-ai-dashboard/package-lock\.json|
+            karaos-dashboard/package-lock\.json|
             data/classifier_scenarios_seed\.jsonl|
             \.hypothesis/.*
           )$

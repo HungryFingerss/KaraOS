@@ -35,7 +35,7 @@ from pathlib import Path
 
 import pytest
 
-_DASHBOARD = Path(__file__).resolve().parent.parent / "dog-ai-dashboard"
+_DASHBOARD = Path(__file__).resolve().parent.parent / "karaos-dashboard"
 _HELPER_TS = _DASHBOARD / "lib" / "requireAuth.ts"
 _MIDDLEWARE_TS = _DASHBOARD / "middleware.ts"
 _API_DIR = _DASHBOARD / "app" / "api"
@@ -140,10 +140,10 @@ def test_helper_token_read_is_enoent_tolerant(helper_src):
     )
 
 
-def test_helper_reads_dogai_session_cookie(helper_src):
-    assert "cookies.get('dogai_session')" in helper_src or \
-           'cookies.get("dogai_session")' in helper_src, (
-        "requireAuth must read the locked dogai_session cookie"
+def test_helper_reads_karaos_session_cookie(helper_src):
+    assert "cookies.get('karaos_session')" in helper_src or \
+           'cookies.get("karaos_session")' in helper_src, (
+        "requireAuth must read the locked karaos_session cookie"
     )
 
 

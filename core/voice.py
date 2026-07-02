@@ -85,7 +85,7 @@ def _load_ecapa_patched(device: str = "cuda"):
 
     # Phase 1 — GLOBAL patch, idempotent (sentinel so repeat calls don't wrap the wrapper).
     # huggingface_hub is always importable; the patch is the load-bearing pre-import step.
-    if not getattr(_hf.hf_hub_download, "_dogai_patched", False):
+    if not getattr(_hf.hf_hub_download, "_karaos_patched", False):
         _orig_download = _hf.hf_hub_download
 
         @functools.wraps(_orig_download)
@@ -99,7 +99,7 @@ def _load_ecapa_patched(device: str = "cuda"):
                     raise ValueError(str(_e)) from _e
                 raise
 
-        _patched_download._dogai_patched = True
+        _patched_download._karaos_patched = True
         _hf.hf_hub_download = _patched_download
 
     # Phases 2-4 — import + namespace patch + load, failure-guarded → None (logged).
@@ -109,7 +109,7 @@ def _load_ecapa_patched(device: str = "cuda"):
         # Phase 3 — patch SpeechBrain's captured reference (after import).
         import speechbrain.utils.fetching as _sbfetch
         if hasattr(_sbfetch, "hf_hub_download") \
-                and not getattr(_sbfetch.hf_hub_download, "_dogai_patched", False):
+                and not getattr(_sbfetch.hf_hub_download, "_karaos_patched", False):
             _sbfetch.hf_hub_download = _hf.hf_hub_download
 
         return EncoderClassifier.from_hparams(

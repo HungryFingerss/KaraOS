@@ -26,7 +26,7 @@ import sys
 import time
 from pathlib import Path
 
-# Load TOGETHER_API_KEY from dog-ai/.env when run as a bootstrap script.
+# Load TOGETHER_API_KEY from the repo-root .env when run as a bootstrap script.
 try:
     from dotenv import load_dotenv
     load_dotenv(Path(__file__).resolve().parents[2] / ".env")

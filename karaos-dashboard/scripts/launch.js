@@ -1,4 +1,4 @@
-// dog-ai-dashboard/scripts/launch.js — P0.S2 D5 launch wrapper.
+// karaos-dashboard/scripts/launch.js — P0.S2 D5 launch wrapper.
 //
 // Wraps `next dev|start` so the dashboard's bind address is governed by
 // a single source of truth: `DASHBOARD_BIND` env var. Default is

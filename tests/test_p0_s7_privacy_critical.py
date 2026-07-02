@@ -94,7 +94,7 @@ _KNOWN_PRIVACY_CRITICAL_STANDALONE: tuple[tuple[str, str | None, str], ...] = (
 
 # Plan v2 §1.1 locked scope for the inverse-drift walker.
 # Paths NOT scanned (with documented rationale):
-#   - dog-ai-dashboard/        Node.js — no Python tests possible
+#   - karaos-dashboard/        Node.js — no Python tests possible
 #   - node_modules/            third-party — not our drift surface
 #   - .github/                 CI config — not test files
 #   - bootstrap/               one-shot offline pipeline — tests under tests/
