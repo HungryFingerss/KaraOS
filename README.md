@@ -11,24 +11,36 @@ profile + persona pack (`profiles/` + `persona/`); the companion — this repo's
 default profile — is the first reference persona:
 see face → identify → greet → listen → respond → repeat.
 
-## Structure
+## What's actually in this repo
+
+The whole thing lives here — the runtime, its 4,200+ test suite, the CI/CD, the
+evaluation benches, the published benchmark results, and the engineering rule
+book. Every folder has its own README describing exactly what's inside.
 
 ```
 karaos/
-├── core/
-│   ├── config.py      # all settings
-│   ├── vision.py      # RetinaFace detection + AdaFace recognition
-│   ├── db.py          # SQLite + FAISS face database
-│   ├── brain.py       # Gemini (primary) + Ollama (fallback)
-│   ├── audio.py       # Whisper STT + edge-tts TTS
-│   └── state.py       # shared state (pipeline → dashboard)
-├── karaos-dashboard/  # Next.js dashboard
-├── pipeline.py        # main loop
-├── enroll.py          # standalone enrollment script
-├── delete_person.py   # delete a person
-├── models/            # place ONNX models here (see below)
-├── faces/             # face DB (auto-created, gitignored)
-└── requirements.txt
+├── core/                   # the engine: perception, identity, memory, speech, resilience
+├── runtime/                # the engine/app seam (extracted from the old pipeline monolith)
+├── flows/                  # the app layer: use-case choreography (companion today)
+├── pipeline.py             # the main async loop (entry point: python pipeline.py)
+├── profiles/               # deployment config as data (companion.yaml, robotics.yaml)
+├── persona/                # persona packs: who the deployment IS (data-only YAML)
+├── models/                 # bundled ONNX/pth weights via Git LFS (~600MB)
+├── tests/                  # 189 test files — behavioral goldens + ~25 AST invariants
+├── bench/                  # perception eval harness (face EER + attribution, CI-gated)
+├── karaos-dashboard/       # Next.js local dashboard (token-auth, localhost-bound)
+├── deploy/                 # systemd + supervisord units + operator runbook
+├── tools/                  # operator CLIs (factory reset, event-log replay, SPDX)
+├── bootstrap/              # one-shot offline pipelines (built the classifier seed)
+├── data/                   # the classifier seed (system intelligence; survives reset)
+├── docs/                   # 19-chapter architecture reference + policies
+├── published-papers-tests/ # external benchmark validation (the honest journey)
+├── terminal-logs/          # raw live-session demo logs
+├── rule book/              # the engineering disciplines + the 170-spec cycle archive
+├── enroll.py               # standalone enrollment CLI
+├── delete_person.py / audit_person.py / repair_gallery.py   # person-lifecycle CLIs
+├── sim_runner.py           # headless conversation simulator (turns_*.txt scripts)
+└── faces/                  # runtime data: face DB, memories (auto-created, gitignored)
 ```
 
 ## Setup
@@ -37,7 +49,7 @@ karaos/
 
 ```bash
 python -m venv venv
-venv\Scripts\activate       # Windows
+venv\Scripts\activate       # Windows   (Linux: source venv/bin/activate)
 pip install -r requirements.txt
 ```
 
@@ -56,17 +68,25 @@ The `.secrets.baseline` file is the allowlist snapshot of known false positives
 fail the commit. To refresh the baseline after legitimately adding a new
 high-entropy file: `detect-secrets scan --baseline .secrets.baseline --update`.
 
-### 2. Download models
+### 2. Models
 
-Place these in `models/`:
-- `scrfd_10g_bnkps.onnx` — from: https://github.com/deepinsight/insightface
-- `adaface_ir101.onnx`   — from: https://github.com/mk-minchul/AdaFace
+The bundled weights (face detection/recognition, TTS, turn detection,
+anti-spoofing) are in the repo via Git LFS:
+
+```bash
+git lfs pull
+```
+
+The rest (Whisper STT, speaker ID, diarization) download from Hugging Face at
+first run — see `models/README.md` for the full inventory.
 
 ### 3. Environment variables
 
 ```bash
 copy .env.example .env
-# Edit .env and add your GEMINI_API_KEY
+# Required: TOGETHER_API_KEY (LLM + embeddings — validated loudly at boot)
+# Optional: HF_TOKEN (pyannote diarization), TAVILY_API_KEY (web search),
+#           GROQ_API_KEY (alternate LLM)
 ```
 
 ### 4. Dashboard
@@ -79,14 +99,48 @@ npm run build   # production
 npm start
 ```
 
-Dashboard runs on http://localhost:3000
+Dashboard runs on http://localhost:3000 (localhost-bound by default; the
+pipeline prints a one-time auth URL at boot — see `karaos-dashboard/README.md`).
 
 ### 5. Run pipeline
 
 ```bash
-# From karaos/ root
+# From the repo root
 python pipeline.py
 ```
+
+## Tests — the proof the thing works
+
+**4,237 passing / 0 failed** (4,259 collected). Behavioral golden tests drive the
+real pipeline with only hardware mocked; ~25 structural-invariant files enforce
+the engineering rules by AST scan (no silent excepts, no wall-clock deadline
+math, layering boundaries, secrets hygiene, paired-write atomicity — the rule
+book made executable).
+
+```bash
+python -m pytest --ignore=tests/test_brain_json_parser_hypothesis.py -q
+```
+
+See `tests/README.md` for the layers, markers, and conventions.
+
+## CI/CD — what runs automatically
+
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `fast.yml` | every push + PR | ruff + mypy (informational) + the fast test subset (`-m "not slow and not network and not models"`), plus the privacy-critical tests as a separate fail-on-skip step |
+| `slow.yml` | nightly + manual | the FULL suite with model caches + the perception bench (`bench/perception --alert`) in a companion + robotics profile matrix, LFS enabled |
+| `security.yml` | weekly + on requirements change | pip-audit + Trivy filesystem scan (SARIF to the Security tab) |
+| `trufflehog.yml` | PR diff + weekly | secret scanning (diff on PRs, full-history on schedule) |
+
+## Benchmarks & evidence
+
+- `bench/perception/` — the CI-gated perception numbers (face EER 0.0625 on the
+  synthetic gate, attribution 51/51 golden routing cases) with committed,
+  human-reviewed baselines.
+- `published-papers-tests/` — validation against a published academic benchmark,
+  including the honest journey (the run that looked great, the falsifying
+  experiment that cut it down, and the rewrite that earned the number back).
+- `terminal-logs/` — raw, unedited live-session logs from real demos.
 
 ## Enrollment
 
@@ -97,10 +151,19 @@ It asks your name then captures your face for 5 seconds.
 
 **Script:** `python enroll.py --name "Your Name"`
 
+## The rule book
+
+`rule book/` holds the engineering operating system this repo was built under —
+the per-role disciplines (architect / developer / auditor), each rule with its
+provenance and its CI-enforcement pointer, plus the 170-file cycle-spec archive
+the rules were earned from.
+
 ## Hardware targets
 
-- **Now:** Laptop (development + testing)
-- **Later:** Jetson AGX Orin 32GB (drop-in, same code, zero changes)
+- **Now:** Windows laptop (development + testing; DirectShow camera, CUDA)
+- **Target:** Jetson AGX Orin 32GB — same code; config-level changes expected
+  (faiss-gpu, V4L2 camera backend, TensorRT export are on the deployment
+  checklist, not "zero changes")
 
 ## License & Governance
 
