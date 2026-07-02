@@ -203,3 +203,6 @@ Thumbs.db
 !/GOVERNANCE.md
 !/CODE_OF_CONDUCT.md
 !/CONTRIBUTING.md
+
+# Internal specs / board discussions / cycle artifacts — LOCAL ONLY, never published
+karaos-org-discussions/
