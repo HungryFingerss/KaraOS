@@ -2645,17 +2645,52 @@ class TestParallelContradictionChecks:
         orch._schema_norm         = SchemaNormAgent(orch._brain_db, orch._embed_agent)
         orch._session_turn_counts = {}
         orch._intra_pref_done     = set()
+        # VACUITY FIX (SB.7 Steps 7-8 gate ripple, 2026-07-02): this hand-
+        # rolled __new__ fixture went stale as _process_turn grew — missing
+        # _disputed_persons (Session 51) then _system_name etc. made the turn
+        # AttributeError BEFORE the contradiction gather; the per-turn handler
+        # swallowed it, the checks never ran, and the old wall-clock-only
+        # assert passed VACUOUSLY. Completed here to the full template shape
+        # (mirrors _make_orch at ~line 990); the len(check_intervals) == 2
+        # guard below is what surfaced the vacuity and keeps it surfaced.
+        orch._session_start_ts    = {}
+        orch._disputed_persons    = set()
+        orch._system_name         = "Dog"
+        from core.brain_agent import (
+            ConversationInsightAgent, RoutineAgent, ProactiveNudgeAgent, WatchdogAgent,
+        )
+        orch._insight_agent       = ConversationInsightAgent(orch._http)
+        orch._routine_agent       = RoutineAgent(orch._brain_db)
+        orch._nudge_agent         = ProactiveNudgeAgent(orch._brain_db, orch._graph_db)
+        orch._social_graph        = SocialGraphAgent(orch._http)
+        orch._identity_agent      = IdentityAgent()
+        orch._briefing_agent      = BriefingAgent(orch._http)
+        orch._faces_conn = sqlite3.connect(":memory:")
+        orch._faces_conn.executescript("""
+            CREATE TABLE conversation_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                person_id TEXT, role TEXT, content TEXT, ts REAL DEFAULT 0,
+                room_session_id TEXT, audience_ids TEXT
+            );
+            CREATE TABLE persons (id TEXT PRIMARY KEY, name TEXT);
+            INSERT INTO persons VALUES ('jagan', 'Jagan');
+            INSERT INTO conversation_log (person_id, role, content)
+            VALUES ('jagan', 'user', 'I moved to Mumbai and now work at Infosys');
+        """)
+        orch._faces_conn.commit()
+        orch._watchdog            = WatchdogAgent(orch._brain_db, orch._faces_conn)
 
         # Pre-store two conflicting facts so contradiction checks are triggered
         e1 = Extraction("Jagan", "person", "lives_in",  "Hyderabad", 0.9, False, None)
         e2 = Extraction("Jagan", "person", "works_at",  "TCS",       0.9, False, None)
         orch._brain_db.store_knowledge([e1, e2], turn_id=0, person_id="jagan", agent="seed")
 
-        check_times = []
+        check_intervals = []
 
-        async def slow_check(entity, attribute, old_val, new_val):
+        async def slow_check(entity, attribute, old_val, new_val, contradiction_count=0):
+            _start = _time.monotonic()
             await asyncio.sleep(0.05)   # each check takes 50ms
-            check_times.append(_time.time())
+            check_intervals.append((_start, _time.monotonic()))
             return False, "compatible"
 
         orch._contradictor.check = slow_check
@@ -2668,26 +2703,31 @@ class TestParallelContradictionChecks:
         t0 = _time.time()
         # Call the contradiction check logic by patching extract result
         with patch.object(orch._extractor, "extract", new=AsyncMock(return_value=extractions)):
-            orch._faces_conn = sqlite3.connect(":memory:")
-            orch._faces_conn.executescript("""
-                CREATE TABLE conversation_log (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    person_id TEXT, role TEXT, content TEXT, ts REAL DEFAULT 0,
-                    room_session_id TEXT, audience_ids TEXT
-                );
-                CREATE TABLE persons (id TEXT PRIMARY KEY, name TEXT);
-                INSERT INTO persons VALUES ('jagan', 'Jagan');
-                INSERT INTO conversation_log (person_id, role, content)
-                VALUES ('jagan', 'user', 'I moved to Mumbai and now work at Infosys');
-            """)
-            orch._faces_conn.commit()
             orch._brain_db.set_last_turn_id(0)
             await orch._poll_once()
 
         elapsed = _time.time() - t0
-        # With parallel checks: ~50ms total (not 100ms sequential)
-        # Allow generous 120ms for CI overhead
-        assert elapsed < 0.12, f"Contradiction checks appear sequential: {elapsed:.3f}s"
+        # Mechanism-over-wall-clock (SB.7 Steps 7-8 gate ripple, 2026-07-02):
+        # the old `elapsed < 0.12` wall-clock cutoff distinguished parallel
+        # (~50ms) from sequential (~100ms) with only ~70ms of margin for ALL
+        # the real _poll_once work (BrainDB + Kuzu + SQLite) — full-suite
+        # load (plus pytest-cov's per-test hooks from SB.7 Step 8) breached
+        # it while the gather mechanism was intact (3/3 green isolated).
+        # Interval overlap is DIRECT evidence of concurrency and load-immune:
+        # two sequential 50ms checks can never overlap regardless of box
+        # speed; gather'd checks always do regardless of overhead.
+        assert len(check_intervals) == 2, (
+            f"expected 2 contradiction checks, got {len(check_intervals)}"
+        )
+        (a_start, a_end), (b_start, b_end) = sorted(check_intervals)
+        assert b_start < a_end, (
+            f"Contradiction checks appear sequential: intervals "
+            f"[{a_start:.4f}, {a_end:.4f}) and [{b_start:.4f}, {b_end:.4f}) "
+            f"do not overlap"
+        )
+        # Non-load-bearing sanity ceiling — a hang guard only; the
+        # parallelism proof is the overlap assert above.
+        assert elapsed < 5.0, f"_poll_once took {elapsed:.3f}s — something is hung"
         orch._faces_conn.close()
 
 

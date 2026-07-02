@@ -1,0 +1,31 @@
+{
+  "metrics": {
+    "face_eer": {
+      "eer": 0.0625,
+      "implied_threshold": 0.5108992457389832,
+      "n_genuine": 80,
+      "n_impostor": 80,
+      "seed": 20260702
+    },
+    "attribution": {
+      "accuracy": 1.0,
+      "per_band": {
+        "short_hard": 1.0,
+        "noise": 1.0,
+        "normal": 1.0,
+        "gap": 1.0
+      },
+      "mismatches": [],
+      "denominator": 51
+    }
+  },
+  "metadata": {
+    "run_ts": "2026-07-02T10:43:29Z",
+    "git_sha": "8e70486cd9f8b8de8f6780fdfa83f0dd02d16f80",
+    "recognition_threshold": 0.28,
+    "embed_model": "intfloat/multilingual-e5-large-instruct",
+    "seed": 20260702,
+    "denominator": 51,
+    "duration_secs": 0.7
+  }
+}

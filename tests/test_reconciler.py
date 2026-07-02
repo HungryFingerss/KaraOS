@@ -51,7 +51,32 @@ from core.reconciler import (
     _p5_no_session_no_action,
     reconcile,
 )
-from core.reconciler_state import VALID_ACTIONS
+from core.reconciler_state import SessionState, VALID_ACTIONS
+from core.voice_channel import IdentityClaim
+from core.vision_channel import PresenceState
+from tests.reconciler_golden import RECONCILER_GOLDEN_CASES, UNCHECKED
+
+# 2b deliverable — the 27 per-rule tests below DERIVE their inputs + expected
+# outcomes from the golden registry instead of duplicating fixtures inline.
+# Mirrors the precedent in test_p10_reconciler_contract.py (C1-C21).
+_GOLDEN = {c.case_id: c for c in RECONCILER_GOLDEN_CASES}
+
+
+def _from_golden(case_id):
+    """Build (claim, presence, session, case) for a golden case_id.
+
+    Splats the registry's plain-dict payloads into the channel/state
+    dataclasses here (channel imports are allowed in the test driver, never
+    in the golden module). ``_GOLDEN[case_id]`` raises KeyError on a typo —
+    exact case_id strings are load-bearing.
+    """
+    case = _GOLDEN[case_id]
+    return (
+        IdentityClaim(**case.claim),
+        PresenceState(**case.presence),
+        SessionState(**case.session),
+        case,
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -354,31 +379,23 @@ def test_p5_no_session_returns_no_action():
     fallback returning no_action with rule_fired=""; with rule 21
     implemented it now returns via the rule itself.
     """
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
-
-    # NARROWED at Spec 1 D2 (2026-05-30): utterance_duration sub-MIN_AUDIO (was 1.5s).
-    # Post-D2 a REAL-LENGTH no_signal no-session turn opens a gated stranger; the
-    # "truly empty, nothing to do" turn this test asserts is now the sub-0.5s case
+    # NARROWED at Spec 1 D2 (2026-05-30): golden fixture carries
+    # utterance_duration sub-MIN_AUDIO (was 1.5s). Post-D2 a REAL-LENGTH
+    # no_signal no-session turn opens a gated stranger; the "truly empty,
+    # nothing to do" turn this test asserts is now the sub-0.5s case
     # (new_stranger's utt>=0.5 OR clause stays False, so it falls to no_action).
-    claim = IdentityClaim(
-        pid=None, confidence=0.0, n_diarize_segments=1,
-        utterance_duration=0.3, reasoning="test",
-        confidence_is_no_signal=True,
+    claim, presence, session, case = _from_golden(
+        "PR1_p5_no_session_returns_no_action"
     )
-    presence = PresenceState(visible_pids=(), unrecognized_track_ids=())
-    session = SessionState(
-        cur_pid=None, cur_person_type="", n_active_sessions=0,
-        voice_gallery_sizes={}, cur_holder_voice_n=0, now=0.0,
-    )
+
     decision = reconcile(claim, presence, session)
-    assert decision.action == "no_action"
+    assert decision.action == case.expected_action
     assert decision.action in VALID_ACTIONS
-    assert decision.pid is None
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
     # With all 22 rules implemented, rule 21 (_p5_no_session_no_action)
     # catches this state — no longer the dispatcher fallback.
-    assert decision.rule_fired == _p5_no_session_no_action.__name__
+    assert decision.rule_fired == _p5_no_session_no_action.__name__ == case.expected_rule_fired
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -409,42 +426,10 @@ def test_p4_pyannote_vouched_stranger_opens_session():
     enforced separately). Action MUST be `new_stranger` so caller mints a
     fresh session for Lexi instead of attributing to Jagan.
     """
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
-
-    # IdentityClaim shape extracted from fixture line 562 (pyannote 2 segs)
-    # + line 564 (v_score absent => 0.0) + line 559/563 STT timing (utterance
-    # was a full multi-second question, well past MIN_UTTERANCE_SECS=1.0s).
-    claim = IdentityClaim(
-        pid=None,
-        confidence=0.0,
-        n_diarize_segments=2,
-        utterance_duration=2.0,  # ≈ 69 speech chunks × 32ms (line 557); any value ≥ 1.0 clears P0
-        reasoning="ECAPA: no enrolled match",
-        confidence_is_no_signal=True,
-    )
-
-    # PresenceState: line 558 [Vision] Jagan, no unrecognized tracks
-    # logged near the routing call. per_pid_confidence from line 572
-    # ("face_conf=0.87"). Q2: per_pid_confidence is informational; the
-    # rule doesn't read it. Included for fixture fidelity.
-    presence = PresenceState(
-        visible_pids=("jagan_992ed5",),
-        unrecognized_track_ids=(),
-        per_pid_confidence={"jagan_992ed5": 0.87},
-    )
-
-    # SessionState: line 567 Turn start identifies Jagan; CLAUDE.md
-    # confirms Jagan = best_friend (owner). Line 572 voice_n=3.
-    # Only Jagan's session is active (n_active_sessions=1).
-    session = SessionState(
-        cur_pid="jagan_992ed5",
-        cur_person_type="best_friend",
-        n_active_sessions=1,
-        voice_gallery_sizes={"jagan_992ed5": 3},
-        cur_holder_voice_n=3,
-        now=1714374585.223,  # rough wall clock from log line 564 timestamp
+    # Inputs + expected outcome derive from the golden registry (2b).
+    # Fixture-value provenance is in the docstring + canary md.
+    claim, presence, session, case = _from_golden(
+        "PR2_p4_pyannote_vouched_stranger_opens_session"
     )
 
     decision = reconcile(claim, presence, session)
@@ -452,22 +437,23 @@ def test_p4_pyannote_vouched_stranger_opens_session():
     # Strong assertion: pin BOTH the action AND the specific rule fired.
     # `action == "new_stranger"` alone could match other rules; rule_fired
     # pin guards against future cascade reorders silently moving the match.
-    assert decision.action == "new_stranger", (
+    assert decision.action == case.expected_action, (
         f"2026-04-29 live-bug regression: pyannote-vouched stranger in solo "
         f"room must route to `new_stranger`, got {decision.action!r}. "
         f"Rule fired: {decision.rule_fired!r}. "
         f"Reasoning: {decision.reasoning!r}"
     )
-    assert decision.rule_fired == _p4_pyannote_vouched_stranger.__name__, (
+    assert decision.rule_fired == _p4_pyannote_vouched_stranger.__name__ == case.expected_rule_fired, (
         f"Wrong rule matched the live-bug fixture. Expected "
         f"_p4_pyannote_vouched_stranger; got {decision.rule_fired!r}. "
         f"This usually means cascade ordering broke (a P0/P1/P2/P3 rule "
         f"is now matching the fixture state) OR the live-bug rule's "
         f"predicate has drifted from the fixture's exact shape."
     )
-    assert decision.pid is None, (
-        "new_stranger action returns pid=None; caller mints fresh stranger pid"
-    )
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid, (
+            "new_stranger action returns pid=None; caller mints fresh stranger pid"
+        )
 
 
 def test_p4_pyannote_vouched_stranger_negative_confidence():
@@ -483,43 +469,24 @@ def test_p4_pyannote_vouched_stranger_negative_confidence():
     pyannote returned 2 segments, ECAPA compared Lexi's voice against Jagan's
     gallery and got score -0.05 (anti-correlated). The fix changed == 0.0 to <= 0.0.
     """
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
     from core.reconciler import _p4_pyannote_vouched_stranger
 
-    claim = IdentityClaim(
-        pid=None,
-        confidence=-0.05,  # negative cosine — anti-correlated with Jagan's gallery
-        n_diarize_segments=2,
-        utterance_duration=2.0,
-        reasoning="ECAPA: no enrolled match (best_score=-0.05)",
-    )
-    presence = PresenceState(
-        visible_pids=("jagan_992ed5",),
-        unrecognized_track_ids=(),
-        per_pid_confidence={"jagan_992ed5": 0.87},
-    )
-    session = SessionState(
-        cur_pid="jagan_992ed5",
-        cur_person_type="best_friend",
-        n_active_sessions=1,
-        voice_gallery_sizes={"jagan_992ed5": 3},
-        cur_holder_voice_n=3,
-        now=1714374585.223,
+    claim, presence, session, case = _from_golden(
+        "PR3_p4_pyannote_vouched_stranger_negative_confidence"
     )
 
     decision = reconcile(claim, presence, session)
 
-    assert decision.action == "new_stranger", (
+    assert decision.action == case.expected_action, (
         f"Negative ECAPA cosine (-0.05) must route to new_stranger, "
         f"got {decision.action!r}. Rule: {decision.rule_fired!r}. "
         f"Reasoning: {decision.reasoning!r}"
     )
-    assert decision.rule_fired == _p4_pyannote_vouched_stranger.__name__, (
+    assert decision.rule_fired == _p4_pyannote_vouched_stranger.__name__ == case.expected_rule_fired, (
         f"Expected _p4_pyannote_vouched_stranger, got {decision.rule_fired!r}"
     )
-    assert decision.pid is None
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 def test_p4_new_stranger_low_match_negative_confidence():
@@ -530,38 +497,23 @@ def test_p4_new_stranger_low_match_negative_confidence():
     still open a new stranger session. The original 0.0 < confidence check
     excluded negative values.
     """
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
     from core.reconciler import _p4_new_stranger_low_match
 
-    claim = IdentityClaim(
-        pid=None,
-        confidence=-0.08,  # negative: definitively not enrolled speaker
-        n_diarize_segments=1,
-        utterance_duration=1.5,
-        reasoning="ECAPA: no enrolled match (best_score=-0.08)",
-    )
-    presence = PresenceState(visible_pids=("jagan_abc",), unrecognized_track_ids=())
-    session = SessionState(
-        cur_pid="jagan_abc",
-        cur_person_type="best_friend",
-        n_active_sessions=1,
-        voice_gallery_sizes={"jagan_abc": 10},
-        cur_holder_voice_n=10,
-        now=1714374600.0,
+    claim, presence, session, case = _from_golden(
+        "PR4_p4_new_stranger_low_match_negative_confidence"
     )
 
     decision = reconcile(claim, presence, session)
 
-    assert decision.action == "new_stranger", (
+    assert decision.action == case.expected_action, (
         f"Negative single-segment ECAPA (-0.08) must route to new_stranger, "
         f"got {decision.action!r}. Rule: {decision.rule_fired!r}"
     )
-    assert decision.rule_fired == _p4_new_stranger_low_match.__name__, (
+    assert decision.rule_fired == _p4_new_stranger_low_match.__name__ == case.expected_rule_fired, (
         f"Expected _p4_new_stranger_low_match, got {decision.rule_fired!r}"
     )
-    assert decision.pid is None
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 def test_p0_tier1_hard_mismatch_drops():
@@ -576,32 +528,21 @@ def test_p0_tier1_hard_mismatch_drops():
         VOICE_ROUTING_MIN_UTTERANCE_SECS,
         VOICE_ROUTING_SHORT_UTT_FLOOR,
     )
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
-
-    # utt = 0.7s: above MIN_AUDIO 0.5, below MIN_UTTERANCE 1.0 (in P0 zone)
-    # score = 0.10: below SHORT_UTT_FLOOR 0.20 (hard mismatch)
-    claim = IdentityClaim(
-        pid="jagan_abc", confidence=0.10, n_diarize_segments=1,
-        utterance_duration=0.7, reasoning="test",
-    )
-    presence = PresenceState(visible_pids=("jagan_abc",), unrecognized_track_ids=())
-    session = SessionState(
-        cur_pid="jagan_abc", cur_person_type="best_friend", n_active_sessions=1,
-        voice_gallery_sizes={"jagan_abc": 20}, cur_holder_voice_n=20, now=0.0,
-    )
+    claim, presence, session, case = _from_golden("PR5_p0_tier1_hard_mismatch_drops")
+    # config-boundary self-checks against the golden fixture:
+    # utt 0.7s in [MIN_AUDIO 0.5, MIN_UTTERANCE 1.0); score 0.10 < SHORT_UTT_FLOOR.
     assert claim.utterance_duration >= VOICE_ROUTING_MIN_AUDIO_FOR_SCORE
     assert claim.utterance_duration < VOICE_ROUTING_MIN_UTTERANCE_SECS
     assert claim.confidence < VOICE_ROUTING_SHORT_UTT_FLOOR
 
     decision = reconcile(claim, presence, session)
-    assert decision.action == "short_utterance_voice_mismatch", (
+    assert decision.action == case.expected_action, (
         f"S92 P3.23 Tier 1 regression — expected drop, got {decision.action!r} "
         f"from rule {decision.rule_fired!r}"
     )
-    assert decision.rule_fired == _p0_short_utterance_hard_mismatch.__name__
-    assert decision.pid is None
+    assert decision.rule_fired == _p0_short_utterance_hard_mismatch.__name__ == case.expected_rule_fired
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 def test_p0_tier2_ambiguous_drops_in_multi_session():
@@ -616,30 +557,20 @@ def test_p0_tier2_ambiguous_drops_in_multi_session():
         VOICE_ROUTING_SHORT_UTT_AMBIGUOUS,
         VOICE_ROUTING_SHORT_UTT_FLOOR,
     )
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
-
-    # score = 0.30: in [0.20, 0.40) ambiguous zone
-    claim = IdentityClaim(
-        pid="jagan_abc", confidence=0.30, n_diarize_segments=1,
-        utterance_duration=0.7, reasoning="test",
+    claim, presence, session, case = _from_golden(
+        "PR6_p0_tier2_ambiguous_drops_in_multi_session"
     )
-    presence = PresenceState(visible_pids=("jagan_abc", "lexi_def"),
-                              unrecognized_track_ids=())
-    session = SessionState(
-        cur_pid="jagan_abc", cur_person_type="best_friend", n_active_sessions=2,
-        voice_gallery_sizes={"jagan_abc": 20, "lexi_def": 5},
-        cur_holder_voice_n=20, now=0.0,
-    )
+    # score 0.30 in [SHORT_UTT_FLOOR 0.20, SHORT_UTT_AMBIGUOUS 0.40) ambiguous zone.
     assert VOICE_ROUTING_SHORT_UTT_FLOOR <= claim.confidence < VOICE_ROUTING_SHORT_UTT_AMBIGUOUS
 
     decision = reconcile(claim, presence, session)
-    assert decision.action == "short_utterance_voice_mismatch", (
+    assert decision.action == case.expected_action, (
         f"S93 P3.23 Tier 2 regression — multi-session ambiguous-zone short "
         f"utterance must drop, got {decision.action!r} from {decision.rule_fired!r}"
     )
-    assert decision.rule_fired == _p0_short_utterance_ambiguous_multi_session.__name__
+    assert decision.rule_fired == _p0_short_utterance_ambiguous_multi_session.__name__ == case.expected_rule_fired
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 def test_p0_short_utterance_holds_current():
@@ -650,28 +581,16 @@ def test_p0_short_utterance_holds_current():
     This is the Phase 4 cutover floor (2026-04-29); utterances ≥ 0.3s
     now fall through to full gallery cascade instead of being held.
     """
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
-
-    # 0.2s < 0.3s noise floor → hold current
-    claim = IdentityClaim(
-        pid="jagan_abc", confidence=0.30, n_diarize_segments=1,
-        utterance_duration=0.2, reasoning="test",
-    )
-    presence = PresenceState(visible_pids=("jagan_abc",), unrecognized_track_ids=())
-    session = SessionState(
-        cur_pid="jagan_abc", cur_person_type="best_friend", n_active_sessions=1,
-        voice_gallery_sizes={"jagan_abc": 20}, cur_holder_voice_n=20, now=0.0,
-    )
+    claim, presence, session, case = _from_golden("PR7_p0_short_utterance_holds_current")
 
     decision = reconcile(claim, presence, session)
-    assert decision.action == "current", (
+    assert decision.action == case.expected_action, (
         f"Pure noise floor regression — utterance < 0.3s with cur_pid must "
         f"hold current, got {decision.action!r} from {decision.rule_fired!r}"
     )
-    assert decision.rule_fired == _p0_pure_noise_hold_current.__name__
-    assert decision.pid == "jagan_abc"
+    assert decision.rule_fired == _p0_pure_noise_hold_current.__name__ == case.expected_rule_fired
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 def test_p0_short_utterance_no_session_skips():
@@ -679,27 +598,18 @@ def test_p0_short_utterance_no_session_skips():
 
     Nothing to hold and ECAPA on <1s is too noisy to seed a stranger profile.
     """
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
-
-    claim = IdentityClaim(
-        pid=None, confidence=0.0, n_diarize_segments=1,
-        utterance_duration=0.2, reasoning="test",
-    )
-    presence = PresenceState(visible_pids=(), unrecognized_track_ids=())
-    session = SessionState(
-        cur_pid=None, cur_person_type="", n_active_sessions=0,
-        voice_gallery_sizes={}, cur_holder_voice_n=0, now=0.0,
+    claim, presence, session, case = _from_golden(
+        "PR8_p0_short_utterance_no_session_skips"
     )
 
     decision = reconcile(claim, presence, session)
-    assert decision.action == "short_utterance_skip", (
+    assert decision.action == case.expected_action, (
         f"S67 Bug F variant regression — short utterance + no session must "
         f"skip, got {decision.action!r} from {decision.rule_fired!r}"
     )
-    assert decision.rule_fired == _p0_short_utterance_no_session.__name__
-    assert decision.pid is None
+    assert decision.rule_fired == _p0_short_utterance_no_session.__name__ == case.expected_rule_fired
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 def test_p0_short_utterance_gap_holds_current():
@@ -715,28 +625,18 @@ def test_p0_short_utterance_gap_holds_current():
     added post-TODO in P0.10 Phase 1, so the original enumeration didn't
     include it).
     """
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
-
-    # 0.4s in [0.3, 0.5) gap band + cur_pid → hold current
-    claim = IdentityClaim(
-        pid="jagan_abc", confidence=0.40, n_diarize_segments=1,
-        utterance_duration=0.4, reasoning="test",
-    )
-    presence = PresenceState(visible_pids=("jagan_abc",), unrecognized_track_ids=())
-    session = SessionState(
-        cur_pid="jagan_abc", cur_person_type="best_friend", n_active_sessions=1,
-        voice_gallery_sizes={"jagan_abc": 20}, cur_holder_voice_n=20, now=0.0,
+    claim, presence, session, case = _from_golden(
+        "PR9_p0_short_utterance_gap_holds_current"
     )
 
     decision = reconcile(claim, presence, session)
-    assert decision.action == "current", (
+    assert decision.action == case.expected_action, (
         f"Gap-band regression — utterance 0.3-0.5s with cur_pid must hold "
         f"current, got {decision.action!r} from {decision.rule_fired!r}"
     )
-    assert decision.rule_fired == _p0_short_utterance_gap_hold_current.__name__
-    assert decision.pid == "jagan_abc"
+    assert decision.rule_fired == _p0_short_utterance_gap_hold_current.__name__ == case.expected_rule_fired
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 def test_p1_confident_switch_to_other_pid():
@@ -749,29 +649,20 @@ def test_p1_confident_switch_to_other_pid():
     clears it confidently.
     """
     from core.config import VOICE_SWITCH_THRESHOLD_MATURE
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
 
-    claim = IdentityClaim(
-        pid="lexi_def", confidence=0.80, n_diarize_segments=1,
-        utterance_duration=2.0, reasoning="test",
-    )
-    presence = PresenceState(visible_pids=("jagan_abc",), unrecognized_track_ids=())
-    session = SessionState(
-        cur_pid="jagan_abc", cur_person_type="best_friend", n_active_sessions=2,
-        voice_gallery_sizes={"jagan_abc": 20, "lexi_def": 20},
-        cur_holder_voice_n=20, now=0.0,
+    claim, presence, session, case = _from_golden(
+        "PR10_p1_confident_switch_to_other_pid"
     )
     assert claim.confidence >= VOICE_SWITCH_THRESHOLD_MATURE  # mature threshold
 
     decision = reconcile(claim, presence, session)
-    assert decision.action == "switch_enrolled", (
+    assert decision.action == case.expected_action, (
         f"P1 confident match must switch to v_pid, got {decision.action!r} "
         f"from {decision.rule_fired!r}"
     )
-    assert decision.rule_fired == _p1_confident_voice_switch.__name__
-    assert decision.pid == "lexi_def"
+    assert decision.rule_fired == _p1_confident_voice_switch.__name__ == case.expected_rule_fired
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 def test_p2_midrange_face_assist_switches():
@@ -787,22 +678,9 @@ def test_p2_midrange_face_assist_switches():
         VOICE_ROUTING_MIDRANGE_SWITCH_MIN,
         VOICE_SWITCH_THRESHOLD_THIN,
     )
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
 
-    claim = IdentityClaim(
-        pid="lexi_def", confidence=0.50, n_diarize_segments=1,
-        utterance_duration=2.0, reasoning="test",
-    )
-    presence = PresenceState(
-        visible_pids=("jagan_abc", "lexi_def"),
-        unrecognized_track_ids=(),
-    )
-    session = SessionState(
-        cur_pid="jagan_abc", cur_person_type="best_friend", n_active_sessions=2,
-        voice_gallery_sizes={"jagan_abc": 20, "lexi_def": 3},  # thin target
-        cur_holder_voice_n=20, now=0.0,
+    claim, presence, session, case = _from_golden(
+        "PR11_p2_midrange_face_assist_switches"
     )
     # Confirm score lands in P2 band, NOT P1
     assert claim.confidence >= VOICE_ROUTING_MIDRANGE_SWITCH_MIN
@@ -810,13 +688,14 @@ def test_p2_midrange_face_assist_switches():
     assert claim.confidence < VOICE_SWITCH_THRESHOLD_THIN
 
     decision = reconcile(claim, presence, session)
-    assert decision.action == "switch_enrolled", (
+    assert decision.action == case.expected_action, (
         f"P2 face-assisted switch must fire when target visible AND "
         f"score >= face-assist floor. Got {decision.action!r} from "
         f"{decision.rule_fired!r}"
     )
-    assert decision.rule_fired == _p2_midrange_face_assist_switches.__name__
-    assert decision.pid == "lexi_def"
+    assert decision.rule_fired == _p2_midrange_face_assist_switches.__name__ == case.expected_rule_fired
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 def test_p2_midrange_face_assist_below_floor_returns_ambiguous():
@@ -830,34 +709,22 @@ def test_p2_midrange_face_assist_below_floor_returns_ambiguous():
         VOICE_ROUTING_FACE_ASSIST_MIN,
         VOICE_ROUTING_MIDRANGE_SWITCH_MIN,
     )
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
 
     # score 0.35: in [MIDRANGE=0.30, FACE_ASSIST=0.42) — face visible but
     # voice too weak even with co-witness.
-    claim = IdentityClaim(
-        pid="lexi_def", confidence=0.35, n_diarize_segments=1,
-        utterance_duration=2.0, reasoning="test",
-    )
-    presence = PresenceState(
-        visible_pids=("jagan_abc", "lexi_def"),
-        unrecognized_track_ids=(),
-    )
-    session = SessionState(
-        cur_pid="jagan_abc", cur_person_type="best_friend", n_active_sessions=2,
-        voice_gallery_sizes={"jagan_abc": 20, "lexi_def": 20},
-        cur_holder_voice_n=20, now=0.0,
+    claim, presence, session, case = _from_golden(
+        "PR12_p2_midrange_face_assist_below_floor_returns_ambiguous"
     )
     assert VOICE_ROUTING_MIDRANGE_SWITCH_MIN <= claim.confidence < VOICE_ROUTING_FACE_ASSIST_MIN
 
     decision = reconcile(claim, presence, session)
-    assert decision.action == "ambiguous", (
+    assert decision.action == case.expected_action, (
         f"S64 Bug O regression — weak voice + face visible must NOT switch, "
         f"got {decision.action!r} from {decision.rule_fired!r}"
     )
-    assert decision.rule_fired == _p2_midrange_face_assist_below_floor.__name__
-    assert decision.pid is None
+    assert decision.rule_fired == _p2_midrange_face_assist_below_floor.__name__ == case.expected_rule_fired
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 def test_p2_midrange_no_face_assist_returns_ambiguous():
@@ -867,33 +734,20 @@ def test_p2_midrange_no_face_assist_returns_ambiguous():
     Caller drops; if the next utterance brings face in frame OR confident
     voice, P1/P2 will fire on that turn instead.
     """
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
-
     # score 0.45: in [MIDRANGE=0.30, switch_threshold) for mature; target
     # not in visible_pids.
-    claim = IdentityClaim(
-        pid="lexi_def", confidence=0.45, n_diarize_segments=1,
-        utterance_duration=2.0, reasoning="test",
-    )
-    presence = PresenceState(
-        visible_pids=("jagan_abc",),  # only cur_pid visible
-        unrecognized_track_ids=(),
-    )
-    session = SessionState(
-        cur_pid="jagan_abc", cur_person_type="best_friend", n_active_sessions=2,
-        voice_gallery_sizes={"jagan_abc": 20, "lexi_def": 3},  # thin target so 0.45 < 0.55 switch
-        cur_holder_voice_n=20, now=0.0,
+    claim, presence, session, case = _from_golden(
+        "PR13_p2_midrange_no_face_assist_returns_ambiguous"
     )
 
     decision = reconcile(claim, presence, session)
-    assert decision.action == "ambiguous", (
+    assert decision.action == case.expected_action, (
         f"P2 no-face mid-range must be ambiguous, got {decision.action!r} "
         f"from {decision.rule_fired!r}"
     )
-    assert decision.rule_fired == _p2_midrange_no_face_returns_ambiguous.__name__
-    assert decision.pid is None
+    assert decision.rule_fired == _p2_midrange_no_face_returns_ambiguous.__name__ == case.expected_rule_fired
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 def test_p3_below_self_match_floor_returns_ambiguous():
@@ -904,28 +758,20 @@ def test_p3_below_self_match_floor_returns_ambiguous():
     acoustically-similar stranger drift the holder's profile downward.
     """
     from core.config import VOICE_ROUTING_SELF_MATCH_FLOOR
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
 
-    claim = IdentityClaim(
-        pid="jagan_abc", confidence=0.10, n_diarize_segments=1,
-        utterance_duration=2.0, reasoning="test",
-    )
-    presence = PresenceState(visible_pids=("jagan_abc",), unrecognized_track_ids=())
-    session = SessionState(
-        cur_pid="jagan_abc", cur_person_type="best_friend", n_active_sessions=1,
-        voice_gallery_sizes={"jagan_abc": 20}, cur_holder_voice_n=20, now=0.0,
+    claim, presence, session, case = _from_golden(
+        "PR14_p3_below_self_match_floor_returns_ambiguous"
     )
     assert claim.confidence < VOICE_ROUTING_SELF_MATCH_FLOOR
 
     decision = reconcile(claim, presence, session)
-    assert decision.action == "ambiguous", (
+    assert decision.action == case.expected_action, (
         f"S51 anti-poisoning regression — sub-floor self-match must NOT "
         f"hold, got {decision.action!r} from {decision.rule_fired!r}"
     )
-    assert decision.rule_fired == _p3_self_match_below_floor.__name__
-    assert decision.pid is None
+    assert decision.rule_fired == _p3_self_match_below_floor.__name__ == case.expected_rule_fired
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 def test_p3_thin_stranger_skips_offscreen_floor():
@@ -945,26 +791,10 @@ def test_p3_thin_stranger_skips_offscreen_floor():
         VOICE_ROUTING_SELF_MATCH_FLOOR,
         VOICE_ROUTING_SELF_MATCH_OFFSCREEN,
     )
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
 
     # Chloe's exact canary score, in [SELF_MATCH_FLOOR=0.30, OFFSCREEN=0.45)
-    claim = IdentityClaim(
-        pid="stranger_chloe", confidence=0.307, n_diarize_segments=1,
-        utterance_duration=2.0, reasoning="test",
-    )
-    presence = PresenceState(
-        visible_pids=(),  # holder offscreen
-        unrecognized_track_ids=(),
-    )
-    session = SessionState(
-        cur_pid="stranger_chloe",
-        cur_person_type="stranger",
-        n_active_sessions=1,
-        voice_gallery_sizes={"stranger_chloe": 3},  # thin: < N_INITIAL_VOICE=5
-        cur_holder_voice_n=3,
-        now=0.0,
+    claim, presence, session, case = _from_golden(
+        "PR15_p3_thin_stranger_skips_offscreen_floor"
     )
     assert VOICE_ROUTING_SELF_MATCH_FLOOR <= claim.confidence < VOICE_ROUTING_SELF_MATCH_OFFSCREEN
     assert session.cur_holder_voice_n < N_INITIAL_VOICE
@@ -972,14 +802,15 @@ def test_p3_thin_stranger_skips_offscreen_floor():
     assert session.cur_person_type == "stranger"
 
     decision = reconcile(claim, presence, session)
-    assert decision.action == "current", (
+    assert decision.action == case.expected_action, (
         f"S71 Bug W regression — thin stranger holder must skip offscreen "
         f"floor, got {decision.action!r} from {decision.rule_fired!r}. "
         f"Pre-fix: dropped Chloe's session; post-fix: holds current so the "
         f"voice profile can mature."
     )
-    assert decision.rule_fired == _p3_self_match_thin_stranger_relaxed.__name__
-    assert decision.pid == "stranger_chloe"
+    assert decision.rule_fired == _p3_self_match_thin_stranger_relaxed.__name__ == case.expected_rule_fired
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 def test_p3_offscreen_mature_floors_apply():
@@ -992,28 +823,20 @@ def test_p3_offscreen_mature_floors_apply():
         VOICE_ROUTING_SELF_MATCH_FLOOR,
         VOICE_ROUTING_SELF_MATCH_OFFSCREEN,
     )
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
 
-    claim = IdentityClaim(
-        pid="jagan_abc", confidence=0.35, n_diarize_segments=1,
-        utterance_duration=2.0, reasoning="test",
-    )
-    presence = PresenceState(visible_pids=(), unrecognized_track_ids=())
-    session = SessionState(
-        cur_pid="jagan_abc", cur_person_type="best_friend", n_active_sessions=1,
-        voice_gallery_sizes={"jagan_abc": 20}, cur_holder_voice_n=20, now=0.0,
+    claim, presence, session, case = _from_golden(
+        "PR16_p3_offscreen_mature_floors_apply"
     )
     assert VOICE_ROUTING_SELF_MATCH_FLOOR <= claim.confidence < VOICE_ROUTING_SELF_MATCH_OFFSCREEN
 
     decision = reconcile(claim, presence, session)
-    assert decision.action == "ambiguous", (
+    assert decision.action == case.expected_action, (
         f"S64 mature-profile poisoning regression — got {decision.action!r} "
         f"from {decision.rule_fired!r}"
     )
-    assert decision.rule_fired == _p3_self_match_offscreen_mature.__name__
-    assert decision.pid is None
+    assert decision.rule_fired == _p3_self_match_offscreen_mature.__name__ == case.expected_rule_fired
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 def test_p3_self_match_with_face_holds_current():
@@ -1021,27 +844,18 @@ def test_p3_self_match_with_face_holds_current():
     Standard happy-path — holder speaks again, face visible. Score 0.50
     is above SELF_MATCH_OFFSCREEN=0.45 so passes either branch.
     """
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
-
-    claim = IdentityClaim(
-        pid="jagan_abc", confidence=0.50, n_diarize_segments=1,
-        utterance_duration=2.0, reasoning="test",
-    )
-    presence = PresenceState(visible_pids=("jagan_abc",), unrecognized_track_ids=())
-    session = SessionState(
-        cur_pid="jagan_abc", cur_person_type="best_friend", n_active_sessions=1,
-        voice_gallery_sizes={"jagan_abc": 20}, cur_holder_voice_n=20, now=0.0,
+    claim, presence, session, case = _from_golden(
+        "PR17_p3_self_match_with_face_holds_current"
     )
 
     decision = reconcile(claim, presence, session)
-    assert decision.action == "current", (
+    assert decision.action == case.expected_action, (
         f"happy-path self-match must hold session, got {decision.action!r} "
         f"from {decision.rule_fired!r}"
     )
-    assert decision.rule_fired == _p3_self_match_with_face.__name__
-    assert decision.pid == "jagan_abc"
+    assert decision.rule_fired == _p3_self_match_with_face.__name__ == case.expected_rule_fired
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 def test_p3_5_bootstrapping_stranger_holds_current():
@@ -1051,32 +865,20 @@ def test_p3_5_bootstrapping_stranger_holds_current():
     because thin profiles can't reliably self-match.
     """
     from core.config import N_INITIAL_VOICE
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
 
-    claim = IdentityClaim(
-        pid=None, confidence=0.05, n_diarize_segments=1,
-        utterance_duration=2.0, reasoning="test",
-    )
-    presence = PresenceState(visible_pids=(), unrecognized_track_ids=())
-    session = SessionState(
-        cur_pid="stranger_chloe",
-        cur_person_type="stranger",
-        n_active_sessions=1,
-        voice_gallery_sizes={"stranger_chloe": 2},
-        cur_holder_voice_n=2,
-        now=0.0,
+    claim, presence, session, case = _from_golden(
+        "PR18_p3_5_bootstrapping_stranger_holds_current"
     )
     assert session.cur_holder_voice_n < N_INITIAL_VOICE
 
     decision = reconcile(claim, presence, session)
-    assert decision.action == "current", (
+    assert decision.action == case.expected_action, (
         f"S49 NEW-1 regression — bootstrapping stranger session must hold, "
         f"got {decision.action!r} from {decision.rule_fired!r}"
     )
-    assert decision.rule_fired == _p3_5_bootstrapping_stranger_hold.__name__
-    assert decision.pid == "stranger_chloe"
+    assert decision.rule_fired == _p3_5_bootstrapping_stranger_hold.__name__ == case.expected_rule_fired
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 def test_p4_multi_segment_mismatch_drops_in_multi_known():
@@ -1086,32 +888,20 @@ def test_p4_multi_segment_mismatch_drops_in_multi_known():
     instead — separate test covers that.
     """
     from core.config import VOICE_ROUTING_STRANGER_FLOOR
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
 
-    claim = IdentityClaim(
-        pid=None, confidence=0.20, n_diarize_segments=3,
-        utterance_duration=2.0, reasoning="test",
-    )
-    presence = PresenceState(
-        visible_pids=("jagan_abc", "lexi_def"),
-        unrecognized_track_ids=(),
-    )
-    session = SessionState(
-        cur_pid="jagan_abc", cur_person_type="best_friend", n_active_sessions=2,
-        voice_gallery_sizes={"jagan_abc": 20, "lexi_def": 20},
-        cur_holder_voice_n=20, now=0.0,
+    claim, presence, session, case = _from_golden(
+        "PR19_p4_multi_segment_mismatch_drops_in_multi_known"
     )
     assert claim.confidence < VOICE_ROUTING_STRANGER_FLOOR
 
     decision = reconcile(claim, presence, session)
-    assert decision.action == "multi_segment_voice_mismatch", (
+    assert decision.action == case.expected_action, (
         f"S118/S121 regression — got {decision.action!r} from "
         f"{decision.rule_fired!r}"
     )
-    assert decision.rule_fired == _p4_multi_segment_mismatch.__name__
-    assert decision.pid is None
+    assert decision.rule_fired == _p4_multi_segment_mismatch.__name__ == case.expected_rule_fired
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 def test_p4_new_stranger_below_threshold():
@@ -1120,28 +910,20 @@ def test_p4_new_stranger_below_threshold():
     speakers entering an active session.
     """
     from core.config import VOICE_RECOGNITION_THRESHOLD
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
 
-    claim = IdentityClaim(
-        pid=None, confidence=0.15, n_diarize_segments=1,
-        utterance_duration=2.0, reasoning="test",
-    )
-    presence = PresenceState(visible_pids=("jagan_abc",), unrecognized_track_ids=())
-    session = SessionState(
-        cur_pid="jagan_abc", cur_person_type="best_friend", n_active_sessions=1,
-        voice_gallery_sizes={"jagan_abc": 20}, cur_holder_voice_n=20, now=0.0,
+    claim, presence, session, case = _from_golden(
+        "PR20_p4_new_stranger_below_threshold"
     )
     assert 0.0 < claim.confidence < VOICE_RECOGNITION_THRESHOLD
 
     decision = reconcile(claim, presence, session)
-    assert decision.action == "new_stranger", (
+    assert decision.action == case.expected_action, (
         f"P4 normal-new-stranger path — got {decision.action!r} from "
         f"{decision.rule_fired!r}"
     )
-    assert decision.rule_fired == _p4_new_stranger_low_match.__name__
-    assert decision.pid is None
+    assert decision.rule_fired == _p4_new_stranger_low_match.__name__ == case.expected_rule_fired
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 def test_p4_single_segment_mismatch_drops_in_multi_known():
@@ -1156,26 +938,13 @@ def test_p4_single_segment_mismatch_drops_in_multi_known():
         VOICE_ROUTING_MIN_AUDIO_FOR_SCORE,
         VOICE_ROUTING_STRANGER_FLOOR,
     )
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
 
     # Score must clear VOICE_RECOGNITION_THRESHOLD=0.25 (else rule 16 fires
     # first as new_stranger) AND stay below VOICE_ROUTING_STRANGER_FLOOR=0.30.
     # Narrow [0.25, 0.30) band by design — single-segment-mismatch is the
     # post-S121 carve-out for confident-non-match-of-mature-holder.
-    claim = IdentityClaim(
-        pid=None, confidence=0.27, n_diarize_segments=1,
-        utterance_duration=1.5, reasoning="test",
-    )
-    presence = PresenceState(
-        visible_pids=("jagan_abc", "lexi_def"),
-        unrecognized_track_ids=(),
-    )
-    session = SessionState(
-        cur_pid="jagan_abc", cur_person_type="best_friend", n_active_sessions=2,
-        voice_gallery_sizes={"jagan_abc": 20, "lexi_def": 20},
-        cur_holder_voice_n=20, now=0.0,
+    claim, presence, session, case = _from_golden(
+        "PR21_p4_single_segment_mismatch_drops_in_multi_known"
     )
     assert claim.confidence >= VOICE_RECOGNITION_THRESHOLD  # rule 16 won't fire
     assert claim.confidence < VOICE_ROUTING_STRANGER_FLOOR
@@ -1183,12 +952,13 @@ def test_p4_single_segment_mismatch_drops_in_multi_known():
     assert session.cur_holder_voice_n >= VOICE_ACCUM_MATURE_SAMPLE_COUNT
 
     decision = reconcile(claim, presence, session)
-    assert decision.action == "single_segment_voice_mismatch", (
+    assert decision.action == case.expected_action, (
         f"S120/S121 regression — got {decision.action!r} from "
         f"{decision.rule_fired!r}"
     )
-    assert decision.rule_fired == _p4_single_segment_mismatch.__name__
-    assert decision.pid is None
+    assert decision.rule_fired == _p4_single_segment_mismatch.__name__ == case.expected_rule_fired
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 def test_p4_voice_ambiguous_no_candidates_holds_current():
@@ -1200,31 +970,18 @@ def test_p4_voice_ambiguous_no_candidates_holds_current():
     Rule 15 (live-bug) intercepts BEFORE this on multi-segment + n_active=1.
     Test forces n_diarize_segments=1 to skip rule 15.
     """
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
-
-    claim = IdentityClaim(
-        pid=None, confidence=0.0, n_diarize_segments=1,
-        utterance_duration=2.0, reasoning="test",
-        confidence_is_no_signal=True,
-    )
-    presence = PresenceState(
-        visible_pids=("jagan_abc",),  # only cur_pid; no other candidates
-        unrecognized_track_ids=(),
-    )
-    session = SessionState(
-        cur_pid="jagan_abc", cur_person_type="best_friend", n_active_sessions=1,
-        voice_gallery_sizes={"jagan_abc": 20}, cur_holder_voice_n=20, now=0.0,
+    claim, presence, session, case = _from_golden(
+        "PR22_p4_voice_ambiguous_no_candidates_holds_current"
     )
 
     decision = reconcile(claim, presence, session)
-    assert decision.action == "current", (
+    assert decision.action == case.expected_action, (
         f"P4 legacy fallback — empty room must hold current, got "
         f"{decision.action!r} from {decision.rule_fired!r}"
     )
-    assert decision.rule_fired == _p4_voice_ambiguous_no_candidates.__name__
-    assert decision.pid == "jagan_abc"
+    assert decision.rule_fired == _p4_voice_ambiguous_no_candidates.__name__ == case.expected_rule_fired
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 def test_p4_voice_ambiguous_with_candidates_returns_ambiguous():
@@ -1233,33 +990,20 @@ def test_p4_voice_ambiguous_with_candidates_returns_ambiguous():
     Other people are visible/heard; can't trust holding cur_pid when room
     genuinely has alternatives.
     """
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
-
-    claim = IdentityClaim(
-        pid=None, confidence=0.0, n_diarize_segments=1,
-        utterance_duration=2.0, reasoning="test",
-        confidence_is_no_signal=True,
-    )
     # Force scene_candidates > 0 via an unrecognized track (simpler than
     # adding non-cur visible_pids while keeping n_active_sessions=1)
-    presence = PresenceState(
-        visible_pids=("jagan_abc",),
-        unrecognized_track_ids=(42,),
-    )
-    session = SessionState(
-        cur_pid="jagan_abc", cur_person_type="best_friend", n_active_sessions=1,
-        voice_gallery_sizes={"jagan_abc": 20}, cur_holder_voice_n=20, now=0.0,
+    claim, presence, session, case = _from_golden(
+        "PR23_p4_voice_ambiguous_with_candidates_returns_ambiguous"
     )
 
     decision = reconcile(claim, presence, session)
-    assert decision.action == "ambiguous", (
+    assert decision.action == case.expected_action, (
         f"P4 populated-room must be ambiguous, got {decision.action!r} "
         f"from {decision.rule_fired!r}"
     )
-    assert decision.rule_fired == _p4_voice_ambiguous_with_candidates.__name__
-    assert decision.pid is None
+    assert decision.rule_fired == _p4_voice_ambiguous_with_candidates.__name__ == case.expected_rule_fired
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 def test_p5_no_session_opens_stranger():
@@ -1267,27 +1011,19 @@ def test_p5_no_session_opens_stranger():
     fresh stranger session. First-entry path for ambient detection.
     """
     from core.config import VOICE_RECOGNITION_THRESHOLD
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
 
-    claim = IdentityClaim(
-        pid=None, confidence=0.10, n_diarize_segments=1,
-        utterance_duration=2.0, reasoning="test",
-    )
-    presence = PresenceState(visible_pids=(), unrecognized_track_ids=())
-    session = SessionState(
-        cur_pid=None, cur_person_type="", n_active_sessions=0,
-        voice_gallery_sizes={}, cur_holder_voice_n=0, now=0.0,
+    claim, presence, session, case = _from_golden(
+        "PR24_p5_no_session_opens_stranger"
     )
     assert 0.0 < claim.confidence < VOICE_RECOGNITION_THRESHOLD
 
     decision = reconcile(claim, presence, session)
-    assert decision.action == "new_stranger", (
+    assert decision.action == case.expected_action, (
         f"P5 first-entry — got {decision.action!r} from {decision.rule_fired!r}"
     )
-    assert decision.rule_fired == _p5_no_session_new_stranger.__name__
-    assert decision.pid is None
+    assert decision.rule_fired == _p5_no_session_new_stranger.__name__ == case.expected_rule_fired
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 def test_last_resort_ambiguous_when_low_score_other_pid():
@@ -1299,35 +1035,24 @@ def test_last_resort_ambiguous_when_low_score_other_pid():
     `no_action` — a behavior change. Q1's exact reasoning string is pinned.
     """
     from core.config import VOICE_ROUTING_MIDRANGE_SWITCH_MIN
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
 
     # Q1's exact precondition: v_pid != cur_pid, v_score=0.10 (well below
     # MIDRANGE_SWITCH_MIN=0.30)
-    claim = IdentityClaim(
-        pid="lexi_def", confidence=0.10, n_diarize_segments=1,
-        utterance_duration=2.0, reasoning="test",
-    )
-    presence = PresenceState(visible_pids=("jagan_abc",), unrecognized_track_ids=())
-    session = SessionState(
-        cur_pid="jagan_abc", cur_person_type="best_friend", n_active_sessions=1,
-        voice_gallery_sizes={"jagan_abc": 20, "lexi_def": 20},
-        cur_holder_voice_n=20, now=0.0,
+    claim, presence, session, case = _from_golden(
+        "PR25_last_resort_ambiguous_when_low_score_other_pid"
     )
     assert claim.confidence < VOICE_ROUTING_MIDRANGE_SWITCH_MIN
 
     decision = reconcile(claim, presence, session)
-    assert decision.action == "ambiguous", (
+    assert decision.action == case.expected_action, (
         f"Q1 last-resort regression — got {decision.action!r} from "
         f"{decision.rule_fired!r}"
     )
-    assert decision.rule_fired == _last_resort_ambiguous.__name__
+    assert decision.rule_fired == _last_resort_ambiguous.__name__ == case.expected_rule_fired
     # Q1 reviewer 2026-04-28 pinned the exact reasoning string:
-    assert decision.reasoning == (
-        "voice match below switch threshold, ambiguous attribution"
-    )
-    assert decision.pid is None
+    assert decision.reasoning == case.expected_reasoning
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1537,54 +1262,33 @@ def test_spec1_d1_no_signal_short_utterance_holds_current():
     holder ALONE must HOLD current, not drop. Pre-D1 the P0 hard-mismatch rule read the
     forced-0.0 no_signal score as a sub-floor mismatch and dropped (the 'Travel anywhere
     for free.' canary turn). Post-D1 it abstains -> _p4_voice_ambiguous_no_candidates."""
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
-
-    claim = IdentityClaim(
-        pid=None, confidence=0.0, n_diarize_segments=1,
-        utterance_duration=0.7, reasoning="test", confidence_is_no_signal=True,
-    )
-    presence = PresenceState(
-        visible_pids=("jagan_abc",),  # only cur_pid; no other candidate
-        unrecognized_track_ids=(),
-    )
-    session = SessionState(
-        cur_pid="jagan_abc", cur_person_type="best_friend", n_active_sessions=1,
-        voice_gallery_sizes={"jagan_abc": 20}, cur_holder_voice_n=20, now=0.0,
+    claim, presence, session, case = _from_golden(
+        "PR26_spec1_d1_no_signal_short_utterance_holds_current"
     )
     decision = reconcile(claim, presence, session)
-    assert decision.action == "current", (
+    assert decision.action == case.expected_action, (
         f"D1: no_signal short utterance with holder alone must hold current, got "
         f"{decision.action!r} from {decision.rule_fired!r}"
     )
-    assert decision.rule_fired == _p4_voice_ambiguous_no_candidates.__name__
-    assert decision.pid == "jagan_abc"
+    assert decision.rule_fired == _p4_voice_ambiguous_no_candidates.__name__ == case.expected_rule_fired
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid
 
 
 def test_spec1_d1_no_signal_short_utterance_multi_candidate_returns_ambiguous():
     """D1 boundary: same no_signal short utterance but with a SECOND candidate in scene
     must return ambiguous (drop) - D1 did NOT over-relax. A genuinely-ambiguous
     multi-person short no_signal turn still drops, via _p4_voice_ambiguous_with_candidates."""
-    from core.voice_channel import IdentityClaim
-    from core.vision_channel import PresenceState
-    from core.reconciler_state import SessionState
-
-    claim = IdentityClaim(
-        pid=None, confidence=0.0, n_diarize_segments=1,
-        utterance_duration=0.7, reasoning="test", confidence_is_no_signal=True,
-    )
-    presence = PresenceState(
-        visible_pids=("jagan_abc",),
-        unrecognized_track_ids=(42,),  # a second candidate -> scene genuinely ambiguous
-    )
-    session = SessionState(
-        cur_pid="jagan_abc", cur_person_type="best_friend", n_active_sessions=1,
-        voice_gallery_sizes={"jagan_abc": 20}, cur_holder_voice_n=20, now=0.0,
+    # Force scene_candidates > 0 via an unrecognized track (a second candidate ->
+    # scene genuinely ambiguous)
+    claim, presence, session, case = _from_golden(
+        "PR27_spec1_d1_no_signal_short_utterance_multi_candidate_returns_ambiguous"
     )
     decision = reconcile(claim, presence, session)
-    assert decision.action == "ambiguous", (
+    assert decision.action == case.expected_action, (
         f"D1 boundary: no_signal short utterance with a second candidate must be "
         f"ambiguous, got {decision.action!r} from {decision.rule_fired!r}"
     )
-    assert decision.rule_fired == _p4_voice_ambiguous_with_candidates.__name__
+    assert decision.rule_fired == _p4_voice_ambiguous_with_candidates.__name__ == case.expected_rule_fired
+    if case.expected_pid is not UNCHECKED:
+        assert decision.pid == case.expected_pid

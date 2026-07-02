@@ -108,6 +108,15 @@ faces/.dashboard_token.tmp.*
 faces/frames/
 
 # =============================================================================
+# SB.7 perception bench run JSONs — per-invocation local artifacts written by
+# bench/perception/bench.py::save_run on EVERY bench run. Per D6 the ONLY
+# committed bench artifact is bench/perception/baseline/baseline.json (a
+# human-reviewed commit); runs/ is local history for drift diffing and never
+# ships. The committed synthetic set (data/*.npz) + baseline stay tracked.
+# =============================================================================
+bench/perception/runs/
+
+# =============================================================================
 # Node / dashboard build artifacts
 # =============================================================================
 node_modules/

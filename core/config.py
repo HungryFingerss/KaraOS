@@ -994,6 +994,27 @@ EVAL_WEEKLY_ALERT_PRECISION_DROP_PP = 5.0
 EVAL_WEEKLY_DIVERGENCE_LOOKBACK_DAYS = 7
 EVAL_WEEKLY_TOP_N                   = 20
 
+# SB.7 Step 6 (D3) — perception-bench regression-gate bands. Config-driven per
+# D3 ("a Plan-v1 deliverable computed from the D6 baseline, not a Phase-0
+# constant"); consumed by `python -m bench.perception --alert`, mirroring
+# EVAL_WEEKLY_ALERT_PRECISION_DROP_PP above. Initial values derive from the
+# committed baseline at `bench/perception/baseline/baseline.json` (Step 5).
+#   PERCEPTION_EER_REGRESSION_BAND — allowed ABSOLUTE rise of the synthetic-set
+#       EER over the committed baseline (eer=0.0625 at the Step-5 freeze).
+#       Derivation from the baseline's trial granularity: 80 genuine + 80
+#       impostor trials → one trial flip moves FAR or FRR by 1/80 = 1.25%, so
+#       the EER quantum is ~0.00625. 0.02 ≈ 3 flips of headroom — tolerates
+#       last-bit cross-box float noise (numpy/BLAS) while a real threshold or
+#       pipeline regression (4+ flipped trials) trips the gate.
+#   PERCEPTION_ATTRIBUTION_DROP_PP — allowed attribution-accuracy drop in
+#       percentage points vs the committed baseline (accuracy=1.0 over
+#       denominator 51). D3 locks a >=2pp floor (one-case granularity): a
+#       single golden-case flip = 1/51 ≈ 1.96pp and stays within band — the
+#       per-case golden tests already hard-fail CI on ANY flip, so the bench
+#       gate is the coarse drift alarm; two flips ≈ 3.92pp trip it.
+PERCEPTION_EER_REGRESSION_BAND      = 0.02
+PERCEPTION_ATTRIBUTION_DROP_PP      = 2.0
+
 # ─────────────────────────────────────────────────────────────────────────
 # VISION_ROADMAP Phase 3A (P3.1, Session 95) — privacy model scaffolding.
 # Visibility levels for knowledge facts + conversation turns. Enforced at

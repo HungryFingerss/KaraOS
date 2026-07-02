@@ -8,6 +8,14 @@ name: slow
 # (Together.ai / Tavily — opt-in via secret), and caches HF model downloads
 # so subsequent nightly runs stay fast.
 #
+# SB.7 additions (2026-07-02):
+#   - Step 8 (coverage floor): the full-suite pytest step carries
+#     PYTEST_ADDOPTS with --cov over core.vision + core.voice +
+#     core.reconciler and --cov-fail-under — the board "coverage threshold".
+#   - Step 7 (D4/D5): the perception-bench job below runs a
+#     [companion, robotics] profile matrix — boot check (A7) + the D3
+#     regression gate (`python -m bench.perception --alert`).
+#
 # Triggers:
 #   - schedule: every night at 03:30 UTC
 #   - workflow_dispatch: manual trigger from the Actions tab
@@ -75,7 +83,20 @@ jobs:
           TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          # SB.7 Step 8 — coverage floor on the perception-core files (the
+          # board "coverage threshold"). Floor derivation (2026-07-02, at
+          # Step-8 landing): full-suite local measurement = reconciler 100% /
+          # vision 45% / voice 51% → aggregate 57%; floor = 50 (measured
+          # minus a 7pt cross-platform margin — CI skips CUDA-gated tests and
+          # runs the model-import tests dev boxes skip, so per-file numbers
+          # shift a few points either way). Ratchet UPWARD once the first
+          # nightly reading establishes the CI-side number; never below 50.
+          PYTEST_ADDOPTS: >-
+            --cov=core.vision --cov=core.voice --cov=core.reconciler
+            --cov-report=term --cov-fail-under=50
         run: |
+          # SB.7 Step 8 — the coverage floor rides PYTEST_ADDOPTS so BOTH
+          # branches (with/without network) enforce it without duplication.
           if [ -n "$TOGETHER_API_KEY" ]; then
             echo "Running full suite with --run-network"
             pytest tests/ --run-network -q
@@ -83,3 +104,55 @@ jobs:
             echo "TOGETHER_API_KEY not set — running full suite without network tests"
             pytest tests/ -q
           fi
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # SB.7 Step 7 (D4/D5) — per-profile matrix over the SB.2 deployment shapes.
+  # Each leg boots one profile (KARAOS_PROFILE), proves ONLY that profile's
+  # agent set loads (A7 — tests/test_sb7_profile_matrix.py, extending the SB.3
+  # registry battery into the matrix shape), then runs the perception bench's
+  # D3 regression gate against the committed baseline. store_kiosk deferred
+  # per D4 (not built). No LFS checkout: the bench reads only the committed
+  # synthetic .npz (a regular git object) — no ONNX/model binaries load in
+  # this job, and skipping LFS keeps the two nightly legs off the LFS
+  # bandwidth quota.
+  # ───────────────────────────────────────────────────────────────────────────
+  perception-bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false            # one profile's regression must not mask the other's result
+      matrix:
+        profile: [companion, robotics]
+    env:
+      KARAOS_PROFILE: ${{ matrix.profile }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          # CPU-only torch — this job has no GPU (matches the slow job).
+          pip install --index-url https://download.pytorch.org/whl/cpu \
+            torch torchvision torchaudio || true
+          pip install -r requirements.txt
+
+      - name: Profile boot check (A7 — only this profile's agent set loads)
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUNBUFFERED: "1"
+        run: pytest tests/test_sb7_profile_matrix.py -q
+
+      - name: Perception bench — D3 regression gate vs committed baseline
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUNBUFFERED: "1"
+        run: python -m bench.perception --alert
