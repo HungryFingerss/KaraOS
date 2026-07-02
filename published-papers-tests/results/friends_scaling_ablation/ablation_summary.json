@@ -1,0 +1,31 @@
+{
+  "generated_at": "2026-05-01T00:00:00+00:00",
+  "production_db_rows": 2071,
+  "test_set": "Friends benchmark (1287 rows, 820 evaluated after exclusions)",
+  "classifier": "KaraOS graph classifier (k-NN cosine over E5 embeddings)",
+  "isolation_verified": true,
+  "runs": [
+    {"label": "N500_seed11",  "n": 500,  "seed": 11, "balanced_accuracy": 0.7270},
+    {"label": "N500_seed22",  "n": 500,  "seed": 22, "balanced_accuracy": 0.6842},
+    {"label": "N500_seed33",  "n": 500,  "seed": 33, "balanced_accuracy": 0.6644},
+    {"label": "N1000_seed11", "n": 1000, "seed": 11, "balanced_accuracy": 0.6907},
+    {"label": "N1000_seed22", "n": 1000, "seed": 22, "balanced_accuracy": 0.6868},
+    {"label": "N1000_seed33", "n": 1000, "seed": 33, "balanced_accuracy": 0.6731},
+    {"label": "N1500_seed11", "n": 1500, "seed": 11, "balanced_accuracy": 0.6646},
+    {"label": "N1500_seed22", "n": 1500, "seed": 22, "balanced_accuracy": 0.6709},
+    {"label": "N1500_seed33", "n": 1500, "seed": 33, "balanced_accuracy": 0.6677},
+    {"label": "full",         "n": 2071, "seed": null, "balanced_accuracy": 0.6448}
+  ],
+  "aggregate": {
+    "N500":  {"mean": 0.6919, "std": 0.0261, "min": 0.6644, "max": 0.7270, "seeds": [11, 22, 33]},
+    "N1000": {"mean": 0.6835, "std": 0.0075, "min": 0.6731, "max": 0.6907, "seeds": [11, 22, 33]},
+    "N1500": {"mean": 0.6677, "std": 0.0026, "min": 0.6646, "max": 0.6709, "seeds": [11, 22, 33]},
+    "N2071": {"mean": 0.6448, "std": null,   "min": 0.6448, "max": 0.6448, "seeds": null}
+  },
+  "findings": {
+    "scaling_shape": "inverse — accuracy decreases monotonically as N grows from 500 to 2071",
+    "std_peaks_at": "N=500 (std=0.0261), collapses by N=1500 (std=0.0026)",
+    "full_db_headline": 0.6448,
+    "best_single_run": {"label": "N500_seed11", "accuracy": 0.7270}
+  }
+}
