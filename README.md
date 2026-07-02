@@ -1,10 +1,15 @@
-# DOG-AI
+# KaraOS (`dog-ai`)
 
 ![fast CI](https://github.com/jagannivas/dog-ai/actions/workflows/fast.yml/badge.svg)
 ![nightly CI](https://github.com/jagannivas/dog-ai/actions/workflows/slow.yml/badge.svg)
 ![security scan](https://github.com/jagannivas/dog-ai/actions/workflows/security.yml/badge.svg)
 
-Face recognition pipeline: See face → identify → greet → listen → respond → repeat.
+KaraOS is a domain-agnostic embodied-presence runtime — the cognitive layer for
+an embodied AI agent: it sees, hears, recognizes people, remembers them across
+sessions, and holds spoken conversations. What it deploys AS is selected by a
+profile + persona pack (`profiles/` + `persona/`); the companion — this repo's
+default profile — is the first reference persona:
+see face → identify → greet → listen → respond → repeat.
 
 ## Structure
 
@@ -85,8 +90,8 @@ python pipeline.py
 
 ## Enrollment
 
-**Voice:** Say "add me", "enroll me", "remember me" to the dog.
-The system asks your name then captures your face for 5 seconds.
+**Voice:** Say "add me", "enroll me", "remember me" to the system.
+It asks your name then captures your face for 5 seconds.
 
 **Manual:** Go to http://localhost:3000/enroll, enter name, click start.
 

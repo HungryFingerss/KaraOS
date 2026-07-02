@@ -19,6 +19,8 @@ This document exists to answer four questions, repeatedly, as the market changes
 3. **What is the defensible gap KaraOS uniquely fills, and is that gap still real?**
 4. **What strategic moves by competitors would force KaraOS to re-scope?**
 
+The standing answer to (1), as of SB.8: KaraOS is a **domain-agnostic embodied-presence runtime** — Layer D, the cognitive runtime above motor control and below natural-language orchestration. The companion is the first reference persona (a `profiles/` + `persona/` selection), not the product boundary.
+
 The robotics market in 2026 is moving fast. A position that's defensible today can collapse in 6 months if a competitor ships the wrong feature. This doc is the canonical reference that prevents the team from drifting into either (a) over-confident "no one is doing this" framing or (b) panicked "they're already doing everything" reactivity.
 
 ### 0.2 Refresh cadence

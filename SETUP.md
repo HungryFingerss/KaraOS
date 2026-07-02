@@ -2,6 +2,8 @@
 
 This file documents the full restore flow if you've lost your previous machine and want to bring KaraOS back from the git backup.
 
+KaraOS is a domain-agnostic embodied-presence runtime; this repo's default profile boots the companion — the first reference persona (the deployment shape is selected by `profiles/<name>.yaml` + `persona/<id>.yaml`, not baked into the engine).
+
 The repo is private. You'll need a GitHub account that has read access to it.
 
 ---
