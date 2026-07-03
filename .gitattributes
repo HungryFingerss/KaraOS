@@ -22,3 +22,13 @@ data/classifier_scenarios.db   filter=lfs diff=lfs merge=lfs -text
 # Faces backup — Kuzu graph DB (~10 MB) and FAISS index
 faces/brain_graph              filter=lfs diff=lfs merge=lfs -text
 faces/faiss.index              filter=lfs diff=lfs merge=lfs -text
+
+# =============================================================================
+# Byte-identity goldens — force LF in every working tree, on every platform.
+# These files are compared BYTE-FOR-BYTE by tests (tests/test_sb8_persona_pack.py
+# reads them in binary mode). Without this, core.autocrlf=true on a fresh
+# Windows clone rewrites them to CRLF and the golden comparisons fail —
+# found empirically on the first fresh-clone test run, 2026-07-03.
+# =============================================================================
+tests/goldens/** text eol=lf
+tests/golden/**  text eol=lf

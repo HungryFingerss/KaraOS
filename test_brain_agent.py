@@ -3701,7 +3701,7 @@ class TestFrictionDetectionAgent:
         raw_json = '{"frictions": [{"pref_type": "invented_type", "confidence": 0.9}]}'
         with patch.object(self.agent, "_call_together", new=AsyncMock(return_value=raw_json)):
             prefs = [{"pref_type": "response_length", "content": "Keep it short"}]
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 self.agent.detect("be shorter", "Long response.", prefs)
             )
             assert result == []
@@ -3711,7 +3711,7 @@ class TestFrictionDetectionAgent:
         raw_json = '{"frictions": [{"pref_type": "response_length", "confidence": 0.5}]}'
         with patch.object(self.agent, "_call_together", new=AsyncMock(return_value=raw_json)):
             prefs = [{"pref_type": "response_length", "content": "Keep it short"}]
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 self.agent.detect("please be shorter", "Long text.", prefs)
             )
             assert result == []
@@ -3721,7 +3721,7 @@ class TestFrictionDetectionAgent:
         raw_json = '{"frictions": [{"pref_type": "response_length", "confidence": 0.85}]}'
         with patch.object(self.agent, "_call_together", new=AsyncMock(return_value=raw_json)):
             prefs = [{"pref_type": "response_length", "content": "Keep it short"}]
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 self.agent.detect("I already said keep it short!", "A very long response.", prefs)
             )
             assert len(result) == 1
@@ -3732,7 +3732,7 @@ class TestFrictionDetectionAgent:
         import asyncio
         with patch.object(self.agent, "_call_together", new=AsyncMock(return_value='{"frictions": []}')):
             prefs = [{"pref_type": "response_length", "content": "Keep it short"}]
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 self.agent.detect("okay thanks", "Sure!", prefs)
             )
             assert result == []
@@ -3742,7 +3742,7 @@ class TestFrictionDetectionAgent:
         with patch.object(self.agent, "_call_together", new=AsyncMock(return_value="not json")):
             with patch.object(self.agent, "_call_ollama", new=AsyncMock(return_value=None)):
                 prefs = [{"pref_type": "response_length", "content": "Keep it short"}]
-                result = asyncio.get_event_loop().run_until_complete(
+                result = asyncio.run(
                     self.agent.detect("hello", "hi", prefs)
                 )
                 assert result == []
@@ -3763,7 +3763,7 @@ class TestFrictionDetectionAgent:
 
         from core.brain_agent import BrainOrchestrator
         bound = BrainOrchestrator._detect_and_record_friction.__get__(obj)
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             bound("p1", "I said be shorter!", "A long reply.", brain_db.get_active_prefs("p1"))
         )
         assert brain_db.get_active_prefs("p1")[0]["friction_count"] == 1
