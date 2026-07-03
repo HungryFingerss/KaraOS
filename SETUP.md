@@ -78,17 +78,25 @@ verification installed all 26 dependencies, including both fork builds, clean).
 
 ## 4. (Optional) GPU acceleration
 
-The default install gives you CPU-only PyTorch on Windows — **the system works
-on it** (verified), just with slower speech-to-text and vision. If you have an
-NVIDIA GPU and want speed:
+The default install gives you CPU-only PyTorch on Windows. If you have an
+NVIDIA GPU, install the CUDA build — `--force-reinstall` is REQUIRED here:
+plain `pip install torch` would see the CPU torch from step 3 as "already
+satisfied" and silently do nothing (found the hard way).
 
 ```bash
 # RTX 50-series (Blackwell): cu128 · RTX 40/30-series: cu124 or cu121
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+pip install --force-reinstall torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 ```
 
-`onnxruntime-gpu` is already installed and falls back to CPU automatically
-when CUDA is absent — no action needed either way.
+`onnxruntime-gpu` is already installed and picks up CUDA automatically once
+the CUDA runtime libraries arrive with the torch install above.
+
+**Honest note for GPU-less machines:** the test suite is fully verified on
+CPU (that's the 4,233/0 number), and vision + TTS run on CPU by design — but
+live speech-to-text currently loads Whisper with `device="cuda"` and will not
+transcribe on a CPU-only box (a CPU fallback for it is a tracked known
+limitation). Practical meaning: for the full live experience — including the
+system HEARING you — use an NVIDIA GPU for now.
 
 ## 5. API keys (.env)
 
