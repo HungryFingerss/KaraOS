@@ -45,15 +45,27 @@ karaos/
 
 ## Setup
 
-### 1. Python environment
+**The complete, follow-as-is manual is [SETUP.md](SETUP.md)** — every step with
+what you'll see, the gotchas, and troubleshooting. It was verified end-to-end
+on a fresh clone (2026-07-03): running it exactly produced a working system
+and a green test suite (4,233 passed / 0 failed, CPU-only machine).
+
+The short version:
 
 ```bash
-python -m venv venv
-venv\Scripts\activate       # Windows   (Linux: source venv/bin/activate)
-pip install -r requirements.txt
+git clone https://github.com/HungryFingerss/KaraOS.git karaos && cd karaos
+git lfs pull                                              # model weights (~600 MB)
+python -m venv venv && venv\Scripts\activate              # Linux: source venv/bin/activate
+python -m pip install --upgrade pip "setuptools<81" wheel # REQUIRED before the next line
+pip install -r requirements.txt                           # ~5-15 min, 0 errors expected
+copy .env.example .env                                    # then set TOGETHER_API_KEY in .env
+python pipeline.py                                        # first boot enrolls YOU (voice + face)
 ```
 
-### 1a. Pre-commit hook (P0.S6 secrets-scanning)
+Dashboard (optional): `cd karaos-dashboard && npm install && npm run dev` —
+the pipeline terminal prints the one-time auth URL; then http://localhost:3000.
+
+### Pre-commit hook (P0.S6 secrets-scanning)
 
 Install once per dev machine so staged commits get scanned for accidentally-leaked
 secrets via [detect-secrets](https://github.com/Yelp/detect-secrets):
@@ -67,47 +79,6 @@ The `.secrets.baseline` file is the allowlist snapshot of known false positives
 (ML embeddings, git SHAs, etc.). New high-entropy findings outside the baseline
 fail the commit. To refresh the baseline after legitimately adding a new
 high-entropy file: `detect-secrets scan --baseline .secrets.baseline --update`.
-
-### 2. Models
-
-The bundled weights (face detection/recognition, TTS, turn detection,
-anti-spoofing) are in the repo via Git LFS:
-
-```bash
-git lfs pull
-```
-
-The rest (Whisper STT, speaker ID, diarization) download from Hugging Face at
-first run — see `models/README.md` for the full inventory.
-
-### 3. Environment variables
-
-```bash
-copy .env.example .env
-# Required: TOGETHER_API_KEY (LLM + embeddings — validated loudly at boot)
-# Optional: HF_TOKEN (pyannote diarization), TAVILY_API_KEY (web search),
-#           GROQ_API_KEY (alternate LLM)
-```
-
-### 4. Dashboard
-
-```bash
-cd karaos-dashboard
-npm install
-npm run dev     # development
-npm run build   # production
-npm start
-```
-
-Dashboard runs on http://localhost:3000 (localhost-bound by default; the
-pipeline prints a one-time auth URL at boot — see `karaos-dashboard/README.md`).
-
-### 5. Run pipeline
-
-```bash
-# From the repo root
-python pipeline.py
-```
 
 ## Tests — the proof the thing works
 

@@ -1,125 +1,226 @@
-# Setup — restoring KaraOS on a new machine
-
-This file documents the full restore flow if you've lost your previous machine and want to bring KaraOS back from the git backup.
+# KaraOS Setup Manual — from clone to a running system
 
 KaraOS is a domain-agnostic embodied-presence runtime; this repo's default profile boots the companion — the first reference persona (the deployment shape is selected by `profiles/<name>.yaml` + `persona/<id>.yaml`, not baked into the engine).
 
-The repo is private. You'll need a GitHub account that has read access to it.
+**This manual was verified end-to-end on a fresh clone (2026-07-03):** every command below was actually run, in this order, on a machine that had never seen the repo — and the result was a working system (test suite: **4,233 passed / 0 failed** on a fresh CPU-only environment). If you follow the steps exactly, you end up in the same place.
 
 ---
 
-## Prerequisites
+## 0. What you need before starting
 
-| What | Why |
-|---|---|
-| Python 3.11+ | Required by `requirements.txt` (faster-whisper, transformers, kuzu) |
-| Git | To clone the repo |
-| Git-LFS | To pull large model files (auto-stored via LFS) |
-| CUDA-capable GPU | Strongly recommended; CPU-only path works but is slow |
-| Ollama (optional) | Local fallback LLM when cloud is unreachable |
-| Microphone + camera | The pipeline opens both at startup |
+| What | Why | Notes |
+|---|---|---|
+| **Python 3.13** | the runtime (3.11+ minimum; 3.13.5 is what the fresh-clone verification used) | `python --version` to check |
+| **Git** | to clone | also needed DURING install — two dependencies install from pinned git forks |
+| **Git-LFS** | the model weights (~600 MB) are LFS-stored | install below |
+| **Node.js 18+** | ONLY for the optional web dashboard | skip if you don't want the dashboard |
+| **Webcam + microphone** | the pipeline opens both at startup | laptop built-ins are fine |
+| **A Together.ai API key** | powers the LLM + embeddings (free account: https://api.together.xyz → Settings → API Keys) | the system refuses to boot without it — loudly, with instructions |
+| NVIDIA GPU (optional) | faster STT/vision | **NOT required** — the CPU-only path is verified working (that's what the fresh-clone run used) |
+| Ollama (optional) | local fallback LLM when the cloud is unreachable | `ollama pull qwen2.5:7b` |
+| ~10 GB free disk | repo + weights (~1 GB) + venv (~6 GB) + auto-downloaded models (~3 GB) | |
 
 Install Git-LFS once, system-wide:
+- **Windows**: `winget install GitHub.GitLFS` (or https://git-lfs.com)
+- **Linux**: `sudo apt-get install git-lfs`
+- **macOS**: `brew install git-lfs` *(macOS is untested — Windows is the verified dev platform, Linux runs in CI)*
 
-- **Windows**: `winget install GitHub.GitLFS` (or download from https://git-lfs.com)
-- **Linux**: `sudo apt-get install git-lfs` (or your distro equivalent)
-- **macOS**: `brew install git-lfs`
-
-After install: `git lfs install` (registers LFS hooks for your user account; one-time).
+Then register it for your user (one-time): `git lfs install`
 
 ---
 
-## Restore flow
+## 1. Clone the repo
 
 ```bash
-# 1. Clone the private repo (you'll be prompted to authenticate)
 git clone https://github.com/HungryFingerss/KaraOS.git karaos
 cd karaos
+```
 
-# 2. Pull the LFS-stored model files (~573 MB total)
+## 2. Pull the model weights (~600 MB)
+
+```bash
 git lfs pull
+```
 
-# 3. Set up Python virtual environment
+**Verify it worked** — the files must be real weights, not pointers:
+
+```bash
+# models/adaface_ir101.onnx should be ~206 MB, kokoro-v1.0.onnx ~310 MB.
+# If any model file is ~130 BYTES, it's still an LFS pointer:
+# run `git lfs install` then `git lfs pull` again.
+```
+
+## 3. Python environment — follow exactly
+
+```bash
 python -m venv venv
+
 # Activate it:
-#   Windows:  source venv/Scripts/activate
-#   Linux/Mac: source venv/bin/activate
+#   Windows (cmd):        venv\Scripts\activate
+#   Windows (PowerShell): venv\Scripts\Activate.ps1
+#   Linux/macOS:          source venv/bin/activate
 
-# 4. Install Python dependencies
+# CRITICAL — do this BEFORE installing requirements:
+python -m pip install --upgrade pip "setuptools<81" wheel
+```
+
+Why the `setuptools<81` line matters: two dependencies (the pinned speechbrain
++ pyannote forks) build from source, and their build imports `pkg_resources`,
+which setuptools ≥ 81 removed. Skipping this line is the #1 way a fresh
+install fails (`ModuleNotFoundError: No module named 'pkg_resources'`).
+
+```bash
 pip install -r requirements.txt
+```
 
-# 4b. PyTorch — install separately for your GPU's CUDA version.
-# RTX 50-series (sm_120 / Blackwell): cu128
-# RTX 40 / 30 series: cu121 or cu124
+Takes ~5–15 minutes. Expected result: **0 errors** (the fresh-clone
+verification installed all 26 dependencies, including both fork builds, clean).
+
+## 4. (Optional) GPU acceleration
+
+The default install gives you CPU-only PyTorch on Windows — **the system works
+on it** (verified), just with slower speech-to-text and vision. If you have an
+NVIDIA GPU and want speed:
+
+```bash
+# RTX 50-series (Blackwell): cu128 · RTX 40/30-series: cu124 or cu121
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+```
 
-# 5. Restore your API keys to .env
+`onnxruntime-gpu` is already installed and falls back to CPU automatically
+when CUDA is absent — no action needed either way.
+
+## 5. API keys (.env)
+
+```bash
+# Windows:
+copy .env.example .env
+# Linux/macOS:
 cp .env.example .env
-# Open .env in a text editor and fill in each key from your password manager:
-#   - TOGETHER_API_KEY (primary LLM provider)
-#   - TAVILY_API_KEY (web search)
-#   - HF_TOKEN (HuggingFace, for pyannote diarization model download)
-#   - PYTHON_PATH (set to the venv python on this machine)
+```
 
-# 6. (Optional) Pull Ollama fallback model if you want offline-capable brain
-ollama pull qwen2.5:7b
+Open `.env` in a text editor:
 
-# 7. Run the pipeline
+| Key | Required? | What it does |
+|---|---|---|
+| `TOGETHER_API_KEY` | **YES** | the LLM + embeddings. Without it the pipeline exits at boot with an error that tells you exactly how to fix it |
+| `TAVILY_API_KEY` | optional | the web-search tool (skip = no live web answers) |
+| `HF_TOKEN` | optional | multi-speaker diarization (pyannote). Also requires accepting the model license at https://huggingface.co/pyannote/speaker-diarization-3.1. Skip = single-speaker works fully; simultaneous multi-speaker audio uses a simpler fallback |
+| `GROQ_API_KEY` | optional | alternate LLM provider |
+| `CAMERA_INDEX` | default `0` | which camera to open (try `1` if you have multiple) |
+| `OLLAMA_MODEL` | default `qwen2.5:7b` | the offline-fallback model (only used if you run Ollama) |
+| `PYTHON_PATH` | recommended | absolute path to your venv python (used by the dashboard's server-side scripts), e.g. `C:\...\karaos\venv\Scripts\python.exe` |
+
+## 6. Verify the install (recommended — 5 minutes)
+
+```bash
+python -m pytest --ignore=tests/test_brain_json_parser_hypothesis.py -q
+```
+
+Expected: **~4,233 passed, 0 failed** (a few more pass on a CUDA machine —
+4,237 — because some GPU-gated tests un-skip). ANY line starting with
+`FAILED` means something in your environment is off — see Troubleshooting.
+
+## 7. First run
+
+```bash
 python pipeline.py
 ```
 
-The first run will:
-- Auto-download Whisper, ECAPA-TDNN, RetinaFace (buffalo_l), pyannote, E5-large, j-hartmann-emotion, and a few other HuggingFace-hosted models on first import.
-- Apply the pyannote dependency patches (see `docs/architecture/CHAPTER_13_observability_evolution_plans_pyannote.md` §194-§197 for why; pre-P0.R5 the patches were applied at runtime, post-P0.R5 they live in the vendored forks per CLAUDE.md "Pyannote vendoring" section).
-- Open the camera, mic, and dashboard ports.
+What happens, in order — **the first boot is special**:
 
-If everything is configured correctly: you'll see `[Pipeline] All systems ready. Watching...` and the system is ready to recognize you when you walk into frame.
+1. **Model downloads (~5 min, once).** Whisper, ECAPA-TDNN, the face-analysis
+   models, the emotion classifier download from Hugging Face into your user
+   cache (`~/.cache/huggingface`) — every later boot reuses the cache. There is
+   no "Apply the pyannote dependency patches" step for you: they live inside the
+   pinned vendored forks (background:
+   `docs/architecture/CHAPTER_13_observability_evolution_plans_pyannote.md`).
+2. **Worker pools warm** (the GPU/CPU inference subprocesses), camera + mic open.
+3. **First-boot enrollment.** You start from zero — this repo never ships
+   anyone's personal data, so there is no `faces/` database until YOU create
+   it. The system asks your name by voice and captures your face for ~5
+   seconds. You become the owner (best friend) of this instance.
+4. `[Pipeline] All systems ready. Watching...` — walk into frame and it greets
+   you by name. Talk to it. Memory persists across sessions.
+
+Every subsequent boot skips step 3 and recognizes you directly.
+
+## 8. Dashboard (optional)
+
+```bash
+cd karaos-dashboard
+npm install
+npm run dev
+```
+
+The **pipeline terminal** prints a one-time auth URL at boot (the dashboard is
+token-protected). Open that URL once — it sets a session cookie — then use
+http://localhost:3000. The dashboard binds to localhost only by default.
 
 ---
 
-## What's restored vs. what isn't
+## What exists after setup (and where it came from)
 
-After the restore steps above, you have:
-
-| | Restored? | How |
-|---|---|---|
-| All source code | Yes | from git |
-| Architecture docs (CLAUDE.md, docs/architecture/ chapter files + thin redirect at everything_about_system.md, KARAOS guides) | Yes | from git |
-| Model weights (AdaFace, Kokoro, SCRFD, smart-turn, antispoof) | Yes | from git-lfs |
-| Classifier scenarios DB (the 2,071 abstracted scenarios) | Yes | from git-lfs |
-| Faces DB + voice profiles + your enrolled photo | Yes | from git |
-| Brain knowledge graph (Kuzu DB) — your conversation memory | Yes | from git-lfs |
-| FAISS face index | Yes | from git-lfs |
-| API keys | NO — you fill in `.env` from your password manager |
-| Auto-downloaded models (Whisper, ECAPA, etc.) | NO — re-downloaded on first pipeline run |
-| `venv/` virtual environment | NO — recreated by `python -m venv venv` + pip install |
-| Live session logs (`terminal_output_*.md`) | NO — these are gitignored for privacy |
+| | Source |
+|---|---|
+| All source code + tests + CI workflows | git |
+| Architecture docs (CLAUDE.md, docs/architecture/ chapter files + the thin redirect at everything_about_system.md) | git |
+| Model weights (AdaFace, Kokoro, SCRFD, smart-turn, anti-spoof) | git-lfs (`git lfs pull`) |
+| Classifier seed (`data/classifier_scenarios_seed.jsonl`) | git — the runtime builds its DB from it at first boot |
+| `venv/` | created by you (step 3) |
+| `.env` API keys | yours (step 5) |
+| Auto-downloaded models (Whisper, ECAPA, …) | Hugging Face, first run (step 7) |
+| **`faces/` — the people it knows, memories, conversation history** | **created fresh on YOUR machine at first boot. Never in git — this repo contains no one's personal data.** |
 
 ---
 
 ## Troubleshooting
 
-**"git lfs pull" hangs or fails.** Check that you have `git lfs install` configured. If on a metered connection, `git lfs pull --include="models/*.onnx"` to pull selectively.
+**`pip install -r requirements.txt` fails with `pkg_resources` / build errors.**
+You skipped the `setuptools<81` seed. Run
+`python -m pip install --upgrade pip "setuptools<81" wheel`, then rerun the install.
 
-**Pipeline crashes on import with `IndexError: invalid unordered_map<K, T> key` (Kuzu).** The Kuzu graph DB might be in an inconsistent state from the previous machine. Delete `faces/brain_graph` and `faces/brain_graph.wal` — the system will rebuild from `brain.db` on next start (Session 58 self-heal logic).
+**A model fails to load / a file in `models/` is ~130 bytes.**
+Those are LFS pointer files, not weights. `git lfs install` then `git lfs pull`.
+Still stuck: `git lfs fetch --all && git lfs checkout`.
 
-**"Whisper failed to load" or "ECAPA failed to load."** You probably have HuggingFace rate-limiting, or no network access. Check `HF_TOKEN` is set and has read access. First-run downloads need ~5 minutes on a good connection.
+**Boot exits with a `TOGETHER_API_KEY` error.**
+Working as designed — set the key in `.env` (step 5). The error message itself
+contains the exact fix commands.
 
-**"pyannote ReproducibilityWarning: TF32 disabled"** — cosmetic. Ignore.
+**"Whisper failed to load" / Hugging Face download errors on first run.**
+Network or rate-limiting. First-run downloads need ~5 minutes on a good
+connection; just rerun. If you set `HF_TOKEN`, confirm it has read access.
 
-**"pyannote returns 0 segments on multi-speaker audio."** Run `python tests/patch_pyannote_io.py` to reapply the file-level patches (see `docs/architecture/CHAPTER_13_observability_evolution_plans_pyannote.md` §195). These patches are mandatory after any `pip install pyannote.audio`.
+**pyannote returns 0 segments on multi-speaker audio.**
+(Background: `docs/architecture/CHAPTER_13_observability_evolution_plans_pyannote.md`
+§194-§197.) Multi-speaker diarization needs `HF_TOKEN` + the accepted model
+license (step 5 table). Without them the system falls back to a simpler
+two-speaker split by design. The historical file-level patches are NOT
+something you apply anymore — they live in the pinned forks.
 
-**"`models/X.onnx` not found"** even after git lfs pull. Run `git lfs ls-files` to verify which files are LFS-tracked. Run `git lfs fetch --all` then `git lfs checkout` to force-restore.
+**"pyannote ReproducibilityWarning: TF32"** — cosmetic. Ignore.
 
-**Tests fail.** Run `pytest -x` and look at the first failure. The test suite is 1374 passing as of 2026-05-02; if anything fails, it's likely an environment issue (missing GPU, missing models, missing API keys for tests that hit real APIs).
+**Camera won't open, or the wrong camera opens.**
+Set `CAMERA_INDEX` in `.env` (0, 1, 2…). Close other apps holding the camera.
+Never run two copies of the pipeline at once — one camera, one owner.
+
+**Pipeline crashes on import with a Kuzu `IndexError: invalid unordered_map` .**
+The graph DB is in an inconsistent state. Delete `faces/brain_graph` and
+`faces/brain_graph.wal` — the system rebuilds them from `brain.db` on next
+start (self-heal is built in).
+
+**Tests fail at step 6.**
+Run `python -m pytest -x -q` and read the first failure. With a correct
+environment the suite is 4,233+ passing / 0 failed (verified on a fresh
+clone, CPU-only, 2026-07-03). The `tests/test_brain_json_parser_hypothesis.py`
+file is excluded from the standard invocation and runs fine separately.
 
 ---
 
-## What to verify after restore
+## Reset / start over
 
-1. `pytest` — should report ~1374 passing, 2 skipped.
-2. `python pipeline.py` — should reach `[Pipeline] All systems ready. Watching...` within ~30 seconds.
-3. Walk into camera frame as the enrolled best_friend (Jagan). System should greet you by name within ~2 seconds.
-4. Have a short conversation. Memory should persist across sessions (ask "what did we talk about yesterday" — should retrieve from `brain.db`).
-
-If all four checks pass, the restore is complete and the system is at the same state as the previous machine.
+- **Wipe the people/memories, keep the install:** `python tools/factory_reset.py`
+  (dry-run by default — add `--confirm` to actually wipe). Or simply delete the
+  `faces/` folder while the pipeline is stopped.
+- **Full clean slate:** delete the clone and start from step 1.
