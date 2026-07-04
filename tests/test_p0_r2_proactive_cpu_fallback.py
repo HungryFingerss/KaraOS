@@ -78,6 +78,23 @@ def _require_real_ort_or_skip() -> None:
         pytest.skip("P0.R2 D3 Anchor 1 requires real `ort.InferenceSession` (full-suite pollution detected)")
 
 
+def _require_real_model_or_skip() -> None:
+    """Skip when the ADAFace ONNX is a Git-LFS pointer rather than the real weights.
+    The CPU-fallback anchor loads the real model even without CUDA; on `fast` CI
+    (no `git lfs pull` — LFS bandwidth is preserved for the nightly `slow` leg,
+    which checks out with `lfs: true`) the file is a ~130-byte pointer and a real
+    load would raise InvalidProtobuf. This test runs in `slow` CI + locally, where
+    the real weights are present.
+    """
+    try:
+        if not _ADAFACE_MODEL.exists() or _ADAFACE_MODEL.stat().st_size < 1_000_000:
+            pytest.skip("P0.R2 CPU-fallback anchor requires the real ADAFace ONNX "
+                        "(models/adaface_ir101.onnx is a Git-LFS pointer here — "
+                        "runs in slow CI / locally where `git lfs pull` has run)")
+    except OSError:
+        pytest.skip("P0.R2 CPU-fallback anchor: ADAFace model file unreadable")
+
+
 @pytest.fixture(autouse=True)
 def _reset_vps_state():
     """Reset module-level state in core.vision_provider_state between tests."""
@@ -179,6 +196,7 @@ def test_p0_r2_d3_anchor_1_cuda_unavailable_graceful_cpu_only(monkeypatch):
     CPU-only session + calls `_vision_provider_state.set_cpu_only_permanent()`.
     """
     _require_real_ort_or_skip()
+    _require_real_model_or_skip()
     import onnxruntime as ort
     monkeypatch.setattr(
         ort, "get_available_providers",

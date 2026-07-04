@@ -82,6 +82,13 @@ jobs:
         env:
           PYTHONIOENCODING: utf-8
           PYTHONUNBUFFERED: "1"
+          # Placeholder Tavily key. The web_search tests MOCK `_tavily_http.post`
+          # (they never hit the network — that's the `network` marker's job), but
+          # `_web_search` early-returns None when TAVILY_API_KEY is falsy, before
+          # the client-side query-validation logic those tests assert on. A
+          # non-empty placeholder lets the validation path run; no real request
+          # is made because the HTTP client is mocked in every one of these tests.
+          TAVILY_API_KEY: ci-placeholder-not-a-real-key
         run: |
           pytest tests/ \
             -m "not slow and not network and not models and not privacy_critical" \
