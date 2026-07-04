@@ -2,7 +2,7 @@
 
 Phase 3 of the Voice/Vision Independence refactor. This module replaces
 `pipeline._resolve_actual_speaker`'s tangled if-elif chain with a flat,
-ordered cascade of 22 named rule helpers. Each helper is a pure function
+ordered cascade of 23 named rule helpers. Each helper is a pure function
 on `(IdentityClaim, PresenceState, SessionState)` returning either a
 `RoutingDecision` (this rule matches; cascade stops) or `None` (try the
 next rule).
@@ -23,8 +23,6 @@ Cascade ordering (enforced by `test_cascade_ordering_*` tests):
   - `_last_resort_ambiguous` is always `_CASCADE[-1]`.
 
 Design reference: RECONCILER_DESIGN.md.
-Mapping reference: DRAFT_RECONCILER_MAPPING.md (22-row cascade with
-                   code-line citations to the legacy function).
 """
 
 # SPDX-License-Identifier: Apache-2.0
@@ -891,12 +889,11 @@ def reconcile(
     callers and tests get a single machine-readable rule identifier
     without each rule body having to set it manually (DRY + typo-proof).
 
-    Falls through to a `no_action` decision if all 22 rules return None
-    (degenerate state — `_last_resort_ambiguous` should normally catch
-    cur_pid-occupied fallthroughs and `_p5_no_session_no_action` catches
-    the empty-state case, so this final fallback only fires when both
-    return None — currently impossible once #176 lands rule bodies, but
-    kept here for correctness during the skeleton phase).
+    Falls through to a `no_action` decision if every rule in `_CASCADE`
+    returns None (degenerate state — `_last_resort_ambiguous` normally catches
+    cur_pid-occupied fallthroughs and `_p5_no_session_no_action` catches the
+    empty-state case, so this final fallback fires only if both return None;
+    it is kept as a structural safety net).
     """
     _final_decision: Optional[RoutingDecision] = None
     for rule in _CASCADE:

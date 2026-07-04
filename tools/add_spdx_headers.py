@@ -4,7 +4,9 @@ Idempotent: re-runs report 0 modifications. Excludes vendored MIT-licensed paths
 per PI #3 (Plan v3 absorption 2026-05-28). Vendored MIT compliance handled at
 directory level by Bundle 2.X (`core/_minifasnet/LICENSE`).
 
-SPDX scope (202 files locked at Plan v3 §1.2):
+SPDX scope — collect_in_scope() globs dynamically; the bucket table below
+is the historical Bundle-2 lock (202 files at Plan v3 §1.2), NOT the current
+run total (the globs grow with the tree):
 - `core/**/*.py` excluding `core/_minifasnet/` ... 47 files
 - Top-level entry points (4): pipeline.py + enroll.py + delete_person.py + audit_person.py
 - `tools/*.py` ........................................ 6 files
@@ -56,7 +58,9 @@ GITIGNORE_WHITELIST_LINES: tuple[str, ...] = (
 
 
 def collect_in_scope() -> list[pathlib.Path]:
-    """Return the locked 202-file in-scope list per Plan v3 §1.2."""
+    """Return the current dynamically-globbed in-scope list (core rglob + tests
+    rglob + tools glob + workflows glob). Originally locked at 202 files at
+    Plan v3 §1.2; the globs grow as the tree does."""
     files: list[pathlib.Path] = []
 
     # core/ excluding vendored third-party dirs (_minifasnet/, _florence2/)

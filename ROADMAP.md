@@ -12,7 +12,7 @@ This roadmap distills the strategic decisions and phased plan from a longer inte
 
 KaraOS is a working cognitive layer for AI companions. It recognizes who is in the household across face and voice, remembers each person across sessions, handles a room of multiple speakers without losing track of who's talking to whom, and enforces a four-tier privacy model on every memory write and retrieval. The intent classifier graduated from LLM-prompted to pure-graph (zero LLM calls in the classification hot path); on a published academic benchmark (multi-party turn-taking on the Friends corpus), it sits competitively with fine-tuned models that required 120,000+ labeled training examples while using ~2,000 retrieval scenarios and no gradient descent.
 
-2,179 automated tests cover identity, memory, privacy enforcement, room orchestration, conversation, intent classification, schema migrations, atomic cross-storage writes, and tool execution safety. ~30 structural invariants are CI-enforced via AST-based ratchets that make the discipline durable across future contributors.
+4,237 automated tests (0 failed) cover identity, memory, privacy enforcement, room orchestration, conversation, intent classification, schema migrations, atomic cross-storage writes, and tool execution safety. ~30 structural invariants are CI-enforced via AST-based ratchets that make the discipline durable across future contributors.
 
 The current correctness arc is closing. The cognitive layer is stable. The next chapter is embodied integration — making the same cognitive runtime work as the brain for robot bodies.
 

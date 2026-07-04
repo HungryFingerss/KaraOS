@@ -201,7 +201,7 @@ A few honest limitations worth naming explicitly:
 
 - **Not autonomous AI development.** Every spec, every decision lock, every closure review is done by me reading carefully and pushing back. Claude doesn't decide what to build next; Claude decides how to build what I've decided to build next. The architect/auditor/developer roles are mechanisms for forcing me to think clearly, not for delegating thinking.
 - **Not robotic embodiment today.** KaraOS is a working cognitive layer running on consumer hardware in a household. Robot integration is the roadmap. The two-layer architecture in [`ARCHITECTURE.md`](ARCHITECTURE.md) is accurate about what's done and what's planned.
-- **Not deployed at scale.** The 2,179-test suite, the live multi-person canary sessions, and the published-benchmark validation are all in a single-household development context. Scale validation is future work.
+- **Not deployed at scale.** The 4,237-test suite, the live multi-person canary sessions, and the published-benchmark validation are all in a single-household development context. Scale validation is future work.
 - **Not production-deployed-to-strangers.** The privacy-tier model is designed for one's own household; deployment to homes I don't control would require additional security work I haven't done.
 
 The strength of this project is not its scale or its claim to physical embodiment. The strength is the engineering discipline that produced it and the verifiability of every architectural claim.

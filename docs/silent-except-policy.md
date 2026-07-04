@@ -2,7 +2,7 @@
 
 Every `except (Exception | BaseException | bare): pass` handler in production
 code **must** carry a co-located triage annotation.  This document explains why,
-what the four allowed annotations mean, and how to pick the right one.
+what the four buckets and three allowed annotations mean, and how to pick the right one.
 
 ---
 
@@ -110,14 +110,19 @@ is a slightly noisier log.  A missed Bucket C is a silent bug.
 
 ## Annotation placement
 
-The annotation must appear on one of these three lines (the detector checks all
-three):
+The annotation may appear anywhere in the handler's FULL SPAN — the detector
+(widened at follow-up #123 D2b) scans from the line immediately above the
+`except:` keyword through the handler's last body line:
 
 ```
-end_lineno - 1   → pass line itself   (preferred)
-except_lineno - 1 → the except: line
 except_lineno - 2 → line immediately above except:
+except_lineno - 1 → the except: line
+...               → any line of the handler body
+end_lineno - 1    → last body line (e.g. the pass) (preferred placement)
 ```
+
+(The full-span scan is safe because every detected shape is a short handler —
+see the `_has_annotation_comment` docstring in the invariant test.)
 
 The most readable form is inline on the `pass` line:
 
@@ -139,13 +144,13 @@ except Exception:
 
 ---
 
-## The bulk annotator (one-shot tool)
+## The bulk annotator (historical)
 
-`tools/bulk_annotate_p04.py` adds `# TODO-P0.4: triage` to every unannotated
-site.  It is a **one-shot migration tool**, not a workflow.  After running it,
-triage each site and replace the placeholder with the correct annotation.
-`# TODO-P0.4:` is **not** a permitted annotation — the invariant test will fail
-if any site still carries it.
+`tools/bulk_annotate_p04.py` was a one-shot P0.4 migration aid that stamped
+`# TODO-P0.4: triage` on every unannotated site; it was retired with the other
+one-shot scripts at SB.1 D3 and no longer exists in the repo.
+`# TODO-P0.4:` remains **not** a permitted annotation — the invariant test will
+fail if any site carries it.
 
 ---
 
@@ -154,6 +159,5 @@ if any site still carries it.
 | Item | Location |
 |---|---|
 | Structural invariant test | `tests/test_silent_except_invariant.py` |
-| Bulk annotator (one-shot) | `tools/bulk_annotate_p04.py` |
-| Permitted annotations | `PERMITTED_ANNOTATIONS` in both files above |
-| Allowlisted paths | `ALLOWLIST_PATHS` in both files above (`core/_minifasnet`) |
+| Permitted annotations | `PERMITTED_ANNOTATIONS` in the invariant test |
+| Allowlisted paths | `ALLOWLIST_PATHS` in the invariant test (`core/_minifasnet`, `core/_florence2`) |

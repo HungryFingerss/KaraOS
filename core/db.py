@@ -1,5 +1,5 @@
 """
-vision/db.py — SQLite + FAISS face database
+core/db.py — SQLite + FAISS face database
 Stores person metadata in SQLite, embeddings in FAISS index.
 """
 

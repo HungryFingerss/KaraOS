@@ -19,4 +19,4 @@ The pipeline mints a random token at boot (`faces/.dashboard_token`, chmod/ACL-r
 ## Pages (`app/`)
 `/` (live status), `/people`, `/enroll`.
 
-Known limitation: browser enrollment via `/enroll` conflicts with the pipeline holding the camera — enroll while the pipeline is stopped, or use `python enroll.py`. The Python-side auth/bind invariants are tested in `tests/test_dashboard_*.py` (34 tests).
+Known limitation: browser enrollment via `/enroll` conflicts with the pipeline holding the camera — enroll while the pipeline is stopped, or use `python enroll.py`. The Python-side auth/bind/token invariants are tested across the `tests/test_dashboard_*.py` files.

@@ -46,10 +46,12 @@ jobs:
       - name: pip-audit (CVE scan on requirements.txt)
         run: |
           python -m pip install --upgrade pip pip-audit
-          # Audit the pinned requirements file directly. Non-strict mode
-          # reports findings but does not fail the build — first-pass
-          # baseline. Tighten to strict mode in a follow-up PR after the
-          # initial CVE backlog is triaged.
+          # Audit the pinned requirements file with --strict (fail on
+          # dependency-collection errors). The trailing `|| true` is what makes
+          # the step non-blocking during the first-pass baseline — pip-audit
+          # exits non-zero on any CVE finding, so without it the build would
+          # fail. TODO: drop the `|| true` in a follow-up PR once the initial
+          # CVE backlog is triaged.
           pip-audit --requirement requirements.txt --strict || true
 
   trivy-fs:

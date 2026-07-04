@@ -2,7 +2,7 @@
 
 > **DO NOT WRITE HERE.** This file is a thin redirect. The architecture reference now lives at [`docs/architecture/`](docs/architecture/README.md), split into 19 chapters that preserve the original section numbering (§1-§340) verbatim. Edit the relevant chapter file directly.
 
-Split landed at Pre-P1 Bundle 1 closure (2026-05-28) per Plan v2 §1.6 section-number stability invariant. See `tests/pre_p1_bundle1_docs_ci_plan_v2.md` for the cluster table.
+Split landed at Pre-P1 Bundle 1 closure (2026-05-28) per Plan v2 §1.6 section-number stability invariant. See `rule book/cycle-specs/pre_p1_bundle1_docs_ci_plan_v2.md` for the cluster table.
 
 ## Index
 

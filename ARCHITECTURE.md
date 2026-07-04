@@ -94,7 +94,7 @@ Re-validating the rebuilt classifier on the same Friends benchmark: **64.56% bal
 
 Honest framing: KaraOS does NOT modify any model's parameters. But the graph is built from labeled training data (2,000 scenarios from external corpora, Friends held out). This is non-parametric learning — distinct from fine-tuning, but it IS labeled data and worth being transparent about. Different mechanism than the paper's LoRA approach; different scale (2K vs 120K rows); both are legitimate techniques in their respective categories.
 
-A second tier of 18 asynchronous agents runs alongside the brain (not the classifier), coordinated by a central orchestrator. They run in the background so the main conversation never blocks on bookkeeping.
+A second tier of 16 asynchronous agents runs alongside the brain (not the classifier), coordinated by a central orchestrator. They run in the background so the main conversation never blocks on bookkeeping.
 
 - BriefingAgent
 - ConversationInsightAgent
@@ -105,13 +105,11 @@ A second tier of 18 asynchronous agents runs alongside the brain (not the classi
 - FrictionDetectionAgent
 - HouseholdExtractionAgent
 - IdentityAgent
-- ObjectPatternAgent
 - ProactiveNudgeAgent
 - PromptPrefAgent
 - RoutineAgent
 - SchemaNormAgent
 - SocialGraphAgent
-- SpatialMemoryAgent
 - TriageAgent
 - WatchdogAgent
 
@@ -142,7 +140,7 @@ Full benchmark journey, all three runs in detail, methodology, comparison table,
 
 ## Engineering discipline
 
-- **2,179 automated tests** spanning identity, memory, privacy enforcement, room orchestration, conversation, intent classification, the graph classifier, schema migrations, atomic SQLite, cross-storage reconciliation, tool timeouts, and safety preservation
+- **4,237 automated tests** (0 failed; 4,259 collected — 4,233 pass on a fresh CPU-only clone) spanning identity, memory, privacy enforcement, room orchestration, conversation, intent classification, the graph classifier, schema migrations, atomic SQLite, cross-storage reconciliation, tool timeouts, and safety preservation
 - **~30 structural invariants enforced at CI time via AST ratchets** — every paired-write site is enumerated (FAISS↔SQL, brain.db↔Kuzu), every sync mutator on a Store class is allowlist-gated, every migration entry must carry a `verify_post` + `verify_present` companion, every rule in the routing cascade has a `LOWER_BOUND` attribute and the band-ordering is non-decreasing, every retry path uses BEGIN IMMEDIATE on SQLite, every tool handler with a sync loop must have an `await asyncio.sleep(0)` checkpoint so transaction rollback fires on `wait_for` cancellation. The discipline is: turn coding conventions into invariants, then turn invariants into CI-enforced AST scans
 - **Closed-world privacy regression tests** assert internal state is never reachable through user-facing query paths; a separate `system_only` privacy tier is structurally invisible to every retrieval path including the owner's
 - **Versioned schema-migration ledger** across all three SQLite databases — every historical mutation retrofitted into numbered `_m_NNNN_apply` / `_m_NNNN_verify_post` / `_m_NNNN_verify_present` tuples; bootstrap routine handles fresh / legacy / partially-migrated DBs separately; live-production-DB validation gate runs before legacy idempotency paths are deleted

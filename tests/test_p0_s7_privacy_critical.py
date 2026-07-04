@@ -412,7 +412,7 @@ def test_d1_privacy_critical_marker_docstring_names_spec_anchor():
     window = ini[privacy_line_idx:privacy_line_idx + 800]
     assert "p0_s7_privacy_critical_plan_v1.md" in window, (
         "D1: privacy_critical marker docstring must reference the spec anchor "
-        "tests/p0_s7_privacy_critical_plan_v1.md (Plan v1 §3.7 grep-discoverability)."
+        "rule book/cycle-specs/p0_s7_privacy_critical_plan_v1.md (Plan v1 §3.7 grep-discoverability)."
     )
 
 

@@ -39,4 +39,4 @@ Anything safety/honesty/capability-critical is an **engine floor** — enumerate
 - Explain each phase in plain terms BEFORE starting it (Jagan 2026-06-05).
 - Conversational by default; structured format only for plans/handoffs.
 - At a clean Layer-3 PASS: bank+commit+closure-report WITHOUT asking (the report is the gate). Push only when asked.
-- Internal artifacts (specs, plans, audits, discussions, this rule book) live in local-only folders — never in the published repo (Jagan 2026-07-03).
+- The rule book (disciplines + the cycle-spec archive) is PUBLISHED — part of the repo's public record (Jagan 2026-07-03). Board discussions and internal knowledge dumps remain in local-only folders, never in the published repo.

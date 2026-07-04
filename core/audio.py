@@ -1,6 +1,6 @@
 """
 core/audio.py — STT (faster-whisper) + TTS (Kokoro primary, Piper English fallback)
-VAD: Silero | Playback: sounddevice only | English only
+VAD: RMS energy (default) or Silero (VAD_SWITCH=True) | Playback: sounddevice only | English only
 """
 
 # SPDX-License-Identifier: Apache-2.0

@@ -2,12 +2,13 @@
 
 **What this is.** The operating system of this project, extracted from where it actually lives: the CLAUDE.md doctrine library (15+ elevated numbered doctrines with multi-cycle track records), the Solidify-Base board's §8.2 role rules, the banked memory directives, and the lessons individual cycles paid for. Every rule here was **earned** — it exists because skipping it once cost something, and the cost is usually named in the provenance line.
 
-**LOCAL-ONLY.** This folder is gitignored (per Jagan's 2026-07-03 directive: internal process artifacts never appear in the published repo).
+**PUBLISHED.** Originally local-only; published to the repo on Jagan's 2026-07-03 directive — the disciplines and the cycle-spec archive are part of the project's public record. (The board discussions and internal knowledge dumps remain local-only, outside the repo.)
 
 **How it's organized.**
 
 ```
 rule book/
+├── cycle-specs/       ← the published per-cycle spec archive (audits, plans, runbooks)
 └── disciplines/
     ├── README.md        ← the SHARED operating system (roles, the cycle, the universal proofs)
     ├── architect/       ← planning, auditing, Layer-3 verification, closure

@@ -21,7 +21,7 @@ Side effects: ZERO. The CLI opens brain.db in read-only URI mode
 (`file:<path>?mode=ro`) and never writes. Safe to run against a live
 production DB while the pipeline is running.
 
-Plan: tests/p0_07_plan_v2.md.
+Plan: rule book/cycle-specs/p0_07_plan_v2.md.
 """
 
 # SPDX-License-Identifier: Apache-2.0

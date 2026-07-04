@@ -30,7 +30,7 @@ The domain-agnostic runtime engine: perception, identity, memory, speech, resili
 | Module | What it actually does |
 |---|---|
 | `db.py` | `FaceDB` — SQLite (WAL) + FAISS face index with SQL-first paired-write atomicity, sentinel crash-recovery, boot reconciliation |
-| `brain_agent/` | the knowledge pipeline package: `orchestrator.py`, 13 agents under `agents/` (triage, extraction, contradiction, prefs, household, social, briefing, nudge, routine, schema, watchdog, embedding), `memory/` (SQLite store + Kuzu graph), `privacy.py` (4-tier visibility), `_llm.py` (the shared retry-safe LLM helper — the only sanctioned chat-endpoint caller) |
+| `brain_agent/` | the knowledge pipeline package: `orchestrator.py`, 15 agent classes across 12 files under `agents/` (triage, extraction, contradiction, prefs [PromptPref + FrictionDetection], household, social [SocialGraph + Identity], briefing [Briefing + ConversationInsight], nudge, routine, schema, watchdog, embedding), `memory/` (SQLite store + Kuzu graph), `privacy.py` (4-tier visibility), `_llm.py` (the shared retry-safe LLM helper — the only sanctioned chat-endpoint caller) |
 | `classifier_db.py`, `classifier_graph.py`, `abstraction.py` | the pure-graph intent classifier (no LLM in the hot path) + its seed DB + NER abstraction |
 | `cache_store.py`, `conversation_store.py`, `voice_gallery_store.py`, `per_person_agent_store.py`, `vision_frame_store.py`, `pipeline_state_store.py` | the typed Store family (all subclass `store_base.Store`, all reset between tests) |
 

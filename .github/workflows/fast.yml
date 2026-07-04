@@ -91,7 +91,7 @@ jobs:
         # treats any skipped privacy_critical test as a FAILURE (skip
         # silently dropping a privacy test is the exact drift class P0.S7
         # is meant to prevent).
-        # Spec: tests/p0_s7_privacy_critical_plan_v1.md §2.
+        # Spec: rule book/cycle-specs/p0_s7_privacy_critical_plan_v1.md §2.
         env:
           PYTHONIOENCODING: utf-8
           PYTHONUNBUFFERED: "1"

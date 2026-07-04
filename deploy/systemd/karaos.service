@@ -1,6 +1,6 @@
 [Unit]
 Description=karaos cognitive runtime
-Documentation=https://github.com/HungryFingerss/Cognitive-System
+Documentation=https://github.com/HungryFingerss/KaraOS
 After=network-online.target
 Wants=network-online.target
 

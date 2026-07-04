@@ -2,7 +2,7 @@
 
 Process supervisor manifests + installation procedures for the karaos cognitive runtime. Two supervisors are supported: **systemd** (Linux production target — Jetson AGX Orin, Ubuntu hosts) and **supervisord** (cross-platform; Linux + Windows dev). Both deliver the P0.R4 contract: auto-restart on crash, structured log integration, P0.S6 secrets discipline via external env file.
 
-See `tests/p0_r4_process_supervisor_audit.md` + `_plan_v1.md` + `_plan_v2.md` for the architecture decisions behind this layout.
+See `rule book/cycle-specs/p0_r4_process_supervisor_audit.md` + `p0_r4_process_supervisor_plan_v1.md` + `p0_r4_process_supervisor_plan_v2.md` for the architecture decisions behind this layout.
 
 ---
 
@@ -75,7 +75,7 @@ See `tests/p0_r4_process_supervisor_audit.md` + `_plan_v1.md` + `_plan_v2.md` fo
 
    ```bash
    export TOGETHER_API_KEY="sk-..."
-   export HF_TOKEN="hf_..."         # optional — pyannote diarization
+   export HF_TOKEN="hf_..."         # optional — inherited by supervisord children; NOT named in environment= (that would make it structurally required)
    export GROQ_API_KEY="gsk_..."    # optional — alternate LLM provider
    export TAVILY_API_KEY="tvly-..." # load-bearing for search_web tool
    ```

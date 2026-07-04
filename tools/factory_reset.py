@@ -32,7 +32,7 @@ Exit codes:
     2   wipe_all() raised an exception
     3   --include-dashboard-token specified but token files couldn't be deleted
 
-Spec: tests/p0_s11_factory_reset_cli_plan_v1.md
+Spec: rule book/cycle-specs/p0_s11_factory_reset_cli_plan_v1.md
 """
 
 # SPDX-License-Identifier: Apache-2.0

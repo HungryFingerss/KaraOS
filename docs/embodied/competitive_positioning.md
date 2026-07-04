@@ -1,7 +1,7 @@
 # KaraOS Competitive Positioning
 
 **Document type:** living intelligence document. Updated quarterly minimum.
-**Last refresh:** 2026-05-16 (initial draft, post `future-execution.md` v2)
+**Last refresh:** 2026-07-02 (targeted SB.8 positioning reframe; initial draft 2026-05-16, post `future-execution.md` v2)
 **Next scheduled refresh:** 2026-08-16
 **Owner:** KaraOS architect (rotates if team grows)
 **Source companion:** `future-execution.md` Section 2.4 (this file expands that section)
@@ -929,6 +929,14 @@ AutoRT introduced the concept. Google has it. Anthropic has Constitutional AI. I
 ## 11. Changelog
 
 Track every refresh, every claim adjustment, every position update.
+
+### 2026-07-02 — SB.8 positioning reframe
+Added the §0.1 standing answer to question (1): KaraOS reframed from the
+companion-first framing to a domain-agnostic embodied-presence runtime; the
+companion is the first reference persona via the `profiles/` + `persona/`
+selection (commit 77b7910, the SB.8 docs slice). Logged retroactively on
+2026-07-03 — the edit initially landed without a changelog entry, violating
+§0.3/§1.3; this entry is the correction.
 
 ### 2026-05-16 — Initial draft
 

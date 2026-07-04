@@ -18,7 +18,7 @@ Concretely, Kara-OS:
 - **Learns** — Background agents analyse communication preferences, detect friction between claimed preferences and observed behaviour, extract household relationships, spot behavioural patterns in spatial sightings, and generate proactive questions that the robot asks naturally during lulls.
 - **Guards its own identity** — Fail-closed privilege model means only the best friend can rename the system or shut it down. A dispute state machine activates when a speaker's claim contradicts sensor evidence. Gallery poisoning is prevented by a centroid-distance gate and an anti-spoof requirement on every self-update.
 
-Kara-OS is currently 822 tests, 17000 lines of Python, and a Next.js dashboard. The test suite is green at HEAD and ratchets upward with every session.
+At the time this reference was extracted (Session 66 era, 2026-04-20), Kara-OS was 822 tests and ~17,000 lines of Python plus a Next.js dashboard; the suite has grown several-fold since (current counts live in the root README). The test suite is green at HEAD and ratchets upward with every session.
 
 ## 2. The Companion-Not-Assistant Philosophy
 
