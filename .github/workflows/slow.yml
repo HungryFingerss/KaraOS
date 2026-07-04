@@ -84,23 +84,21 @@ jobs:
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           # SB.7 Step 8 — coverage floor on the perception-core files (the
-          # board "coverage threshold"). Floor derivation (2026-07-02, at
-          # Step-8 landing): full-suite local measurement = reconciler 100% /
-          # vision 45% / voice 51% → aggregate 57%; floor was estimated at 50
-          # (local minus a guessed 7pt cross-platform margin). Per that comment's
-          # own instruction to "ratchet once the first nightly reading establishes
-          # the CI-side number": the FIRST nightly CI reading (2026-07-04) was
-          # 47.28% — the local→CI drop is ~10pt, not 7, because CI skips ALL
-          # CUDA-gated vision tests (no GPU) and runs without network secrets
-          # (no --run-network), so the model/network-exercised voice+vision paths
-          # aren't hit. Floor recalibrated to 45 (the established CI number minus
-          # a ~2pt run-to-run margin). Ratchet UPWARD toward 50+ when the repo's
-          # network secrets (TOGETHER_API_KEY / TAVILY_API_KEY) are configured —
-          # that enables --run-network, which exercises the missing voice/vision
-          # code and raises the achievable CI coverage.
+          # board "coverage threshold"). Floor = 50, and it is TEST-ENFORCED at
+          # tests/test_sb7_profile_matrix.py::test_step8_coverage_floor_in_slow_job
+          # (asserts the value is >= 50 — "ratchets UPWARD only, never below 50").
+          # FIRST-NIGHTLY FINDING (2026-07-04): the no-secrets CI run reaches only
+          # 47.28%. CI has no GPU (all CUDA-gated vision tests skip) and no network
+          # secrets (no --run-network, so the voice/vision network paths are
+          # unexercised) — a ~10pt drop from the 57% local aggregate the floor was
+          # estimated against. To make this nightly step GREEN at the 50 floor,
+          # configure the repo secrets TOGETHER_API_KEY + TAVILY_API_KEY (that
+          # enables --run-network and exercises the missing paths). Lowering the
+          # floor would require also lowering the >= 50 test assertion — a
+          # deliberate reversal of the SB.7 "never below 50" decision.
           PYTEST_ADDOPTS: >-
             --cov=core.vision --cov=core.voice --cov=core.reconciler
-            --cov-report=term --cov-fail-under=45
+            --cov-report=term --cov-fail-under=50
         run: |
           # SB.7 Step 8 — the coverage floor rides PYTEST_ADDOPTS so BOTH
           # branches (with/without network) enforce it without duplication.
