@@ -58,6 +58,12 @@ jobs:
 
       - name: Ruff lint
         run: ruff check . --output-format=github
+        # Lint findings are informational on first rollout (same status as the
+        # ruff-format + mypy gates below) — they annotate the diff but do NOT
+        # block CI. The codebase predates any ruff config; a repo-wide lint
+        # pass + a scoped ruff config is a deferred post-P1 tightening item
+        # per CLAUDE.md's CI-gates note. Tighten (drop this line) then.
+        continue-on-error: true
 
       - name: Ruff format check
         run: ruff format --check .
