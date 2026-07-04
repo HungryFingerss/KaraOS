@@ -102,6 +102,12 @@ jobs:
             pytest tests/ --run-network -q
           else
             echo "TOGETHER_API_KEY not set — running full suite without network tests"
+            # The web_search client-side-validation tests mock _tavily_http.post
+            # but core.brain._web_search early-returns None when TAVILY_API_KEY is
+            # falsy — so give them a placeholder ONLY on this no-network branch
+            # (the --run-network branch above keeps the real secret; no real Tavily
+            # request is made here because those tests mock the HTTP client).
+            export TAVILY_API_KEY="${TAVILY_API_KEY:-ci-placeholder-not-a-real-key}"
             pytest tests/ -q
           fi
 
