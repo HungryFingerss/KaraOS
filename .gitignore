@@ -181,6 +181,7 @@ terminal_output*.md
 !/CLAUDE.md
 !/README.md
 !/SETUP.md
+!/COVERAGE.md
 
 # =============================================================================
 # Local-only working files — debug output, scratch audits, one-shot scripts.

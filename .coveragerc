@@ -1,0 +1,31 @@
+# Coverage config for the KaraOS 100% campaign.
+# Definition (Jagan 2026-07-05): 100% REAL coverage + a justified exclusion
+# list. Every line is either exercised by a real test OR carries an inline
+# `# pragma: no cover` with a written reason (device calls that need a GPU /
+# camera the CI box lacks, defensive branches that can't be reached, etc.).
+#
+# This file does NOT set [run] source — the enforced scope lives in the CI
+# command (slow.yml) so the campaign can widen it module-by-module without
+# perturbing this config.
+
+[run]
+# branch = False for now (line coverage). Branch coverage is a later tightening.
+omit =
+    */tests/*
+    */test_*.py
+    # Vendored third-party model code — we pin + audit it, we don't test it.
+    core/_florence2/*
+    core/_minifasnet/*
+    # One-shot offline pipelines (built the classifier seed once; not runtime).
+    bootstrap/*
+
+[report]
+show_missing = True
+# Universally-unreachable-in-tests lines. Specific hardware/device lines get
+# their own inline `# pragma: no cover  # <reason>` instead of a blanket rule.
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING:
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    @(abc\.)?abstractmethod
