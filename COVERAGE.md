@@ -29,22 +29,22 @@ runtime/{__init__,identity_cache,state_enums,wiring} · flows/{__init__,companio
 ### Quick closes (1-16 lines from 100%, pure logic)
 | module | base | miss | status |
 |---|---|---|---|
-| core/config.py | 99% | 2 | |
-| core/sanitize.py | 94% | 1 | |
+| core/config.py | 99% | 2 | ✅ 100% (2 fail-loud guards on hardcoded constants pragma'd) |
+| core/sanitize.py | 94% | 1 | ✅ 100% (test_sanitize_coverage.py) |
 | core/log_utils.py | 92% | 1 | ✅ 100% (test_log_utils.py) |
-| core/env_validation.py | 92% | 1 | |
-| core/session_state.py | 97% | 9 | |
-| brain_agent/agents/embedding.py | 98% | 1 | |
-| brain_agent/agents/triage.py | 96% | 1 | |
-| brain_agent/privacy.py | 94% | 3 | |
-| brain_agent/agents/routine.py | 86% | 6 | |
-| flows/companion/turn_flows.py | 98% | 1 | |
+| core/env_validation.py | 92% | 1 | ✅ 100% (test_env_validation_coverage.py) |
+| core/session_state.py | 97% | 9 | ✅ 100% (test_session_state_setters_coverage.py) |
+| brain_agent/agents/embedding.py | 98% | 1 | ✅ 100% (test_agents_embedding_triage_coverage.py) |
+| brain_agent/agents/triage.py | 96% | 1 | ✅ 100% (same file) |
+| brain_agent/privacy.py | 94% | 3 | ✅ 100% (test_privacy_coverage.py) |
+| brain_agent/agents/routine.py | 86% | 6 | ✅ 100% (test_routine_coverage.py; 2 unreachable StatisticsError handlers pragma'd) |
+| flows/companion/turn_flows.py | 98% | 1 | ✅ 100% (test_turn_flows_coverage.py) |
 | runtime/text.py | 96% | 4 | |
-| core/vision_provider_state.py | 86% | 7 | |
-| core/voice_channel.py | 90% | 5 | |
-| core/vision_frame_store.py | 85% | 5 | |
+| core/vision_provider_state.py | 86% | 7 | ✅ 100% (test_vision_provider_state_coverage.py) |
+| core/voice_channel.py | 90% | 5 | ✅ 100% (test_voice_channel_coverage.py) |
+| core/vision_frame_store.py | 85% | 5 | ✅ 100% (test_vision_frame_store_coverage.py) |
 | core/schema_migrations.py | 90% | 7 | |
-| core/persona_loader.py | 87% | 6 | |
+| core/persona_loader.py | 87% | 6 | ✅ 100% (test_persona_loader_coverage.py) |
 | core/conversation_store.py | 83% | 14 | |
 | core/pipeline_state_store.py | 90% | 16 | |
 

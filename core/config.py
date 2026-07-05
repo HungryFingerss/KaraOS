@@ -1860,12 +1860,12 @@ RETENTION_MODE = "durable"
 # ast.Assert in production). Keeps the two imports USED so ruff F401 stays quiet —
 # the imported tuples ARE the guard's allowed-set.
 if ENROLLMENT_MODE not in _SB5_VALID_ENROLLMENT_MODES:
-    raise RuntimeError(
+    raise RuntimeError(  # pragma: no cover  # fail-loud guard on a hardcoded default; unreachable unless the shipped constant is edited to an invalid value
         f"ENROLLMENT_MODE base default {ENROLLMENT_MODE!r} not in "
         f"{_SB5_VALID_ENROLLMENT_MODES}"
     )
 if RETENTION_MODE not in _SB5_VALID_RETENTION_LIFETIMES:
-    raise RuntimeError(
+    raise RuntimeError(  # pragma: no cover  # fail-loud guard on a hardcoded default; unreachable unless the shipped constant is edited to an invalid value
         f"RETENTION_MODE base default {RETENTION_MODE!r} not in "
         f"{_SB5_VALID_RETENTION_LIFETIMES}"
     )

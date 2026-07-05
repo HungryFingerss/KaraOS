@@ -45,7 +45,7 @@ class RoutineAgent:
 
         try:
             std_h = statistics.stdev(hours) if len(hours) > 1 else 0.0
-        except statistics.StatisticsError:
+        except statistics.StatisticsError:  # pragma: no cover  # defensive: stdev runs only when len(hours)>1, so it cannot raise
             return
 
         if std_h < ROUTINE_STD_THRESHOLD:
@@ -95,7 +95,7 @@ class RoutineAgent:
         try:
             mean_h = statistics.mean(hours)
             std_h  = statistics.stdev(hours) if len(hours) > 1 else 0.0
-        except statistics.StatisticsError:
+        except statistics.StatisticsError:  # pragma: no cover  # defensive: len(history)>=MIN_PRESENCE_SESSIONS(5) guarantees a non-empty list, so mean/stdev cannot raise
             return None
         if std_h >= ROUTINE_STD_THRESHOLD:
             return None  # pattern not stable enough
