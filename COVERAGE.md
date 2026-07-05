@@ -12,12 +12,15 @@ as every line either exercised by a real test or carrying an inline
   `slow.yml` and the floor bumps toward 100. Locked so nothing regresses. (The
   slow.yml floor bump is a dedicated step, done once a critical mass is locked.)
 
-**Progress — 2026-07-05 session: 18 modules to 100%** (~140 new tests, 3 batches
+**Progress — 2026-07-05 session: 24 modules to 100%** (~140 new tests, 3 batches
 committed): sort, log_utils, sanitize, voice_channel, vision_provider_state,
 vision_frame_store, config, env_validation, session_state, embedding, triage,
 privacy, routine, turn_flows, persona_loader, boot_checks, conversation_store,
-pipeline_state_store. Justified pragmas: config (2 fail-loud guards on hardcoded
-constants), routine (2 unreachable StatisticsError handlers).
+pipeline_state_store, schema_migrations, crash_logs, disk_monitor,
+object_detection, abstraction, classifier_graph. Justified pragmas: config (2
+fail-loud guards on hardcoded constants), routine (2 unreachable StatisticsError
+handlers). The last 6 (pure-logic tier) were written by a 6-agent parallel
+workflow, then reviewed (pragmas, assertion quality, isolation) + coverage-confirmed.
 
 Measure locally:
 ```
@@ -51,7 +54,7 @@ runtime/{__init__,identity_cache,state_enums,wiring} · flows/{__init__,companio
 | core/vision_provider_state.py | 86% | 7 | ✅ 100% (test_vision_provider_state_coverage.py) |
 | core/voice_channel.py | 90% | 5 | ✅ 100% (test_voice_channel_coverage.py) |
 | core/vision_frame_store.py | 85% | 5 | ✅ 100% (test_vision_frame_store_coverage.py) |
-| core/schema_migrations.py | 90% | 7 | (next: 205-214 testable; 322-328 defensive rollback re-raise) |
+| core/schema_migrations.py | 90% | 7 | ✅ 100% (test_schema_migrations_coverage.py; rollback + verify_present paths) |
 | core/persona_loader.py | 87% | 6 | ✅ 100% (test_persona_loader_coverage.py) |
 | core/conversation_store.py | 83% | 14 | ✅ 100% (test_conversation_store_coverage.py) |
 | core/pipeline_state_store.py | 90% | 16 | ✅ 100% (test_pipeline_state_store_coverage.py) |
@@ -61,8 +64,8 @@ runtime/{__init__,identity_cache,state_enums,wiring} · flows/{__init__,companio
 |---|---|---|---|
 | **core/sort.py** | **0%** | 118 | ✅ 100% (test_sort.py, 25 tests) |
 | runtime/boot_checks.py | 0% | 37 | ✅ 100% (test_boot_checks_coverage.py) |
-| core/classifier_graph.py | 62% | 143 | |
-| core/abstraction.py | 68% | 29 | |
+| core/classifier_graph.py | 62% | 143 | ✅ 100% (test_classifier_graph_coverage.py, 59 tests) |
+| core/abstraction.py | 68% | 29 | ✅ 100% (test_abstraction_coverage.py) |
 
 ### Hardware-mockable (mock the device boundary, pragma the device call)
 | module | base | miss | status |
