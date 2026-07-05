@@ -12,7 +12,7 @@ as every line either exercised by a real test or carrying an inline
   `slow.yml` and the floor bumps toward 100. Locked so nothing regresses. (The
   slow.yml floor bump is a dedicated step, done once a critical mass is locked.)
 
-**Progress — 2026-07-05 session: 33 modules to 100%** (~140 new tests, 3 batches
+**Progress — 2026-07-05 session: 39 modules to 100%** (~140 new tests, 3 batches
 committed): sort, log_utils, sanitize, voice_channel, vision_provider_state,
 vision_frame_store, config, env_validation, session_state, embedding, triage,
 privacy, routine, turn_flows, persona_loader, boot_checks, conversation_store,
@@ -23,7 +23,13 @@ handlers). The last 6 (pure-logic tier) were written by a 6-agent parallel
 workflow, then reviewed (pragmas, assertion quality, isolation) + coverage-confirmed.
 A second 9-agent workflow closed runtime/text, factory_reset, backup, state,
 emotion, _llm, profile_loader, replay_session, and add_spdx_headers (0->100),
-same review + verify gate.
+same review + verify gate. A third 6-agent workflow closed classifier_db,
+dashboard_token, runtime/session, background_loops, log_capture, context_blocks
+(low-env-risk tier) — reviewed + CI-verified green (fast.yml). Justified pragma:
+runtime/session:711 (dead defensive log; voice_only_origin is a precondition of
+the enclosing branch). NOTE: batches 4-5 initially broke fast CI on two env
+issues (SPDX header position + optional-spacy dep); root-caused + fixed in
+82750a6. Green fast CI is now the gate before any tier is called done.
 
 Measure locally:
 ```

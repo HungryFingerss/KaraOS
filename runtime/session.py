@@ -708,7 +708,7 @@ async def _accumulate_voice(
             # Log WHY replenishment was skipped.
             _reasons = []
             if not (_acc_snap.voice_only_origin if _acc_snap is not None else False):
-                _reasons.append("voice_only_origin=False")
+                _reasons.append("voice_only_origin=False")  # pragma: no cover  # unreachable: the replenishment gate above requires _acc_snap.voice_only_origin=True to enter this branch, so `not voice_only_origin` here is always False
             if _ev_rep is not None and _ev_rep.voice_sample_count >= VOICE_ACCUM_MATURE_SAMPLE_COUNT:
                 _reasons.append(f"already_mature(voice_n={_ev_rep.voice_sample_count})")
             if _ev_rep is not None and _ev_rep.bootstrap_credits >= VOICE_MAX_BOOTSTRAP_CREDITS:
