@@ -1,6 +1,6 @@
 # KaraOS Roadmap
 
-Where this project is going after the current cognitive-layer hardening cycle closes. This document is forward-looking — nothing in sections 2 through 5 is shipped today unless explicitly noted. Section 6 names the limits honestly.
+Where this project is going after the current cognitive-layer hardening cycle closes. This document is forward-looking, nothing in sections 2 through 5 is shipped today unless explicitly noted. Section 6 names the limits honestly.
 
 For where the project is *today*, read [`README.md`](README.md). For the engineering process that produced what's there, read [`BUILT_WITH_AI.md`](BUILT_WITH_AI.md). For the system architecture as it currently runs, read [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
@@ -14,7 +14,7 @@ KaraOS is a working cognitive layer for AI companions. It recognizes who is in t
 
 4,237 automated tests (0 failed) cover identity, memory, privacy enforcement, room orchestration, conversation, intent classification, schema migrations, atomic cross-storage writes, and tool execution safety. ~30 structural invariants are CI-enforced via AST-based ratchets that make the discipline durable across future contributors.
 
-The current correctness arc is closing. The cognitive layer is stable. The next chapter is embodied integration — making the same cognitive runtime work as the brain for robot bodies.
+The current correctness arc is closing. The cognitive layer is stable. The next chapter is embodied integration, making the same cognitive runtime work as the brain for robot bodies.
 
 ---
 
@@ -22,7 +22,7 @@ The current correctness arc is closing. The cognitive layer is stable. The next 
 
 The one-line product positioning:
 
-> **KaraOS is durable cognitive middleware for ROS 2 robots — the trustable layer that turns natural-language commitments into scheduled, policy-checked, verifiable robot skill execution, on top of motion primitives the robot platform owns.**
+> **KaraOS is durable cognitive middleware for ROS 2 robots, the trustable layer that turns natural-language commitments into scheduled, policy-checked, verifiable robot skill execution, on top of motion primitives the robot platform owns.**
 
 This is what KaraOS is built to become. It is not what KaraOS is today. The cognitive layer that exists is the foundation; the embodied integration is the work ahead.
 
@@ -35,7 +35,7 @@ This is what KaraOS is built to become. It is not what KaraOS is today. The cogn
 - A verifier registry that confirms world-state changes through sensor data or platform APIs (not just trusting that the command was sent)
 - An audit log that records every state transition with replayable detail
 - A robot-agnostic API: same KaraOS source runs across mock, simulated, and real robots without core code change
-- The cognitive runtime: multi-person identity, structured memory, privacy-tier visibility, conversation orchestration, safety preservation — all of which exists today
+- The cognitive runtime: multi-person identity, structured memory, privacy-tier visibility, conversation orchestration, safety preservation, all of which exists today
 
 ### 2.2 What KaraOS IS NOT (and won't be)
 
@@ -81,17 +81,17 @@ The discipline is to not overclaim. Robotics is a field where overclaiming has d
 
 ## 3. The architectural bet
 
-Six locked architectural decisions distinguish KaraOS from the typical "LLM + robot = robotics demo" approach. These are the load-bearing choices the rest of the system is built around. Each one is a deliberate scope cut — what KaraOS does *not* do is as important as what it does.
+Six locked architectural decisions distinguish KaraOS from the typical "LLM + robot = robotics demo" approach. These are the load-bearing choices the rest of the system is built around. Each one is a deliberate scope cut, what KaraOS does *not* do is as important as what it does.
 
 ### 3.1 KaraOS does not own motion primitives
 
-Motion primitives (`sit`, `walk_forward`, `grasp`, `touch_head`) are provided by the robot platform. Whoever ships the robot — Unitree, Boston Dynamics, Figure, 1X, Nvidia GR00T-trained policies, MoveIt 2 motion planners — provides the primitives. KaraOS calls them as opaque capabilities through an adapter.
+Motion primitives (`sit`, `walk_forward`, `grasp`, `touch_head`) are provided by the robot platform. Whoever ships the robot (Unitree, Boston Dynamics, Figure, 1X, Nvidia GR00T-trained policies, MoveIt 2 motion planners) provides the primitives. KaraOS calls them as opaque capabilities through an adapter.
 
-The sim-to-real gap for embodied motion is the active research problem in robotics. Solving it requires actuator modeling, contact physics calibration, domain randomization, and platform-specific tuning — months to years per robot platform. KaraOS depends on whoever wins that fight. Trying to own the motion layer would be entering a fight with companies that have raised hundreds of millions of dollars; it would also fail at distinguishing what KaraOS uniquely offers (orchestration / memory / policy / audit) from what is commodity.
+The sim-to-real gap for embodied motion is the active research problem in robotics. Solving it requires actuator modeling, contact physics calibration, domain randomization, and platform-specific tuning, months to years per robot platform. KaraOS depends on whoever wins that fight. Trying to own the motion layer would be entering a fight with companies that have raised hundreds of millions of dollars; it would also fail at distinguishing what KaraOS uniquely offers (orchestration / memory / policy / audit) from what is commodity.
 
 ### 3.2 Capability-typed sensor abstractions, not sensor-model-typed
 
-KaraOS defines a small fixed set of sensor capability abstractions: `Rangefinder`, `PoseEstimator`, `VisualSensor`, `ContactDetector`, `OrientationEstimator`, `AudioSensor`, `HealthSensor`, `ApplianceState`. Concrete sensors — lidar, sonar, depth camera, time-of-flight, IMU, smart plug, weight sensor — map *into* these capabilities through small per-sensor drivers. Skills consume capabilities, not concrete sensors.
+KaraOS defines a small fixed set of sensor capability abstractions: `Rangefinder`, `PoseEstimator`, `VisualSensor`, `ContactDetector`, `OrientationEstimator`, `AudioSensor`, `HealthSensor`, `ApplianceState`. Concrete sensors (lidar, sonar, depth camera, time-of-flight, IMU, smart plug, weight sensor) map *into* these capabilities through small per-sensor drivers. Skills consume capabilities, not concrete sensors.
 
 Without this abstraction, "KaraOS works on any robot" becomes an N×M problem: every skill needs an integration for every sensor type. With this abstraction, ~10 capability interpreters cover the space, and a new concrete sensor needs only one small driver to plug into every existing skill.
 
@@ -99,32 +99,32 @@ Without this abstraction, "KaraOS works on any robot" becomes an N×M problem: e
 
 The KaraOS Adapter SDK ships as a standalone Python package, installable independently of the KaraOS core runtime. Robot platforms (Unitree, Figure, hypothetical future partners) implement an adapter against the SDK; a conformance test suite verifies the adapter satisfies the architectural contract before the platform can claim "KaraOS compatible."
 
-Without this packaging, every partner integration is bespoke — a snowflake fork of the codebase. With it, "passes the KaraOS conformance suite v1.0" becomes a verifiable checkbox like "supports OpenXR" or "supports OAuth 2.0." Network effects accumulate: more conformant adapters → more value to deployers → more incentive for new platforms to conform.
+Without this packaging, every partner integration is bespoke, a snowflake fork of the codebase. With it, "passes the KaraOS conformance suite v1.0" becomes a verifiable checkbox like "supports OpenXR" or "supports OAuth 2.0." Network effects accumulate: more conformant adapters to more value to deployers to more incentive for new platforms to conform.
 
 ### 3.4 Per-skill verifier registry, not a universal verifier
 
 Each skill has at least one registered verifier. Verifiers use the cheapest reliable sensor for the world-state question being asked. Examples:
 
-- Oven on / off → smart plug power-draw measurement
-- Robot reached zone → pose estimator + zone polygon check
-- Dog bowl food level → weight sensor or vision delta
-- Generic visual state → local 2B-parameter VLM (Moondream2 or Qwen2-VL-2B) as last resort
+- Oven on / off to smart plug power-draw measurement
+- Robot reached zone to pose estimator + zone polygon check
+- Dog bowl food level to weight sensor or vision delta
+- Generic visual state to local 2B-parameter VLM (Moondream2 or Qwen2-VL-2B) as last resort
 
-Generic frontier-VLM verification is explicitly *not* the default. Universal VLM verifiers hallucinate, cost money per call, and add cloud dependencies. Per-skill verifiers using the cheapest reliable sensor are honest, cheap, and reliable — and the local 2B VLM fallback is reserved for the cases where no proxy sensor exists.
+Generic frontier-VLM verification is explicitly *not* the default. Universal VLM verifiers hallucinate, cost money per call, and add cloud dependencies. Per-skill verifiers using the cheapest reliable sensor are honest, cheap, and reliable, and the local 2B VLM fallback is reserved for the cases where no proxy sensor exists.
 
 ### 3.5 Three-gate safety model
 
 Every skill execution passes through three independent gates before being marked complete:
 
-1. **Policy engine** (pre-skill, rule-based): "is this action allowed in this context?" — YAML / JSON rule engine with deterministic decisions
-2. **Digital twin validator** (pre-skill, physics-based): "will this motion cause self-collision, joint-limit violation, workspace breach, or balance loss?" — MuJoCo-based pre-execution simulation
-3. **Verifier registry** (post-skill, outcome-based): "did the world actually change as expected?" — per-skill verifier reading sensor data or platform API
+1. **Policy engine** (pre-skill, rule-based): "is this action allowed in this context?", YAML / JSON rule engine with deterministic decisions
+2. **Digital twin validator** (pre-skill, physics-based): "will this motion cause self-collision, joint-limit violation, workspace breach, or balance loss?", MuJoCo-based pre-execution simulation
+3. **Verifier registry** (post-skill, outcome-based): "did the world actually change as expected?", per-skill verifier reading sensor data or platform API
 
 A skill is only marked complete when all three gates pass. Failing any gate transitions the task to a corresponding failure state with audit. The three gates protect against different failure modes: policy catches "shouldn't do this," digital twin catches "would break the robot," verifier catches "thought we did it but didn't."
 
 ### 3.6 The LLM never calls the adapter directly
 
-The LLM proposes structured commitments. The KaraOS runtime stores them. The policy engine gates them. The digital twin validates them. The skill runtime executes them through the adapter. There is no execution path from LLM output to adapter call that bypasses the gates. This is enforced structurally — an AST-based CI test scans the codebase to ensure no future refactor accidentally short-circuits the chain.
+The LLM proposes structured commitments. The KaraOS runtime stores them. The policy engine gates them. The digital twin validates them. The skill runtime executes them through the adapter. There is no execution path from LLM output to adapter call that bypasses the gates. This is enforced structurally, an AST-based CI test scans the codebase to ensure no future refactor accidentally short-circuits the chain.
 
 LLMs are not safety controllers. Treating them as one is the failure mode that produces "AI shut down my house" demo videos. The structural invariant exists because human discipline alone is not reliable enough at scale.
 
@@ -181,19 +181,19 @@ This is the architecture that lets "KaraOS works on any robot" be a checkable cl
 
 Nine phases. Each phase has explicit deliverables and exit criteria; this section names intent, not detail.
 
-### Phase 0 — Foundation and design lock (~1 week)
+### Phase 0: Foundation and design lock (~1 week)
 
 Architecture documents, capability ontology v1.0, adapter SDK skeleton, schemas, structural invariant tests scaffolded but skipped. The "spec everything before code" phase that pays back in mid-flight rework avoided.
 
-### Phase 1 — Pure Python embodied runtime (~3 weeks)
+### Phase 1: Pure Python embodied runtime (~3 weeks)
 
 The strictest minimal viable embodied system. No ROS 2. No Gazebo. No voice integration. CLI input only. Single process.
 
 What ships: commitment storage in SQLite with crash-atomic writes, append-only audit log, durable scheduler that survives restart, YAML rule-based policy engine, planner driven by local 7B-14B LLM, runtime orchestrator, verifier registry reading mock-world ground truth, mock robot adapter, in-memory household mock world (oven, dog bowl, kitchen zone, blocked path).
 
-The first investor-grade demo: typed command "turn off the oven in 45 minutes and feed the dog after that" → durable commitment → restart-resilient scheduling → mock execution → audit trail. No robot needed. The cognitive value (durability, policy, verification, audit) is provable before any motion is involved.
+The first investor-grade demo: typed command "turn off the oven in 45 minutes and feed the dog after that" to durable commitment to restart-resilient scheduling to mock execution to audit trail. No robot needed. The cognitive value (durability, policy, verification, audit) is provable before any motion is involved.
 
-### Phase 2 — Dashboard view and LLM eval discipline (~1.5 weeks)
+### Phase 2: Dashboard view and LLM eval discipline (~1.5 weeks)
 
 Embodied runtime view in the existing Next.js dashboard: active commitments, scheduled tasks, robot adapter status, world state, policy decisions, execution timeline, verifier results, audit log viewer.
 
@@ -201,41 +201,41 @@ LLM eval framework: golden sets per LLM-prompted component (commitment parser, p
 
 Two-process split: durable layer (commitment DB + scheduler + audit) separated from interactive layer (conversation + voice + dashboard) via local gRPC IPC. Either process can restart without losing the other's state.
 
-### Phase 3 — Multi-body capability test (~1.5 weeks)
+### Phase 3: Multi-body capability test (~1.5 weeks)
 
-Three additional mock adapters (humanoid, quadruped, arm-only) declaring different capability subsets. Same KaraOS commitment runs against all of them where capability matches; adapters reject skills they don't support with honest explanations ("I can't pick things up — I have legs but no hands").
+Three additional mock adapters (humanoid, quadruped, arm-only) declaring different capability subsets. Same KaraOS commitment runs against all of them where capability matches; adapters reject skills they don't support with honest explanations ("I can't pick things up, I have legs but no hands").
 
 Validates the "KaraOS runs on any compliant adapter" claim against multiple mock bodies before the real ROS 2 work begins.
 
-### Phase 4 — ROS 2 bridge and Gazebo (~3 weeks)
+### Phase 4: ROS 2 bridge and Gazebo (~3 weeks)
 
-WSL2 Ubuntu + ROS 2 Jazzy installed. ROS 2 bridge package implementing the adapter SDK contract over local gRPC. Gazebo Sim scene with a Unitree G1 humanoid (open URDF, ~$16k retail — the cheapest humanoid on the market). Capability interpreters wired up: Rangefinder, PoseEstimator, VisualSensor, ContactDetector, OrientationEstimator.
+WSL2 Ubuntu + ROS 2 Jazzy installed. ROS 2 bridge package implementing the adapter SDK contract over local gRPC. Gazebo Sim scene with a Unitree G1 humanoid (open URDF, ~$16k retail, the cheapest humanoid on the market). Capability interpreters wired up: Rangefinder, PoseEstimator, VisualSensor, ContactDetector, OrientationEstimator.
 
-First simulator demo: KaraOS commitment → policy gate → digital twin validation → ROS 2 action on simulated Unitree G1 → verifier reads sim ground truth → audit trail. The first time the system controls something visibly robotic.
+First simulator demo: KaraOS commitment, policy gate, digital twin validation, ROS 2 action on simulated Unitree G1, verifier reads sim ground truth, audit trail. The first time the system controls something visibly robotic.
 
-### Phase 4.5 — Digital twin pre-execution validator (~1.5 weeks)
+### Phase 4.5: Digital twin pre-execution validator (~1.5 weeks)
 
 The third safety gate fully landed. MuJoCo digital twin of the active robot, motion validated before any ROS 2 command is published. Self-collision detection, joint-limit checks, workspace bounds, balance verification for legged robots.
 
-### Phase 5 — Verification design fully realized (~2 weeks)
+### Phase 5: Verification design fully realized (~2 weeks)
 
-Every skill in the ontology has at least one registered verifier. Local 2B VLM verifier (Moondream2 or Qwen2-VL-2B) integrated and calibrated for the fallback path. Verifier abstention protocol implemented — verifiers can return "uncertain" instead of being forced to a binary pass/fail.
+Every skill in the ontology has at least one registered verifier. Local 2B VLM verifier (Moondream2 or Qwen2-VL-2B) integrated and calibrated for the fallback path. Verifier abstention protocol implemented, verifiers can return "uncertain" instead of being forced to a binary pass/fail.
 
-### Phase 6 — Adversarial and safety hardening (~2 weeks)
+### Phase 6: Adversarial and safety hardening (~2 weeks)
 
 Prompt injection resistance, multi-user contention handling, cost ceiling enforcement, offline degradation modes, crash injection across state transitions. The threat model from the internal spec becomes a tested test suite.
 
-### Phase 7 — Adapter SDK published and conformance suite (~2 weeks)
+### Phase 7: Adapter SDK published and conformance suite (~2 weeks)
 
-`karaos-adapter-sdk` released as a separately-installable Python package. Conformance test suite published — partners run `karaos-conformance --adapter their_adapter` and either pass or get an actionable failure list. Migration guide for partner integration. Reference adapters (Unitree G1, mock humanoid, mock quadruped, mock arm, mock mobile manipulator) all pass conformance.
+`karaos-adapter-sdk` released as a separately-installable Python package. Conformance test suite published, partners run `karaos-conformance --adapter their_adapter` and either pass or get an actionable failure list. Migration guide for partner integration. Reference adapters (Unitree G1, mock humanoid, mock quadruped, mock arm, mock mobile manipulator) all pass conformance.
 
 This is the moment KaraOS becomes a partner-extensible platform rather than a single-user demo.
 
-### Phase 8 — Investor / partner proof pack (~1 week)
+### Phase 8: Investor / partner proof pack (~1 week)
 
 Recorded demos for all phases. Architecture diagram. Standards alignment matrix (ISO/TS 15066, OWASP LLM, NIST AI RMF). Test report. Limitations document. One-page product brief.
 
-### Phase 9 — Physical robot readiness (~3 weeks, gated on hardware availability)
+### Phase 9: Physical robot readiness (~3 weeks, gated on hardware availability)
 
 Hardware adapter checklist, ROS 2 robot onboarding guide, emergency stop physical interface, physical safety preflight protocol, hardware-in-the-loop test plan. First physical adapter (Unitree G1 hardware if available, or a borrowed alternative).
 
@@ -259,7 +259,7 @@ A few honest limitations:
 
 - **Sim-to-real is not solved by KaraOS.** When a real robot's `sit` primitive works on real hardware, it's because the robot manufacturer did the months of sim-to-real engineering for their platform. KaraOS rides on that work.
 
-These limits are deliberate. They define what KaraOS is responsible for and what other parts of the embodied AI ecosystem are responsible for. Misreading them — claiming KaraOS does motion, or perception, or sim-to-real — is the failure mode this roadmap is designed to prevent.
+These limits are deliberate. They define what KaraOS is responsible for and what other parts of the embodied AI ecosystem are responsible for. Misreading them (claiming KaraOS does motion, or perception, or sim-to-real) is the failure mode this roadmap is designed to prevent.
 
 ---
 
@@ -270,4 +270,4 @@ These limits are deliberate. They define what KaraOS is responsible for and what
 - For the published-benchmark validation: [`published-papers-tests/results/RESULTS.md`](published-papers-tests/results/RESULTS.md)
 - For live system traces: [`terminal-logs/`](terminal-logs/)
 
-For the internal spec that this roadmap distills from — covering implementation detail, test plans, IPC contracts, eval discipline, and open decisions per phase — contact me directly. The internal version is working strategy, not portfolio material. This roadmap is the public-facing version.
+For the internal spec that this roadmap distills from (covering implementation detail, test plans, IPC contracts, eval discipline, and open decisions per phase) contact me directly. The internal version is working strategy, not portfolio material. This roadmap is the public-facing version.
