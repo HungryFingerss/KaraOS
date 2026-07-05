@@ -12,7 +12,7 @@ as every line either exercised by a real test or carrying an inline
   `slow.yml` and the floor bumps toward 100. Locked so nothing regresses. (The
   slow.yml floor bump is a dedicated step, done once a critical mass is locked.)
 
-**Progress — 2026-07-05 session: 24 modules to 100%** (~140 new tests, 3 batches
+**Progress — 2026-07-05 session: 33 modules to 100%** (~140 new tests, 3 batches
 committed): sort, log_utils, sanitize, voice_channel, vision_provider_state,
 vision_frame_store, config, env_validation, session_state, embedding, triage,
 privacy, routine, turn_flows, persona_loader, boot_checks, conversation_store,
@@ -21,6 +21,9 @@ object_detection, abstraction, classifier_graph. Justified pragmas: config (2
 fail-loud guards on hardcoded constants), routine (2 unreachable StatisticsError
 handlers). The last 6 (pure-logic tier) were written by a 6-agent parallel
 workflow, then reviewed (pragmas, assertion quality, isolation) + coverage-confirmed.
+A second 9-agent workflow closed runtime/text, factory_reset, backup, state,
+emotion, _llm, profile_loader, replay_session, and add_spdx_headers (0->100),
+same review + verify gate.
 
 Measure locally:
 ```
@@ -50,7 +53,7 @@ runtime/{__init__,identity_cache,state_enums,wiring} · flows/{__init__,companio
 | brain_agent/privacy.py | 94% | 3 | ✅ 100% (test_privacy_coverage.py) |
 | brain_agent/agents/routine.py | 86% | 6 | ✅ 100% (test_routine_coverage.py; 2 unreachable StatisticsError handlers pragma'd) |
 | flows/companion/turn_flows.py | 98% | 1 | ✅ 100% (test_turn_flows_coverage.py) |
-| runtime/text.py | 96% | 4 | |
+| runtime/text.py | 96% | 4 | ✅ 100% (test_runtime_text_coverage.py) |
 | core/vision_provider_state.py | 86% | 7 | ✅ 100% (test_vision_provider_state_coverage.py) |
 | core/voice_channel.py | 90% | 5 | ✅ 100% (test_voice_channel_coverage.py) |
 | core/vision_frame_store.py | 85% | 5 | ✅ 100% (test_vision_frame_store_coverage.py) |
@@ -93,4 +96,4 @@ household 62%, contradiction 61%, prefs 67%, schema 77%, extraction 78%, watchdo
 | pipeline.py | 35% | 1,272 |
 
 ### Tools (lower priority)
-tools/add_spdx_headers.py 0% · tools/replay_session.py 59% · tools/factory_reset.py 85%
+tools/add_spdx_headers.py ✅ 100% · tools/replay_session.py ✅ 100% · tools/factory_reset.py ✅ 100%
