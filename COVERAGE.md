@@ -9,7 +9,15 @@ as every line either exercised by a real test or carrying an inline
   `core/_florence2` + `core/_minifasnet`, one-shot `bootstrap/`, and tests.
 - **Baseline (2026-07-05):** ~68% on the in-scope code (~4,700 lines to cover).
 - **Ratchet:** as each module reaches 100%, it joins the enforced `--cov=` set in
-  `slow.yml` and the floor bumps toward 100. Locked so nothing regresses.
+  `slow.yml` and the floor bumps toward 100. Locked so nothing regresses. (The
+  slow.yml floor bump is a dedicated step, done once a critical mass is locked.)
+
+**Progress — 2026-07-05 session: 18 modules to 100%** (~140 new tests, 3 batches
+committed): sort, log_utils, sanitize, voice_channel, vision_provider_state,
+vision_frame_store, config, env_validation, session_state, embedding, triage,
+privacy, routine, turn_flows, persona_loader, boot_checks, conversation_store,
+pipeline_state_store. Justified pragmas: config (2 fail-loud guards on hardcoded
+constants), routine (2 unreachable StatisticsError handlers).
 
 Measure locally:
 ```
@@ -43,16 +51,16 @@ runtime/{__init__,identity_cache,state_enums,wiring} · flows/{__init__,companio
 | core/vision_provider_state.py | 86% | 7 | ✅ 100% (test_vision_provider_state_coverage.py) |
 | core/voice_channel.py | 90% | 5 | ✅ 100% (test_voice_channel_coverage.py) |
 | core/vision_frame_store.py | 85% | 5 | ✅ 100% (test_vision_frame_store_coverage.py) |
-| core/schema_migrations.py | 90% | 7 | |
+| core/schema_migrations.py | 90% | 7 | (next: 205-214 testable; 322-328 defensive rollback re-raise) |
 | core/persona_loader.py | 87% | 6 | ✅ 100% (test_persona_loader_coverage.py) |
-| core/conversation_store.py | 83% | 14 | |
-| core/pipeline_state_store.py | 90% | 16 | |
+| core/conversation_store.py | 83% | 14 | ✅ 100% (test_conversation_store_coverage.py) |
+| core/pipeline_state_store.py | 90% | 16 | ✅ 100% (test_pipeline_state_store_coverage.py) |
 
 ### Pure-logic long poles (0% / low, no hardware — high value)
 | module | base | miss | status |
 |---|---|---|---|
 | **core/sort.py** | **0%** | 118 | ✅ 100% (test_sort.py, 25 tests) |
-| runtime/boot_checks.py | 0% | 37 | |
+| runtime/boot_checks.py | 0% | 37 | ✅ 100% (test_boot_checks_coverage.py) |
 | core/classifier_graph.py | 62% | 143 | |
 | core/abstraction.py | 68% | 29 | |
 
