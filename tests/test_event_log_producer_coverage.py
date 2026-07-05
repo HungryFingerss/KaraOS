@@ -38,11 +38,9 @@ from core.reconciler_state import RoutingDecision, SessionState
 from core.vision_channel import PresenceState
 from core.voice_channel import IdentityClaim
 
-
 # ──────────────────────────────────────────────────────────────────────────
 # Fixture — every hook test runs against in-memory SQLite (D8 test mode).
 # ──────────────────────────────────────────────────────────────────────────
-
 
 @pytest.fixture
 def event_log_testing(monkeypatch):
@@ -54,17 +52,14 @@ def event_log_testing(monkeypatch):
     yield
     _producer._reset_for_tests()
 
-
 def _events_of_type(event_type: str) -> list[dict]:
     """Return all rows from event_log for the given event_type."""
     rows = _producer._query_all_events_for_tests()
     return [r for r in rows if r["event_type"] == event_type]
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # H1 — audio_in (core/audio.py::listen_and_transcribe)
 # ══════════════════════════════════════════════════════════════════════════
-
 
 def test_h1_audio_in_emits_one_event(event_log_testing):
     """H1: audio_in event emits cleanly via the same producer call shape
@@ -97,7 +92,6 @@ def test_h1_audio_in_emits_one_event(event_log_testing):
     assert payload["language"] == "en"
     assert payload["audio_hash"].startswith("sha256:")
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # H2 — vision_frame (pipeline._background_vision_loop sidecar)
 # ══════════════════════════════════════════════════════════════════════════
@@ -106,7 +100,6 @@ def test_h1_audio_in_emits_one_event(event_log_testing):
 # camera/detector/embedder/db infrastructure to exercise. Direct invocation
 # is impractical for a fast-CI test. Substitute: source-inspection +
 # emit_sync direct-call coverage to verify the hook code path is reachable.
-
 
 def test_h2_vision_frame_emit_path_smoke(event_log_testing):
     """H2: emit a vision_frame event via the same producer call shape the
@@ -138,11 +131,9 @@ def test_h2_vision_frame_emit_path_smoke(event_log_testing):
     assert payload["frame_id"] == "frame_h2_test"
     assert payload["anti_spoof_live"] is True  # load-bearing for P0.S1
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # H3 — identity_claim (core/voice_channel.py::identify_speaker)
 # ══════════════════════════════════════════════════════════════════════════
-
 
 def test_h3_identity_claim_emits_one_event(event_log_testing):
     """H3: identify_speaker emits one identity_claim event on success path.
@@ -175,7 +166,6 @@ def test_h3_identity_claim_emits_one_event(event_log_testing):
     assert payload["claim"]["pid"] == "jagan_001"
     assert payload["claim"]["confidence"] == 0.85
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # H4 — presence_state (core/vision_channel.py::observe_scene)
 # ══════════════════════════════════════════════════════════════════════════
@@ -183,7 +173,6 @@ def test_h3_identity_claim_emits_one_event(event_log_testing):
 # observe_scene requires real face_detector + face_embedder + face_db
 # infrastructure. Use the direct emit path to verify the hook shape;
 # integration via the real boundary belongs to Step 7 replay fixtures.
-
 
 def test_h4_presence_state_emit_path_smoke(event_log_testing):
     """H4: presence_state emission produces a round-tripping event."""
@@ -204,11 +193,9 @@ def test_h4_presence_state_emit_path_smoke(event_log_testing):
     payload = events[0]["payload"]
     assert payload["presence"]["visible_pids"] == ["jagan_001"]
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # H5 — routing_decision (core/reconciler.py::reconcile)
 # ══════════════════════════════════════════════════════════════════════════
-
 
 def test_h5_routing_decision_emits_one_event_with_utt_band(event_log_testing):
     """H5: reconcile emits one routing_decision event with utt_band tag."""
@@ -233,11 +220,9 @@ def test_h5_routing_decision_emits_one_event_with_utt_band(event_log_testing):
     assert payload["utt_band"] == "normal"  # 2.0s utt → normal band
     assert payload["decision"]["action"] in ("current", "switch_enrolled")
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # H6 — intent_classification (core/brain.py::_classify_intent_smart)
 # ══════════════════════════════════════════════════════════════════════════
-
 
 def test_h6_intent_classification_emits_one_event(event_log_testing, monkeypatch):
     """H6: _classify_intent_smart emits one intent_classification event."""
@@ -270,14 +255,12 @@ def test_h6_intent_classification_emits_one_event(event_log_testing, monkeypatch
     assert payload["mode"] in ("shadow", "primary", "retired", "primary_fallback_llm")
     assert payload["text"] == "hello there"
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # H7 — tool_call + tool_result (pipeline._execute_tool)
 # ══════════════════════════════════════════════════════════════════════════
 #
 # H7 also covers R1 — tool_result's parent_event_id auto-resolves to the
 # matching tool_call via NATURAL_PARENT_PAIRS.
-
 
 def test_h7_tool_call_then_tool_result_links_via_parent_event_id(event_log_testing):
     """H7 + R1: tool_call → tool_result natural pair links via parent_event_id."""
@@ -311,11 +294,9 @@ def test_h7_tool_call_then_tool_result_links_via_parent_event_id(event_log_testi
         f"tool_call.id={call_events[0]['id']}"
     )
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # H8 — memory_write (core/db.py::FaceDB.log_turn)
 # ══════════════════════════════════════════════════════════════════════════
-
 
 def test_h8_memory_write_emits_one_event(event_log_testing, tmp_path):
     """H8: FaceDB.log_turn emits one memory_write event after INSERT."""
@@ -341,11 +322,9 @@ def test_h8_memory_write_emits_one_event(event_log_testing, tmp_path):
     assert payload["role"] == "user"
     assert payload["text"] == "hello there"
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # H9 — state_write (core/state.py::write)
 # ══════════════════════════════════════════════════════════════════════════
-
 
 def test_h9_state_write_emits_one_event(event_log_testing, tmp_path, monkeypatch):
     """H9: state.write emits one state_write event after atomic-replace."""
@@ -367,7 +346,6 @@ def test_h9_state_write_emits_one_event(event_log_testing, tmp_path, monkeypatch
     assert payload["mode"] == "watching"
     assert payload["current_person"] == "Jagan"
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # H10 — tts_out (core/audio.py::speak via _emit_tts_event_safe helper)
 # ══════════════════════════════════════════════════════════════════════════
@@ -375,7 +353,6 @@ def test_h9_state_write_emits_one_event(event_log_testing, tmp_path, monkeypatch
 # speak() requires the audio playback infrastructure. The hook lives in
 # the shared `_emit_tts_event_safe` helper that both speak + speak_stream
 # call — exercise it directly to verify the emission shape.
-
 
 def test_h10_tts_out_emits_one_event_with_text_truncation(event_log_testing):
     """H10: tts_out event emits with text truncated to 500 chars +
@@ -418,14 +395,12 @@ def test_h10_tts_out_emits_one_event_with_text_truncation(event_log_testing):
     assert payload["text_full_hash"].startswith("sha256:")
     assert payload["duration_ms_est"] == 1000
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # H11 — session_lifecycle (open/close via _emit_session_lifecycle_safe)
 # ══════════════════════════════════════════════════════════════════════════
 #
 # H11 also covers R1 — session_lifecycle=close should trigger
 # _clear_session_parents in the writer task AFTER the close row is persisted.
-
 
 def test_h11_session_lifecycle_open_close_clears_parent_cache(event_log_testing):
     """H11 + R1: session_lifecycle open + close events emit cleanly;

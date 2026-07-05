@@ -35,7 +35,6 @@ from pathlib import Path
 
 import pytest
 
-
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SCAN_TARGETS = [
     "core/brain.py",
@@ -45,7 +44,6 @@ _SCAN_TARGETS = [
     "core/brain_agent/agents/extraction.py",
     "core/brain_agent/agents/briefing.py",
 ]
-
 
 # Per-entry tuple: (file_path, line_number, rationale).
 # Plan v3 §5 + developer Pass-4 catch at Phase 2 implementation (2026-05-20).
@@ -150,7 +148,6 @@ _INDIRECT_BOUNDARIES_ALLOWLIST: dict[tuple[str, int], str] = {
         "ConversationInsightAgent — conversation summary, not raw turns (+10 #123)",
 }
 
-
 def _content_is_wrap_call(content_node: ast.expr) -> bool:
     """Return True iff content_node is a direct `wrap_user_input(...)` call.
 
@@ -170,7 +167,6 @@ def _content_is_wrap_call(content_node: ast.expr) -> bool:
     if isinstance(func, ast.Attribute) and func.attr == "wrap_user_input":
         return True
     return False
-
 
 def _scan_file_for_user_role_sites(file_path: Path) -> list[tuple[int, ast.expr]]:
     """Walk file's AST and return list of (line_no, content_expr) for every
@@ -203,7 +199,6 @@ def _scan_file_for_user_role_sites(file_path: Path) -> list[tuple[int, ast.expr]
             # Use role-value's line number for stable allowlist matching
             sites.append((role_value.lineno, content_value))
     return sites
-
 
 def test_every_user_role_content_passes_through_wrap_user_input():
     """D2 structural invariant — every messages-list ``{"role": "user"}``
@@ -250,7 +245,6 @@ def test_every_user_role_content_passes_through_wrap_user_input():
         "(system-constructed prompt / structured derived data / "
         "upstream-wrapped composite / history-injection deferred to P0.S5.X)."
     )
-
 
 def test_indirect_boundaries_allowlist_entries_are_real_sites():
     """D2 inverse check — every allowlist entry MUST correspond to a real

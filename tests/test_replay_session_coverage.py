@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 """Coverage-to-100 campaign — tools/replay_session.py.
 
 Exercises every uncovered line/branch of the read-only event_log replay
@@ -16,6 +14,9 @@ tmp file-backed sqlite via the real v12 migration + direct inserts, so the
 heavy producer machinery is never touched.
 """
 
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import argparse
@@ -30,7 +31,6 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _REPLAY_PATH = _REPO_ROOT / "tools" / "replay_session.py"
 
-
 def _load_replay_module(module_name: str):
     """Side-load tools/replay_session.py under a chosen module name."""
     spec = importlib.util.spec_from_file_location(module_name, _REPLAY_PATH)
@@ -39,12 +39,10 @@ def _load_replay_module(module_name: str):
     spec.loader.exec_module(module)
     return module
 
-
 @pytest.fixture(scope="module")
 def replay_cli():
     """Load the CLI module once for the whole test module."""
     return _load_replay_module("replay_session_cov")
-
 
 # ──────────────────────────────────────────────────────────────────────────
 # Representative payload dicts — one per event_type (shapes match each
@@ -131,7 +129,6 @@ _LIFECYCLE = {
     "source": "voice", "person_type": "known", "room_session_id": None,
 }
 
-
 def _make_db(tmp_path: Path, rows) -> Path:
     """Build a tmp file-backed brain.db with the v12 event_log schema."""
     from core.brain_db_migrations import _m_0012_create_event_log_apply
@@ -150,11 +147,9 @@ def _make_db(tmp_path: Path, rows) -> Path:
     conn.close()
     return db
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # Module-level sys.path insertion (line 46)
 # ══════════════════════════════════════════════════════════════════════════
-
 
 def test_module_inserts_repo_root_into_syspath_when_missing():
     """Line 45-46: when repo root is absent from sys.path, the module
@@ -176,11 +171,9 @@ def test_module_inserts_repo_root_into_syspath_when_missing():
         if saved_mod is not None:
             sys.modules["_rs_line46"] = saved_mod
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # _build_arg_parser (68-118)
 # ══════════════════════════════════════════════════════════════════════════
-
 
 def test_build_arg_parser_defaults(replay_cli):
     parser = replay_cli._build_arg_parser()
@@ -193,7 +186,6 @@ def test_build_arg_parser_defaults(replay_cli):
     assert args.limit == 200
     assert args.no_tree is False
     assert args.raw_payload is False
-
 
 def test_build_arg_parser_all_flags(replay_cli):
     parser = replay_cli._build_arg_parser()
@@ -211,17 +203,14 @@ def test_build_arg_parser_all_flags(replay_cli):
     assert args.no_tree is True
     assert args.raw_payload is True
 
-
 def test_build_arg_parser_rejects_bad_event_type(replay_cli):
     parser = replay_cli._build_arg_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["--type", "not_a_real_type"])
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # _parse_since (121-143)
 # ══════════════════════════════════════════════════════════════════════════
-
 
 @pytest.mark.parametrize("value,unit_secs", [
     ("1s", 1), ("30m", 1800), ("1h", 3600), ("7d", 604800), ("1.5h", 5400),
@@ -234,41 +223,34 @@ def test_parse_since_duration_suffix(replay_cli, value, unit_secs):
     # got == now - unit_secs, computed inside the call
     assert (before - unit_secs) - 1 <= got <= (after - unit_secs) + 1
 
-
 def test_parse_since_numeric_timestamp(replay_cli):
     assert replay_cli._parse_since("1779008461") == 1779008461.0
     assert replay_cli._parse_since("1779008461.5") == 1779008461.5
-
 
 def test_parse_since_iso_fallback(replay_cli):
     from datetime import datetime
     got = replay_cli._parse_since("2026-06-01")
     assert got == datetime.fromisoformat("2026-06-01").timestamp()
 
-
 def test_parse_since_iso_datetime_fallback(replay_cli):
     from datetime import datetime
     got = replay_cli._parse_since("2026-06-01T12:30:00")
     assert got == datetime.fromisoformat("2026-06-01T12:30:00").timestamp()
-
 
 def test_parse_since_invalid_raises_systemexit(replay_cli):
     with pytest.raises(SystemExit) as ei:
         replay_cli._parse_since("definitely-not-a-date")
     assert "cannot parse --since" in str(ei.value)
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # _open_readonly (151-159)
 # ══════════════════════════════════════════════════════════════════════════
-
 
 def test_open_readonly_missing_path_raises_systemexit(replay_cli, tmp_path):
     missing = tmp_path / "does_not_exist.db"
     with pytest.raises(SystemExit) as ei:
         replay_cli._open_readonly(missing)
     assert "brain.db not found" in str(ei.value)
-
 
 def test_open_readonly_returns_connection(replay_cli, tmp_path):
     db = _make_db(tmp_path, [])
@@ -278,11 +260,9 @@ def test_open_readonly_returns_connection(replay_cli, tmp_path):
     finally:
         conn.close()
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # _query_events (162-218)
 # ══════════════════════════════════════════════════════════════════════════
-
 
 def test_query_events_filters_and_since(replay_cli, tmp_path):
     rows = [
@@ -327,7 +307,6 @@ def test_query_events_filters_and_since(replay_cli, tmp_path):
     finally:
         conn.close()
 
-
 def test_query_events_no_such_table_raises_systemexit(replay_cli, tmp_path):
     # A valid sqlite DB but WITHOUT the event_log table.
     empty = tmp_path / "empty.db"
@@ -343,7 +322,6 @@ def test_query_events_no_such_table_raises_systemexit(replay_cli, tmp_path):
     finally:
         conn.close()
 
-
 def test_query_events_other_operational_error_reraises(replay_cli):
     class _FakeConn:
         def execute(self, sql, params):
@@ -356,11 +334,9 @@ def test_query_events_other_operational_error_reraises(replay_cli):
         )
     assert "database is locked" in str(ei.value)
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # _truncate (226-228)
 # ══════════════════════════════════════════════════════════════════════════
-
 
 def test_truncate_short_and_long_and_none(replay_cli):
     assert replay_cli._truncate("hi") == "hi"
@@ -371,11 +347,9 @@ def test_truncate_short_and_long_and_none(replay_cli):
     # newline collapse + strip
     assert replay_cli._truncate("  a\nb  ") == "a b"
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # _summarize_payload — every branch (231-316)
 # ══════════════════════════════════════════════════════════════════════════
-
 
 @pytest.mark.parametrize("event_type,payload,expected", [
     ("audio_in", _AUDIO_IN, "hello there"),
@@ -403,18 +377,15 @@ def test_summarize_payload_per_type(replay_cli, event_type, payload, expected):
     out = replay_cli._summarize_payload(event_type, 1, payload)
     assert expected in out
 
-
 def test_summarize_payload_dispatch_failure_falls_back(replay_cli):
     """from_json_dict raises (missing key) → obj None → JSON fallback (243-246)."""
     out = replay_cli._summarize_payload("audio_in", 1, {"speech_secs": 1.0})
     assert out == json.dumps({"speech_secs": 1.0}, default=str, sort_keys=True)
 
-
 def test_summarize_payload_unknown_event_type_no_class_falls_back(replay_cli):
     """cls is None (event_type not in dispatch) → JSON fallback (243-246)."""
     out = replay_cli._summarize_payload("no_such_event", 1, {"a": 1})
     assert out == json.dumps({"a": 1}, default=str, sort_keys=True)
-
 
 def test_summarize_payload_known_class_unhandled_type_final_fallback(
     replay_cli, monkeypatch,
@@ -432,22 +403,18 @@ def test_summarize_payload_known_class_unhandled_type_final_fallback(
     )
     assert out.endswith("...")
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # _fmt_ts (324-328)
 # ══════════════════════════════════════════════════════════════════════════
-
 
 def test_fmt_ts_shape(replay_cli):
     out = replay_cli._fmt_ts(1779008461.123)
     # HH:MM:SS.mmm
     assert len(out) == 12 and out[2] == ":" and out[5] == ":" and out[8] == "."
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # _format_event_line (331-361)
 # ══════════════════════════════════════════════════════════════════════════
-
 
 def _event(**over):
     base = {
@@ -459,7 +426,6 @@ def _event(**over):
     base.update(over)
     return base
 
-
 def test_format_event_line_full(replay_cli):
     line = replay_cli._format_event_line(_event(parent_event_id=7))
     assert "session='jagan_001'" in line
@@ -467,7 +433,6 @@ def test_format_event_line_full(replay_cli):
     assert "parent=7" in line
     assert "hello there" in line
     assert "└─" not in line  # indent 0
-
 
 def test_format_event_line_minimal_fields(replay_cli):
     line = replay_cli._format_event_line(
@@ -477,11 +442,9 @@ def test_format_event_line_minimal_fields(replay_cli):
     assert "room=" not in line
     assert "parent=" not in line
 
-
 def test_format_event_line_indented(replay_cli):
     line = replay_cli._format_event_line(_event(), indent=1)
     assert line.startswith("  └─ ")
-
 
 @pytest.mark.parametrize("bad_payload", ["{not valid json", 12345])
 def test_format_event_line_malformed_payload(replay_cli, bad_payload):
@@ -491,30 +454,25 @@ def test_format_event_line_malformed_payload(replay_cli, bad_payload):
     # empty dict summarised → falls into audio_in dispatch failure fallback
     assert isinstance(line, str) and "id=1" in line
 
-
 def test_format_event_line_empty_payload_json(replay_cli):
     """Falsy payload_json short-circuits to {} without decoding (line 339)."""
     line = replay_cli._format_event_line(_event(payload_json=""))
     assert "id=1" in line
-
 
 def test_format_event_line_raw_payload(replay_cli):
     line = replay_cli._format_event_line(_event(), raw_payload=True)
     assert "\n" in line
     assert json.dumps(json.loads(json.dumps(_AUDIO_IN)), sort_keys=True) in line
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # _render (364-378)
 # ══════════════════════════════════════════════════════════════════════════
-
 
 def test_render_flat_mode(replay_cli):
     events = [_event(id=1), _event(id=2, parent_event_id=1)]
     lines = list(replay_cli._render(events, tree=False))
     assert len(lines) == 2
     assert all("└─" not in ln for ln in lines)
-
 
 def test_render_tree_mode_indents_in_window_children(replay_cli):
     events = [
@@ -530,11 +488,9 @@ def test_render_tree_mode_indents_in_window_children(replay_cli):
     ghost = next(ln for ln in lines if "ghost" in ln)
     assert "└─" not in ghost                           # orphan flat
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # _print_header (386-399)
 # ══════════════════════════════════════════════════════════════════════════
-
 
 def test_print_header_all_filters(replay_cli, capsys):
     args = argparse.Namespace(
@@ -551,7 +507,6 @@ def test_print_header_all_filters(replay_cli, capsys):
     assert "limit=50" in out
     assert "-" * 78 in out
 
-
 def test_print_header_no_filters(replay_cli, capsys):
     args = argparse.Namespace(
         db="/tmp/brain.db", session=None, room=None, event_type=None,
@@ -566,11 +521,9 @@ def test_print_header_no_filters(replay_cli, capsys):
     assert "since=" not in out
     assert "limit=" not in out
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # _ensure_utf8_stdout (402-412)
 # ══════════════════════════════════════════════════════════════════════════
-
 
 def test_ensure_utf8_stdout_reconfigures(replay_cli, monkeypatch):
     calls = []
@@ -584,7 +537,6 @@ def test_ensure_utf8_stdout_reconfigures(replay_cli, monkeypatch):
     monkeypatch.undo()
     assert calls == [{"encoding": "utf-8", "errors": "replace"}]
 
-
 def test_ensure_utf8_stdout_swallows_attribute_error(replay_cli, monkeypatch):
     class _NoReconfigure:
         pass
@@ -592,7 +544,6 @@ def test_ensure_utf8_stdout_swallows_attribute_error(replay_cli, monkeypatch):
     monkeypatch.setattr(sys, "stdout", _NoReconfigure())
     replay_cli._ensure_utf8_stdout()  # must not raise
     monkeypatch.undo()
-
 
 def test_ensure_utf8_stdout_swallows_os_error(replay_cli, monkeypatch):
     class _RaisingStdout:
@@ -603,11 +554,9 @@ def test_ensure_utf8_stdout_swallows_os_error(replay_cli, monkeypatch):
     replay_cli._ensure_utf8_stdout()  # must not raise
     monkeypatch.undo()
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # main (415-439) — end-to-end against a tmp DB
 # ══════════════════════════════════════════════════════════════════════════
-
 
 def _full_db(tmp_path: Path) -> Path:
     rows = [
@@ -622,7 +571,6 @@ def _full_db(tmp_path: Path) -> Path:
     ]
     return _make_db(tmp_path, rows)
 
-
 def test_main_tree_render(replay_cli, tmp_path, capsys):
     db = _full_db(tmp_path)
     rc = replay_cli.main(["--db", str(db), "--session", "jagan_001",
@@ -632,7 +580,6 @@ def test_main_tree_render(replay_cli, tmp_path, capsys):
     assert "3 event(s)" in out          # 3 jagan_001 events
     assert "└─" in out                   # tree indentation for chained events
     assert "hello there" in out
-
 
 def test_main_no_tree_and_raw_payload(replay_cli, tmp_path, capsys):
     db = _full_db(tmp_path)
@@ -644,7 +591,6 @@ def test_main_no_tree_and_raw_payload(replay_cli, tmp_path, capsys):
     # raw payload dump present (a full JSON object line)
     assert '"audio_hash"' in out
 
-
 def test_main_with_since_and_type_filters(replay_cli, tmp_path, capsys):
     db = _full_db(tmp_path)
     rc = replay_cli.main(["--db", str(db), "--type", "tts_out",
@@ -655,7 +601,6 @@ def test_main_with_since_and_type_filters(replay_cli, tmp_path, capsys):
     # filters everything out → 0 events, header still prints.
     assert "0 event(s)" in out
     assert "type=tts_out" in out
-
 
 def test_main_missing_db_raises_systemexit(replay_cli, tmp_path):
     missing = tmp_path / "nope.db"

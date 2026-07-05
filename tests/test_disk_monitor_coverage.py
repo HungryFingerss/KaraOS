@@ -1,8 +1,9 @@
-# SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 """100% coverage for core.disk_monitor — disk usage snapshot + idempotent
 threshold alerts (Wave 5 / Item 20). Part of the coverage-to-100 campaign
 (see COVERAGE.md). Global alert state, so each test resets first."""
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import logging
 
@@ -20,13 +21,11 @@ from core.disk_monitor import (
     _dir_size,
 )
 
-
 @pytest.fixture(autouse=True)
 def _reset_alert_level():
     reset_alert_level()
     yield
     reset_alert_level()
-
 
 def _make_snapshot(pct: float, free: int = 5_000_000_000) -> DiskSnapshot:
     total = 100_000_000_000
@@ -39,9 +38,7 @@ def _make_snapshot(pct: float, free: int = 5_000_000_000) -> DiskSnapshot:
         per_directory_bytes={},
     )
 
-
 # ── gather_disk_snapshot: default monitored_dirs branch (lines 47-48) ──────────
-
 
 def test_gather_defaults_to_config_monitored_dirs(tmp_path, monkeypatch):
     # Stub _dir_size so we don't walk the real faces/ + data/ dirs (fast + deterministic).
@@ -54,9 +51,7 @@ def test_gather_defaults_to_config_monitored_dirs(tmp_path, monkeypatch):
     assert all(v == 0 for v in snap.per_directory_bytes.values())
     assert snap.total_bytes > 0
 
-
 # ── _dir_size: exception paths (lines 76-79) ───────────────────────────────────
-
 
 def test_dir_size_skips_file_that_vanished_mid_walk(monkeypatch):
     # is_file() True, but the explicit .stat() raises OSError -> inner except: pass.
@@ -72,7 +67,6 @@ def test_dir_size_skips_file_that_vanished_mid_walk(monkeypatch):
 
     assert _dir_size("whatever") == 0
 
-
 def test_dir_size_logs_and_returns_zero_when_walk_raises(monkeypatch, caplog):
     # rglob() itself raises -> outer except Exception logs a warning.
     fake_root = MagicMock()
@@ -87,16 +81,13 @@ def test_dir_size_logs_and_returns_zero_when_walk_raises(monkeypatch, caplog):
     assert result == 0
     assert "_dir_size(blocked_dir) failed" in caplog.text
 
-
 def test_dir_size_sums_real_files(tmp_path):
     # Positive path: two real files summed correctly (guards the happy path).
     (tmp_path / "a.bin").write_bytes(b"x" * 300)
     (tmp_path / "b.bin").write_bytes(b"y" * 700)
     assert _dir_size(str(tmp_path)) == 1000
 
-
 # ── format_disk_line: full line + zero-dir skip (lines 84-93) ──────────────────
-
 
 def test_format_disk_line_renders_nonzero_dirs_and_skips_zero():
     snap = DiskSnapshot(
@@ -114,24 +105,18 @@ def test_format_disk_line_renders_nonzero_dirs_and_skips_zero():
     assert "faces=124MB" in line  # non-zero dir rendered (rstrip('/') + _human_bytes)
     assert "empty" not in line    # zero-byte dir skipped by `if b == 0: continue`
 
-
 # ── _human_bytes: KB and MB branches (lines 98, 100) ───────────────────────────
-
 
 def test_human_bytes_kb_branch():
     assert _human_bytes(500_000) == "500KB"
 
-
 def test_human_bytes_mb_branch():
     assert _human_bytes(124_000_000) == "124MB"
-
 
 def test_human_bytes_gb_branch():
     assert _human_bytes(2_500_000_000) == "2.5GB"
 
-
 # ── check_disk_thresholds: blocker level (line 120) ────────────────────────────
-
 
 def test_check_thresholds_fires_blocker_at_95():
     snap = _make_snapshot(96.0)
@@ -145,9 +130,7 @@ def test_check_thresholds_fires_blocker_at_95():
     assert kwargs["level"] == 95
     assert kwargs["severity"] == "critical"
 
-
 # ── check_disk_thresholds: report failure logged (lines 146-147) ───────────────
-
 
 def test_check_thresholds_logs_when_report_raises(caplog):
     snap = _make_snapshot(85.0)  # warning level
@@ -162,9 +145,7 @@ def test_check_thresholds_logs_when_report_raises(caplog):
     # Alert level was NOT advanced (the fire failed before the assignment).
     assert disk_monitor._last_disk_alert_level == 0
 
-
 # ── check_disk_thresholds: reset when usage drops (line 150) ───────────────────
-
 
 def test_check_thresholds_resets_level_when_usage_drops():
     fake_orch = MagicMock()

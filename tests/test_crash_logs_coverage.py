@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 """Coverage completion for core/crash_logs.py — the P0.4 silent-except branches.
 
 Targets the previously-uncovered exception paths in persist_crash_diagnostic
@@ -10,6 +8,9 @@ filesystem via tmp_path, and _crash_log_dir / Path.unlink via monkeypatch to
 simulate unwritable-dir / unlink-denied failure modes.
 """
 
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import json
@@ -19,7 +20,6 @@ import pathlib
 import time
 
 import pytest
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # persist_crash_diagnostic: inner failure (79-84) → log warning + return None
@@ -45,7 +45,6 @@ def test_persist_returns_none_when_crash_log_dir_raises(monkeypatch, caplog):
     assert "persist_crash_diagnostic failed" in caplog.text
     assert "adaface_embed" in caplog.text  # task_name interpolated into warning
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # persist_crash_diagnostic: now=None default branch (59-60) → uses time.time()
 # ─────────────────────────────────────────────────────────────────────────────
@@ -67,7 +66,6 @@ def test_persist_defaults_now_to_time_time(tmp_path, monkeypatch):
     data = json.loads(path.read_text(encoding="utf-8"))
     assert before <= data["timestamp"] <= after
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # prune_old_crash_logs: dir-create failure (100-105) → log warning + return 0
 # ─────────────────────────────────────────────────────────────────────────────
@@ -84,7 +82,6 @@ def test_prune_returns_zero_when_crash_log_dir_raises(monkeypatch, caplog):
 
     assert removed == 0, "prune must return 0 when the dir cannot be accessed"
     assert "dir access failed" in caplog.text
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # prune_old_crash_logs: per-file unlink failure (111-115) → log warning + keep
@@ -115,7 +112,6 @@ def test_prune_logs_and_survives_unlink_failure(tmp_path, monkeypatch, caplog):
     assert "prune unlink failed" in caplog.text
     assert "adaface_embed_2026-04-01T000000_000000.json" in caplog.text
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # prune_old_crash_logs: now=None default branch (94-95) → empty dir returns 0
 # ─────────────────────────────────────────────────────────────────────────────
@@ -126,7 +122,6 @@ def test_prune_defaults_now_and_returns_zero_on_empty_dir(tmp_path, monkeypatch)
     # No files created — dir auto-created, glob yields nothing, returns 0.
     removed = crash_logs.prune_old_crash_logs(retention_days=7)  # now omitted
     assert removed == 0
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # list_recent_crash_logs: dir-create failure (128-133) → log warning + return []
@@ -144,7 +139,6 @@ def test_list_returns_empty_when_crash_log_dir_raises(monkeypatch, caplog):
 
     assert results == [], "list must return [] when the dir cannot be accessed"
     assert "dir access failed" in caplog.text
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # list_recent_crash_logs: per-file parse failure (140-144) → skip corrupt + warn

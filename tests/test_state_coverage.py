@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 """100% line coverage for core.state — the pipeline↔dashboard IPC state file.
 
 Part of the coverage-to-100 campaign (see COVERAGE.md). Fills the two gaps a
@@ -17,6 +15,9 @@ STATE_FILE is redirected to a pytest tmp_path and _persistent is reset per
 test, mirroring tests/test_state_race.py.
 """
 
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
+
 from __future__ import annotations
 
 import json
@@ -25,7 +26,6 @@ import time
 import pytest
 
 from core import state as _state_mod
-
 
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch, tmp_path):
@@ -36,7 +36,6 @@ def _isolate(monkeypatch, tmp_path):
     monkeypatch.setattr(_state_mod, "_persistent", {})
     monkeypatch.setattr(_state_mod, "STATE_FILE", tmp_path / "state.json")
     yield
-
 
 # ---------------------------------------------------------------------------
 # read() — lines 111-121
@@ -63,7 +62,6 @@ def test_read_returns_fresh_state_and_leaves_online_untouched():
     # Fresh → the stale-flip at line 117 must NOT fire.
     assert out["online"] is True
 
-
 def test_read_marks_stale_state_offline():
     """updated_at older than 10s: line 116 branch is True → line 117 flips
     online to False. Other fields survive; the mutated dict is returned."""
@@ -81,7 +79,6 @@ def test_read_marks_stale_state_offline():
     assert out["status"] == "idle"      # rest of the payload preserved
     assert out["mode"] == "watching"
 
-
 def test_read_missing_updated_at_treated_as_stale():
     """No updated_at key → data.get('updated_at', 0) yields 0, so
     time.time() - 0 is a huge positive number > 10 → stale → online=False
@@ -93,7 +90,6 @@ def test_read_missing_updated_at_treated_as_stale():
 
     assert out["online"] is False
 
-
 def test_read_returns_offline_default_when_file_absent():
     """STATE_FILE.exists() is False (line 112 branch not taken) → falls
     straight through to the offline default at line 121."""
@@ -103,7 +99,6 @@ def test_read_returns_offline_default_when_file_absent():
     out = _state_mod.read()
 
     assert out == {"online": False, "mode": "offline", "status": "offline"}
-
 
 def test_read_returns_offline_default_on_corrupt_json():
     """File exists but holds invalid JSON: json.loads raises inside the try
@@ -115,7 +110,6 @@ def test_read_returns_offline_default_on_corrupt_json():
     out = _state_mod.read()
 
     assert out == {"online": False, "mode": "offline", "status": "offline"}
-
 
 # ---------------------------------------------------------------------------
 # write() atomic-cleanup OSError swallow — lines 86-87
@@ -149,7 +143,6 @@ def test_write_swallows_unlink_oserror_during_failed_write_cleanup(monkeypatch):
     # the re-raised write error is caught + logged by the outer handler.
     _state_mod.write(status="speaking", message="regression probe")
 
-
 # ---------------------------------------------------------------------------
 # write() happy path — makes this file a standalone coverage guarantee for
 # core.state (set_persistent merge + the visible_people default branch).
@@ -180,7 +173,6 @@ def test_write_happy_path_writes_valid_json_with_persistent_merge():
     assert "updated_at" in data
     # Persistent field survives into the written state.
     assert data["anti_spoof_enabled"] is True
-
 
 def test_write_defaults_empty_visible_people():
     """write() with all defaults: `visible_people or []` yields [] and the

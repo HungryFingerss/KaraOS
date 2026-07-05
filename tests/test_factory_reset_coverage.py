@@ -1,7 +1,8 @@
-# SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 """100% coverage for tools/factory_reset.py — standalone factory reset CLI (P0.S11).
 Part of the coverage-to-100 campaign (every line exercised or pragma'd)."""
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations
 
@@ -23,12 +24,10 @@ if str(_TOOLS_DIR) not in sys.path:
 
 import factory_reset as _fr  # noqa: E402
 
-
 # ───────────────────────────────────────────────────────────────────────
 # Helper — redirect factory_reset's `from core.db import` path constants at
 # a tmp faces dir so main()'s enumeration + token-loop stay hermetic.
 # ───────────────────────────────────────────────────────────────────────
-
 
 def _redirect_fr_paths(monkeypatch, tmp_path: Path) -> Path:
     faces = tmp_path / "faces"
@@ -40,11 +39,9 @@ def _redirect_fr_paths(monkeypatch, tmp_path: Path) -> Path:
     monkeypatch.setattr(_fr, "FACES_DIR", faces)
     return faces
 
-
 # ───────────────────────────────────────────────────────────────────────
 # _is_pipeline_live — happy paths + the malformed-state except (lines 69-70)
 # ───────────────────────────────────────────────────────────────────────
-
 
 def test_is_pipeline_live_missing_state_file_returns_false(tmp_path, monkeypatch):
     """Line 62-63 — no state.json at all -> not live (safe default)."""
@@ -52,7 +49,6 @@ def test_is_pipeline_live_missing_state_file_returns_false(tmp_path, monkeypatch
     faces.mkdir()
     monkeypatch.setattr(_fr, "FACES_DIR", faces)
     assert _fr._is_pipeline_live() is False
-
 
 def test_is_pipeline_live_fresh_state_returns_true(tmp_path, monkeypatch):
     """Line 68 (True branch) — updated_at within 10s -> pipeline is live."""
@@ -64,7 +60,6 @@ def test_is_pipeline_live_fresh_state_returns_true(tmp_path, monkeypatch):
     monkeypatch.setattr(_fr, "FACES_DIR", faces)
     assert _fr._is_pipeline_live() is True
 
-
 def test_is_pipeline_live_stale_state_returns_false(tmp_path, monkeypatch):
     """Line 68 (False branch) — updated_at older than 10s -> not live."""
     faces = tmp_path / "faces"
@@ -75,7 +70,6 @@ def test_is_pipeline_live_stale_state_returns_false(tmp_path, monkeypatch):
     monkeypatch.setattr(_fr, "FACES_DIR", faces)
     assert _fr._is_pipeline_live() is False
 
-
 def test_is_pipeline_live_malformed_json_returns_false(tmp_path, monkeypatch):
     """Lines 69-70 — a state.json that isn't valid JSON raises
     json.JSONDecodeError; the except handler swallows it and returns False."""
@@ -84,7 +78,6 @@ def test_is_pipeline_live_malformed_json_returns_false(tmp_path, monkeypatch):
     (faces / "state.json").write_text("{ this is not valid json", encoding="utf-8")
     monkeypatch.setattr(_fr, "FACES_DIR", faces)
     assert _fr._is_pipeline_live() is False
-
 
 def test_is_pipeline_live_non_float_updated_at_returns_false(tmp_path, monkeypatch):
     """Lines 69-70 (ValueError arm) — a non-float updated_at makes
@@ -97,11 +90,9 @@ def test_is_pipeline_live_non_float_updated_at_returns_false(tmp_path, monkeypat
     monkeypatch.setattr(_fr, "FACES_DIR", faces)
     assert _fr._is_pipeline_live() is False
 
-
 # ───────────────────────────────────────────────────────────────────────
 # _enumerate_targets — both include-token branches (lines 99-101)
 # ───────────────────────────────────────────────────────────────────────
-
 
 def test_enumerate_targets_preserves_token_by_default(tmp_path, monkeypatch):
     """include_dashboard_token=False -> token files land in `preserved`, not
@@ -113,7 +104,6 @@ def test_enumerate_targets_preserves_token_by_default(tmp_path, monkeypatch):
     assert token in preserved and auth in preserved
     assert token not in targets and auth not in targets
 
-
 def test_enumerate_targets_include_token_moves_to_delete(tmp_path, monkeypatch):
     """Lines 99-101 — include_dashboard_token=True extends `targets` with the
     two token files and empties `preserved`."""
@@ -124,11 +114,9 @@ def test_enumerate_targets_include_token_moves_to_delete(tmp_path, monkeypatch):
     assert token in targets and auth in targets
     assert preserved == []
 
-
 # ───────────────────────────────────────────────────────────────────────
 # main() — dry-run / liveness-refusal / success / error exit codes
 # ───────────────────────────────────────────────────────────────────────
-
 
 def test_main_dry_run_returns_zero_deletes_nothing(tmp_path, monkeypatch, capsys):
     """Default (no --confirm) enters dry-run: exit 0, prints DRY RUN, and
@@ -151,7 +139,6 @@ def test_main_dry_run_returns_zero_deletes_nothing(tmp_path, monkeypatch, capsys
     assert "Would preserve" in out
     assert (faces / "faces.db").exists()  # untouched
 
-
 def test_main_live_pipeline_refuses_returns_one(tmp_path, monkeypatch, capsys):
     """Lines 120-129 — live pipeline (fresh state.json) + no --force -> exit 1
     with an actionable stderr message."""
@@ -167,7 +154,6 @@ def test_main_live_pipeline_refuses_returns_one(tmp_path, monkeypatch, capsys):
     assert "Pipeline appears to be running" in err
     assert "--force" in err
 
-
 def test_main_confirm_success_returns_zero(tmp_path, monkeypatch, capsys):
     """Happy wipe path (line 148-150 + 165) — --confirm --force with wipe_all
     mocked to a no-op returns 0. wipe_all is NEVER the real one (production
@@ -180,7 +166,6 @@ def test_main_confirm_success_returns_zero(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "CONFIRMED" in out
-
 
 def test_main_token_unlink_failure_returns_three(tmp_path, monkeypatch, capsys):
     """Lines 159-161 — with --include-dashboard-token, a token unlink that
@@ -203,7 +188,6 @@ def test_main_token_unlink_failure_returns_three(tmp_path, monkeypatch, capsys):
     assert "could not delete" in err
     assert ".dashboard_token" in err
 
-
 def test_main_wipe_all_raises_returns_two(tmp_path, monkeypatch, capsys):
     """Lines 162-164 — when wipe_all() itself raises, the outer except prints
     an ERROR to stderr and returns 2."""
@@ -221,11 +205,9 @@ def test_main_wipe_all_raises_returns_two(tmp_path, monkeypatch, capsys):
     assert "wipe_all() raised" in err
     assert "disk on fire" in err
 
-
 # ───────────────────────────────────────────────────────────────────────
 # Module bootstrap guard (line 50) — kept LAST because it reloads the module.
 # ───────────────────────────────────────────────────────────────────────
-
 
 def test_repo_root_bootstrap_inserts_when_missing(monkeypatch):
     """Line 50 — the sys.path bootstrap body (`sys.path.insert(0, repo_root)`)

@@ -7,7 +7,6 @@ campaign (see COVERAGE.md)."""
 
 from flows.companion.turn_flows import session_end_notify
 
-
 def test_disputed_session_skips_log_turn_and_logs(capsys):
     # _is_disputed_session=True -> the `if db and not disputed` branch is
     # False, the `elif disputed` branch prints the skip message (line 90).
@@ -17,7 +16,6 @@ def test_disputed_session_skips_log_turn_and_logs(capsys):
     )
     out = capsys.readouterr().out
     assert "Skipping log_turn for disputed session stranger_x" in out
-
 
 def test_no_db_and_not_disputed_is_silent_noop(capsys):
     # db falsy AND not disputed -> neither branch runs; no output, no error.

@@ -7,7 +7,6 @@ defensive non-user role branch. Part of the coverage-to-100 campaign."""
 from core.brain_agent.agents.embedding import EmbeddingAgent
 from core.brain_agent.agents.triage import TriageAgent
 
-
 def test_evict_cache_pops_oldest_over_cap():
     a = EmbeddingAgent(http=object())  # http unused by _evict_cache
     a._MAX_CACHE = 2
@@ -15,18 +14,15 @@ def test_evict_cache_pops_oldest_over_cap():
     a._evict_cache()
     assert len(a._cache) == 2 and "a" not in a._cache  # oldest popped
 
-
 def test_evict_cache_noop_when_under_cap():
     a = EmbeddingAgent(http=object())
     a._cache = {"a": [1.0]}
     a._evict_cache()
     assert a._cache == {"a": [1.0]}
 
-
 def test_triage_non_user_non_assistant_role_skipped():
     ok, reason = TriageAgent().should_process(role="system", content="anything")
     assert ok is False and reason == "assistant turn"
-
 
 def test_triage_user_meaningful_content_passes():
     ok, reason = TriageAgent().should_process(

@@ -1,6 +1,7 @@
+"""Branch-coverage tests for core/schema_migrations.py rollback + verify_present error paths."""
+
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
-"""Branch-coverage tests for core/schema_migrations.py rollback + verify_present error paths."""
 
 from __future__ import annotations
 
@@ -10,7 +11,6 @@ import pytest
 
 from core import schema_migrations as _sm
 
-
 # ---------------------------------------------------------------------------
 # Helpers (mirror tests/test_schema_migrations.py conventions)
 # ---------------------------------------------------------------------------
@@ -18,12 +18,10 @@ from core import schema_migrations as _sm
 def _fresh_conn() -> sqlite3.Connection:
     return sqlite3.connect(":memory:", isolation_level="IMMEDIATE")
 
-
 def _ledger_versions(conn: sqlite3.Connection) -> list[int]:
     return [r[0] for r in conn.execute(
         "SELECT version FROM schema_migrations ORDER BY version"
     )]
-
 
 class _RollbackFailingConn:
     """Wraps a real sqlite3 connection; when the runner issues ROLLBACK,
@@ -61,7 +59,6 @@ class _RollbackFailingConn:
 
     def __getattr__(self, name):
         return getattr(self._real, name)
-
 
 # ---------------------------------------------------------------------------
 # Region 1 — bootstrap_ledger_if_unversioned: verify_present raises (205-214)
@@ -154,7 +151,6 @@ class TestBootstrapVerifyPresentRaises:
         out = capsys.readouterr().out
         assert "verify_present(v2) raised" in out
         assert "ValueError" in out
-
 
 # ---------------------------------------------------------------------------
 # Region 2 — apply_migrations rollback handler (322-328) + S65 suppress branch

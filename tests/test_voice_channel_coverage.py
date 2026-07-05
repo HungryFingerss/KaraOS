@@ -12,18 +12,14 @@ import pytest
 import core.voice_channel as vc
 from core.voice_channel import identify_speaker, IdentityClaim
 
-
 _BUF = np.zeros(16000, dtype=np.float32)
 _GALLERY = {"alice": np.ones(192, dtype=np.float32)}
-
 
 def _diarize_ok(audio, gallery, threshold, sample_rate):
     return [{"speaker_id": "alice", "speaker_score": 0.8}]
 
-
 def _identify_match(audio, gallery, threshold, sample_rate):
     return ("alice", 0.8, False)
-
 
 async def test_matched_speaker_builds_claim():
     claim = await identify_speaker(
@@ -36,7 +32,6 @@ async def test_matched_speaker_builds_claim():
     assert "matched 'alice'" in claim.reasoning
     assert claim.raw_segment_scores == (("alice", 0.8),)
 
-
 async def test_none_audio_returns_no_signal_claim():
     claim = await identify_speaker(
         None, _GALLERY, utterance_duration=0.0,
@@ -45,7 +40,6 @@ async def test_none_audio_returns_no_signal_claim():
     assert claim.pid is None and claim.confidence_is_no_signal
     assert claim.reasoning == "audio_buf is None"
 
-
 async def test_empty_gallery_returns_no_signal_claim():
     claim = await identify_speaker(
         _BUF, {}, utterance_duration=1.0,
@@ -53,7 +47,6 @@ async def test_empty_gallery_returns_no_signal_claim():
     )
     assert claim.pid is None and claim.confidence_is_no_signal
     assert claim.reasoning == "voice_gallery is empty"
-
 
 async def test_diarize_exception_is_captured():
     def _boom(*a, **k):
@@ -64,7 +57,6 @@ async def test_diarize_exception_is_captured():
     )
     assert claim.pid is None and claim.confidence_is_no_signal
     assert claim.reasoning.startswith("diarize failed: RuntimeError")
-
 
 async def test_identify_exception_is_captured():
     def _boom(*a, **k):
@@ -77,7 +69,6 @@ async def test_identify_exception_is_captured():
     assert claim.reasoning.startswith("identify failed: ValueError")
     assert claim.n_diarize_segments == 1  # diarize ran before identify failed
 
-
 async def test_no_match_with_positive_score_reports_threshold():
     def _miss(audio, gallery, threshold, sample_rate):
         return (None, 0.15, False)
@@ -87,7 +78,6 @@ async def test_no_match_with_positive_score_reports_threshold():
     )
     assert claim.pid is None
     assert "< threshold" in claim.reasoning
-
 
 async def test_no_match_with_zero_score_reports_no_signal():
     def _zero(audio, gallery, threshold, sample_rate):
@@ -100,7 +90,6 @@ async def test_no_match_with_zero_score_reports_no_signal():
     assert claim.reasoning == "no gallery match (score 0.0)"
     assert claim.confidence_is_no_signal
 
-
 async def test_async_diarize_fn_runs_via_coroutine_branch():
     async def _adiarize(audio, gallery, threshold, sample_rate):
         return [{"speaker_id": "alice", "speaker_score": 0.9}]
@@ -110,7 +99,6 @@ async def test_async_diarize_fn_runs_via_coroutine_branch():
     )
     assert claim.n_diarize_segments == 1
 
-
 async def test_lazy_default_imports_from_core_voice(monkeypatch):
     # cover the diarize_fn/identify_fn None-default lazy-import path
     import core.voice as real_voice
@@ -118,7 +106,6 @@ async def test_lazy_default_imports_from_core_voice(monkeypatch):
     monkeypatch.setattr(real_voice, "identify", _identify_match, raising=False)
     claim = await identify_speaker(_BUF, _GALLERY, utterance_duration=1.0)
     assert claim.pid == "alice"
-
 
 async def test_empty_segments_yields_zero_count():
     def _no_segments(audio, gallery, threshold, sample_rate):

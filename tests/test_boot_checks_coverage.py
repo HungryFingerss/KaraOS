@@ -11,10 +11,8 @@ import pytest
 import core.config as config
 import runtime.boot_checks as bc
 
-
 def _tools(*names):
     return [{"function": {"name": n}} for n in names]
-
 
 @pytest.fixture
 def valid_registries(monkeypatch):
@@ -29,69 +27,57 @@ def valid_registries(monkeypatch):
         "handlers": {"t1": object()},
     }
 
-
 def _run(reg):
     bc.validate_tool_registries(reg["brain"], reg["fallbacks"], reg["handlers"])
 
-
 def test_consistent_registries_pass(valid_registries):
     _run(valid_registries)  # no raise (all happy-path branches)
-
 
 def test_privilege_missing_raises(valid_registries, monkeypatch):
     monkeypatch.setattr(bc, "TOOL_PRIVILEGES", {})  # t1 missing
     with pytest.raises(RuntimeError, match="TOOL_PRIVILEGES missing"):
         _run(valid_registries)
 
-
 def test_intent_missing_raises(valid_registries, monkeypatch):
     monkeypatch.setattr(config, "TOOL_INTENT_MAP", {})
     with pytest.raises(RuntimeError, match="missing from TOOL_INTENT_MAP"):
         _run(valid_registries)
-
 
 def test_intent_orphan_raises(valid_registries, monkeypatch):
     monkeypatch.setattr(config, "TOOL_INTENT_MAP", {"t1": "i", "ghost": "i"})
     with pytest.raises(RuntimeError, match="intent registry but not in brain.TOOLS"):
         _run(valid_registries)
 
-
 def test_fallback_missing_raises(valid_registries):
     valid_registries["fallbacks"] = {}
     with pytest.raises(RuntimeError, match="_TOOL_FALLBACKS missing"):
         _run(valid_registries)
-
 
 def test_fallback_orphan_raises(valid_registries):
     valid_registries["fallbacks"] = {"t1": "ok", "ghost": "x"}
     with pytest.raises(RuntimeError, match="not in brain.TOOLS"):
         _run(valid_registries)
 
-
 def test_fallback_degenerate_raises(valid_registries):
     valid_registries["fallbacks"] = {"t1": "   "}  # whitespace-only
     with pytest.raises(RuntimeError, match="empty/whitespace-only"):
         _run(valid_registries)
-
 
 def test_handler_missing_raises(valid_registries):
     valid_registries["handlers"] = {}
     with pytest.raises(RuntimeError, match="missing from _TOOL_HANDLERS"):
         _run(valid_registries)
 
-
 def test_handler_orphan_raises(valid_registries):
     valid_registries["handlers"] = {"t1": object(), "ghost": object()}
     with pytest.raises(RuntimeError, match="_TOOL_HANDLERS has entries for tools not in"):
         _run(valid_registries)
-
 
 def test_instance_mode_valid(monkeypatch, capsys):
     monkeypatch.setattr(config, "KARAOS_INSTANCE_MODE", "base")
     bc.validate_instance_mode()
     out = capsys.readouterr().out
     assert "instance_mode=base" in out and "WARNING" not in out
-
 
 def test_instance_mode_invalid_warns_and_defaults(monkeypatch, capsys):
     monkeypatch.setattr(config, "KARAOS_INSTANCE_MODE", "bogus_mode")
