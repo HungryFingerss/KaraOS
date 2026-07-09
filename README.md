@@ -11,6 +11,22 @@ profile + persona pack (`profiles/` + `persona/`); the companion, this repo's
 default profile, is the first reference persona:
 see a face, identify, greet, listen, respond, repeat.
 
+## The interactive blueprint (start here)
+
+The fastest way to understand the whole system is the single-file interactive
+blueprint at [`docs/blueprint/KARAOS-BLUEPRINT.html`](docs/blueprint/KARAOS-BLUEPRINT.html):
+a guided reading path, the full system flowchart with animated traces, a code
+reference covering 97 files and 1,099 symbols, exact database schemas, all 379
+config constants, the identity-routing cascade, the LLM tool contracts, and the
+design decisions. All of it generated from this repo's actual code.
+
+Two ways to open it:
+
+- **One click (rendered in your browser):**
+  [open the blueprint](https://raw.githack.com/HungryFingerss/KaraOS/main/docs/blueprint/KARAOS-BLUEPRINT.html)
+- **Offline:** download the file and double-click it. It is fully
+  self-contained, no network, no build step.
+
 ## What's actually in this repo
 
 The whole thing lives here: the runtime, its 4,200+ test suite, the CI/CD, the
@@ -33,7 +49,7 @@ karaos/
 ├── tools/ # operator CLIs (factory reset, event-log replay, SPDX)
 ├── bootstrap/ # one-shot offline pipelines (built the classifier seed)
 ├── data/ # the classifier seed (system intelligence; survives reset)
-├── docs/ # 19-chapter architecture reference + policies
+├── docs/ # 19-chapter architecture reference + policies + the interactive blueprint
 ├── published-papers-tests/ # external benchmark validation (the honest journey)
 ├── terminal-logs/ # raw live-session demo logs
 ├── rule book/ # the engineering disciplines + the 170-spec cycle archive
