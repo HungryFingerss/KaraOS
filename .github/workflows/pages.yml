@@ -28,6 +28,10 @@ concurrency:
 
 jobs:
   deploy:
+    # Pages exists only on the public KaraOS repo; the Cognitive-System
+    # mirror is private (no Pages on the free plan), so skip there instead
+    # of failing red on every blueprint change.
+    if: github.repository == 'HungryFingerss/KaraOS'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
