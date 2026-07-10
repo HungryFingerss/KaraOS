@@ -6,8 +6,9 @@ memory, not from docs that could drift).
 
 **Open it:**
 
-- One click, rendered in your browser:
-  [raw.githack viewer](https://raw.githack.com/HungryFingerss/KaraOS/main/docs/blueprint/KARAOS-BLUEPRINT.html)
+- In your browser: **https://hungryfingerss.github.io/KaraOS/**
+  (GitHub Pages, deployed by `.github/workflows/pages.yml`; auto-redeploys
+  on any change to this folder on main)
 - Or download the file and double-click it. No network, no build step, no
   dependencies. Works offline. Renders in light and dark themes.
 

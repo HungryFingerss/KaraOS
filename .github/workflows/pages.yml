@@ -1,0 +1,56 @@
+# Publishes the interactive blueprint (docs/blueprint/KARAOS-BLUEPRINT.html)
+# to GitHub Pages, so it renders at https://hungryfingerss.github.io/KaraOS/
+# instead of showing as raw HTML source in the repo view.
+#
+# - The blueprint becomes the site root (index.html) and is also served at
+#   /KARAOS-BLUEPRINT.html so both URL shapes work.
+# - configure-pages `enablement: true` turns Pages on automatically the first
+#   time this runs; no manual repo-settings step needed.
+# - Re-deploys on any change to docs/blueprint/ on main.
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/blueprint/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          cp docs/blueprint/KARAOS-BLUEPRINT.html _site/index.html
+          cp docs/blueprint/KARAOS-BLUEPRINT.html _site/KARAOS-BLUEPRINT.html
+
+      - name: Configure Pages (auto-enable on first run)
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -22,8 +22,8 @@ design decisions. All of it generated from this repo's actual code.
 
 Two ways to open it:
 
-- **One click (rendered in your browser):**
-  [open the blueprint](https://raw.githack.com/HungryFingerss/KaraOS/main/docs/blueprint/KARAOS-BLUEPRINT.html)
+- **In your browser:** https://hungryfingerss.github.io/KaraOS/
+  (served via GitHub Pages; auto-redeploys whenever the blueprint changes)
 - **Offline:** download the file and double-click it. It is fully
   self-contained, no network, no build step.
 
