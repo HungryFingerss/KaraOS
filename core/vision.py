@@ -411,6 +411,11 @@ class Camera:
         if sys.platform == "win32":
             backend      = cv2.CAP_DSHOW
             backend_name = "DirectShow"
+        elif sys.platform == "darwin":
+            # V4L2 is Linux-only; requesting it on macOS leaves the capture
+            # unopened. AVFoundation is the native macOS backend.
+            backend      = getattr(cv2, "CAP_AVFOUNDATION", cv2.CAP_ANY)
+            backend_name = "AVFoundation"
         else:
             backend      = getattr(cv2, "CAP_V4L2", cv2.CAP_ANY)
             backend_name = "V4L2"
