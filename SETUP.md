@@ -4,6 +4,13 @@ KaraOS is a domain-agnostic embodied-presence runtime; this repo's default profi
 
 **This manual was verified end-to-end on a fresh clone (2026-07-03):** every command below was actually run, in this order, on a machine that had never seen the repo, and the result was a working system (test suite: **4,233 passed / 0 failed** on a fresh CPU-only environment). If you follow the steps exactly, you end up in the same place.
 
+**Platforms:** Windows, Linux, and macOS all get first-class instructions below
+(every OS-specific command shows all three forms). Windows is the platform the
+end-to-end verification ran on; Linux runs the full test suite in CI on every
+push; macOS installs and runs the visual/memory stack but has no CUDA, and
+[§4](#4-gpu-acceleration-and-what-cpu-only-machines-get) states plainly what
+that means before you invest the time.
+
 ---
 
 ## 0. What you need before starting
@@ -16,16 +23,21 @@ KaraOS is a domain-agnostic embodied-presence runtime; this repo's default profi
 | **Node.js 18+** | ONLY for the optional web dashboard | skip if you don't want the dashboard |
 | **Webcam + microphone** | the pipeline opens both at startup | laptop built-ins are fine |
 | **A Together.ai API key** | powers the LLM + embeddings (free account: https://api.together.xyz to Settings to API Keys) | the system refuses to boot without it, loudly, with instructions |
-| NVIDIA GPU (optional) | faster STT/vision | **NOT required**, the CPU-only path is verified working (that's what the fresh-clone run used) |
+| NVIDIA GPU (optional) | live speech-to-text + voice ID + faster vision | **NOT required to install or run** — the CPU-only path is verified working (that's what the fresh-clone run used). But the live *hearing* path currently needs CUDA; §4 explains exactly what CPU-only and macOS machines get |
 | Ollama (optional) | local fallback LLM when the cloud is unreachable | `ollama pull qwen2.5:7b` |
 | ~10 GB free disk | repo + weights (~1 GB) + venv (~6 GB) + auto-downloaded models (~3 GB) | |
 
 Install Git-LFS once, system-wide:
+- **Linux**: `sudo apt-get install git-lfs` (Fedora: `sudo dnf install git-lfs`)
+- **macOS**: `brew install git-lfs`
 - **Windows**: `winget install GitHub.GitLFS` (or https://git-lfs.com)
-- **Linux**: `sudo apt-get install git-lfs`
-- **macOS**: `brew install git-lfs` *(macOS is untested, Windows is the verified dev platform, Linux runs in CI)*
 
 Then register it for your user (one-time): `git lfs install`
+
+Audio note for Linux: recent `sounddevice` wheels bundle PortAudio, but if the
+mic fails to open with a PortAudio error, install the system library:
+`sudo apt-get install libportaudio2` (Fedora: `sudo dnf install portaudio`).
+macOS and Windows need nothing extra.
 
 ---
 
@@ -76,12 +88,16 @@ pip install -r requirements.txt
 Takes ~5–15 minutes. Expected result: **0 errors** (the fresh-clone
 verification installed all 26 dependencies, including both fork builds, clean).
 
-## 4. (Optional) GPU acceleration
+## 4. GPU acceleration (and what CPU-only machines get)
 
-The default install gives you CPU-only PyTorch on Windows. If you have an
-NVIDIA GPU, install the CUDA build, `--force-reinstall` is REQUIRED here:
-plain `pip install torch` would see the CPU torch from step 3 as "already
-satisfied" and silently do nothing (found the hard way).
+Three paths. Pick yours.
+
+### Windows + NVIDIA GPU
+
+The default install gives you CPU-only PyTorch on Windows. Install the CUDA
+build, `--force-reinstall` is REQUIRED here: plain `pip install torch` would
+see the CPU torch from step 3 as "already satisfied" and silently do nothing
+(found the hard way).
 
 ```bash
 # RTX 50-series (Blackwell): cu128 · RTX 40/30-series: cu124 or cu121
@@ -91,12 +107,47 @@ pip install --force-reinstall torch torchvision torchaudio --index-url https://d
 `onnxruntime-gpu` is already installed and picks up CUDA automatically once
 the CUDA runtime libraries arrive with the torch install above.
 
-**Honest note for GPU-less machines:** the test suite is fully verified on
-CPU (that's the 4,233/0 number), and vision + TTS run on CPU by design, but
-live speech-to-text currently loads Whisper with `device="cuda"` and will not
-transcribe on a CPU-only box (a CPU fallback for it is a tracked known
-limitation). Practical meaning: for the full live experience, including the
-system HEARING you, use an NVIDIA GPU for now.
+### Linux + NVIDIA GPU
+
+On Linux, `pip install torch` (step 3) already installs the CUDA build by
+default, so most machines need **nothing extra** beyond a working NVIDIA
+driver (`nvidia-smi` should print your GPU). If your driver needs a specific
+CUDA line, use the same `--force-reinstall ... --index-url` command as the
+Windows path with the matching `cu1xx` tag. `onnxruntime-gpu` is installed by
+default on Linux and finds CUDA automatically. For Jetson, see
+`deploy/README.md` (and swap `faiss-cpu` for `faiss-gpu`).
+
+### macOS, or any machine without CUDA — what to expect, plainly
+
+The install works: `requirements.txt` is platform-aware (macOS automatically
+gets CPU `onnxruntime` instead of `onnxruntime-gpu`, which has no macOS
+build), the camera uses the native AVFoundation backend, and the test suite is
+fully verified on CPU (that's the 4,233/0 number). But KaraOS today is
+CUDA-first at one specific spot, and you should know it before investing the
+time:
+
+**What runs well on CPU-only (including Apple Silicon):**
+- Vision: face detection, recognition, tracking, anti-spoofing (CPU inference,
+  a few FPS instead of ~30, fine for a desk setup)
+- The voice OUT: Kokoro TTS speaks in near-real-time on CPU
+- The brain: the LLM is a cloud call (Together.ai), identical on every machine
+- All memory: the face/voice databases, the knowledge store, the graph, the
+  dashboard, enrollment, factory reset
+- The whole test suite and every CLI tool
+
+**What does NOT work without CUDA (yet):**
+- Live speech-to-text: Whisper is loaded with `device="cuda"` in the inference
+  worker; on a no-CUDA machine it fails to load and the system simply never
+  hears you (it degrades gracefully, no crash)
+- Voice identification (ECAPA) and multi-speaker diarization (pyannote): same
+  CUDA-gated loading path
+- Apple's Metal/MPS is NOT used: the code checks `torch.cuda` only
+
+**Practical meaning:** on a Mac (or any CPU-only box) you get a system that
+*sees* you, recognizes your face, greets you by name, remembers you, and can
+speak — but you cannot talk back to it by voice. A CPU/MPS fallback for the
+hearing path is a tracked known limitation. For the full live experience,
+including the system HEARING you, use a machine with an NVIDIA GPU for now.
 
 ## 5. API keys (.env)
 
@@ -117,7 +168,7 @@ Open `.env` in a text editor:
 | `GROQ_API_KEY` | optional | alternate LLM provider |
 | `CAMERA_INDEX` | default `0` | which camera to open (try `1` if you have multiple) |
 | `OLLAMA_MODEL` | default `qwen2.5:7b` | the offline-fallback model (only used if you run Ollama) |
-| `PYTHON_PATH` | recommended | absolute path to your venv python (used by the dashboard's server-side scripts), e.g. `C:\...\karaos\venv\Scripts\python.exe` |
+| `PYTHON_PATH` | recommended | absolute path to your venv python (used by the dashboard's server-side scripts). Linux/macOS: `/home/you/karaos/venv/bin/python` · Windows: `C:\...\karaos\venv\Scripts\python.exe` |
 
 ## 6. Verify the install (recommended: 5 minutes)
 
@@ -212,6 +263,22 @@ something you apply anymore. They live in the pinned forks.
 **Camera won't open, or the wrong camera opens.**
 Set `CAMERA_INDEX` in `.env` (0, 1, 2…). Close other apps holding the camera.
 Never run two copies of the pipeline at once, one camera, one owner.
+
+**macOS: camera or mic opens to a black frame / permission errors.**
+macOS gates hardware per-app: System Settings → Privacy & Security →
+Camera (and Microphone) → enable for your terminal app (Terminal/iTerm/VS
+Code). The first run should trigger the permission prompt; if you denied it
+once, you must re-enable it there manually.
+
+**Linux: mic fails with a PortAudio error.**
+`sudo apt-get install libportaudio2` (Fedora: `sudo dnf install portaudio`),
+then re-activate the venv and rerun. Check the mic is visible with
+`python -c "import sounddevice; print(sounddevice.query_devices())"`.
+
+**macOS: `pip install -r requirements.txt` fails on `onnxruntime-gpu`.**
+You're on an old checkout. `git pull` — requirements.txt is platform-aware
+(macOS gets CPU `onnxruntime` automatically; there is no CUDA build for
+macOS).
 
 **Pipeline crashes on import with a Kuzu `IndexError: invalid unordered_map` .**
 The graph DB is in an inconsistent state. Delete `faces/brain_graph` and

@@ -4,6 +4,13 @@
 ![nightly CI](https://github.com/HungryFingerss/KaraOS/actions/workflows/slow.yml/badge.svg)
 ![security scan](https://github.com/HungryFingerss/KaraOS/actions/workflows/security.yml/badge.svg)
 
+[![KaraOS live demo: first boot hears "Hi", asks who you are, and enrolls you by face and voice](docs/media/demo.gif)](https://www.linkedin.com/posts/jaganniva001_karaos-physicalai-robotics-ugcPost-7454130916026896384-pPWT)
+
+<sub>Real, unscripted first boot (2x speed): the system wakes, hears "Hi.", asks
+"are you my best friend?", learns the name, enrolls face + voice, and greets its
+owner — all narrated live by the pipeline log.
+**[Watch the full demo with audio on LinkedIn →](https://www.linkedin.com/posts/jaganniva001_karaos-physicalai-robotics-ugcPost-7454130916026896384-pPWT)**</sub>
+
 KaraOS is a domain-agnostic embodied-presence runtime, the cognitive layer for
 an embodied AI agent: it sees, hears, recognizes people, remembers them across
 sessions, and holds spoken conversations. What it deploys AS is selected by a
@@ -66,17 +73,25 @@ what you'll see, the gotchas, and troubleshooting. It was verified end-to-end
 on a fresh clone (2026-07-03): running it exactly produced a working system
 and a green test suite (4,233 passed / 0 failed, CPU-only machine).
 
-The short version:
+The short version (Linux / macOS / Windows):
 
 ```bash
 git clone https://github.com/HungryFingerss/KaraOS.git karaos && cd karaos
-git lfs pull # model weights (~600 MB)
-python -m venv venv && venv\Scripts\activate # Linux: source venv/bin/activate
-python -m pip install --upgrade pip "setuptools<81" wheel # REQUIRED before the next line
-pip install -r requirements.txt # ~5-15 min, 0 errors expected
-copy .env.example .env # then set TOGETHER_API_KEY in .env
-python pipeline.py # first boot enrolls YOU (voice + face)
+git lfs pull                     # model weights (~600 MB)
+python -m venv venv
+source venv/bin/activate         # Windows: venv\Scripts\activate
+python -m pip install --upgrade pip "setuptools<81" wheel   # REQUIRED before the next line
+pip install -r requirements.txt  # ~5-15 min, 0 errors expected (platform-aware: macOS auto-selects CPU onnxruntime)
+cp .env.example .env             # Windows: copy .env.example .env — then set TOGETHER_API_KEY
+python pipeline.py               # first boot enrolls YOU (voice + face)
 ```
+
+Works on Windows, Linux, and macOS. One plain-spoken caveat: the live
+*hearing* path (Whisper STT + voice ID) currently loads on CUDA only, so a
+Mac or any no-CUDA machine gets a system that sees, recognizes, remembers,
+and speaks — but can't be talked to by voice yet.
+[SETUP.md §4](SETUP.md#4-gpu-acceleration-and-what-cpu-only-machines-get)
+states exactly what each platform gets.
 
 Dashboard (optional): `cd karaos-dashboard && npm install && npm run dev`.
 The pipeline terminal prints the one-time auth URL, then http://localhost:3000.
