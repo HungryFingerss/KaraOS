@@ -127,8 +127,25 @@ The benchmark was run three times. The order matters.
 
 **Run 3 (graph classifier (post-architectural rewrite):** zero LLM calls in the classification path. **64.56% balanced accuracy**) beats both prior LLM-classifier baselines, sits just below the paper's lowest fine-tuned model (Qwen2.5-7B fine-tuned: 66.60%, Qwen3-4B-Instruct fine-tuned: 65.12%) which used 120,000+ labeled training examples and gradient descent on model weights.
 
+> **Correction + re-verification notice (2026-07-30).** Two problems with the
+> numbers in this section, both found by our own review rather than by a reader.
+> (1) The precision figure below previously read "88.9%" — that value matches no
+> run in the corpus (Run 1 was 87.79%, Run 3 is 80.21%, `RESULTS.md:152`), and
+> the sentence beside it contradicted itself, since "~4 times out of 5" is 80%.
+> Corrected below. (2) More consequentially, the **64.56% balanced accuracy
+> above is under active re-verification.** The benchmark's own metric places
+> abstentions in the accuracy denominator without counting them as misses, which
+> rewards a classifier for staying silent; our graph classifier abstains on
+> ~20% of rows. Under a corrected decomposition that counts an abstention as a
+> miss, the ranking in this section **inverts** — the 70B LLM classifier comes
+> out ahead of the graph classifier. That correction is quarantined pending
+> independent audit of the rescoring tool, and the full statement will land in
+> `published-papers-tests/` with both metrics side by side. Until then, treat
+> the balanced-accuracy comparison here as unreliable. The silent-recall and
+> SPEAK-recall figures are unaffected.
+
 The metrics that matter for a home companion (Run 3):
-- **88.9% precision when speaking**, when KaraOS chimes in, it's right ~4 times out of 5
+- **80.2% precision when speaking**, when KaraOS chimes in, it's right ~4 times out of 5
 - **96.4% silent recall**, almost never barges into conversations it isn't part of
 - **15.2% overall SPEAK recall**, KaraOS misses many "should speak" moments. By design.
 

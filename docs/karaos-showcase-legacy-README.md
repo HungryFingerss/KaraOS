@@ -75,7 +75,18 @@ KaraOS doesn't modify model weights. It doesn't run gradient descent on labeled 
 
 ### What 64.56% looks like in practice for a home companion
 
-- **88.9% precision when speaking** — when KaraOS chimes in, it's right ~4 times out of 5
+> **Correction + re-verification notice (2026-07-30).** The precision figure
+> below previously read "88.9%", which matches no run in the corpus (Run 1 was
+> 87.79%, Run 3 is 80.21% — `published-papers-tests/results/RESULTS.md:152`);
+> the "~4 times out of 5" beside it was already the correct 80%. Corrected.
+> Separately, the **64.56% headline is under active re-verification**: the
+> benchmark's metric counts abstentions in the accuracy denominator without
+> scoring them as misses, which rewards silence, and under a corrected
+> decomposition the comparison inverts. Quarantined pending independent audit;
+> the full statement lands in `published-papers-tests/`. Silent-recall and
+> SPEAK-recall below are unaffected. See `ARCHITECTURE.md` for the same notice.
+
+- **80.2% precision when speaking** — when KaraOS chimes in, it's right ~4 times out of 5
 - **96.4% silent recall** — almost never barges into conversations it isn't part of
 - **15.2% overall SPEAK recall** — KaraOS misses many "should speak" moments. By design.
 
