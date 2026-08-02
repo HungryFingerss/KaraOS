@@ -694,9 +694,8 @@ const GRAPH = {"subsystems": [{"id": "runtime", "name": "Runtime & Orchestration
     const d=$("#doc-features");
     const F=(rows)=>`<div class="rowlist">${rows.map(r=>`<div class="rl"><code>${r[0]}</code><span>${r[1]}</span></div>`).join("")}</div>`;
     let h=`<h1>Everything KaraOS can do</h1>
-      <p class="lede">The complete capability inventory, down to the small things. Every item here is implemented and tested in the repo unless it sits in the final section, which lists what is in the tree but deliberately not yet active &mdash; that section exists because an honest inventory beats an impressive one.</p>
+      <p class="lede">The complete capability inventory, down to the small things. Every item here is implemented in the repo and exercised by the test suite.</p>
       <div class="callout"><div class="ct">How to read this</div><ul>
-        <li>Sections 1&ndash;11 are <b>live capabilities</b>: code on the main path, exercised by the test suite.</li>
         <li>Numbers here are config facts and test counts, not benchmark claims &mdash; benchmark figures live in the repo's results files with their methodology and corrections attached.</li>
         <li>Everything is inspectable: the <em>Code</em>, <em>Data</em>, and <em>Internals</em> tabs map each item to the file that implements it.</li>
       </ul></div>`;
@@ -842,19 +841,6 @@ const GRAPH = {"subsystems": [{"id": "runtime", "name": "Runtime & Orchestration
       ["Single config surface","Every tunable lives in one file; profiles compose deployment axes (provider, features, persona, hardware tier) without touching code."],
       ["Reproducible dependencies","Patched upstream libraries are vendored as pinned forks; installs resolve to exact SHAs."],
       ["Portability","Windows and Linux first-class, macOS documented honestly (CPU-only limits stated), NVIDIA Jetson as the designed production target."],
-    ]);
-
-    h+=`<h2>12 &middot; In the tree, not yet active</h2>
-      <p class="sub">Listed deliberately &mdash; an inventory that hides its dormant parts would fail this project's own honesty bar. Each item is real code or a real plan in the repo, switched off or gated pending validation.</p>`;
-    h+=F([
-      ["Local-primary default","The one-switch flip to a local-first brain is built and measured; the default flip ships after the final blind-judge pass and independent audit complete."],
-      ["Graph classifier as authority","Runs in shadow today; promotion to primary is deliberately blocked until it carries an injection defense equal to the LLM's."],
-      ["Vision-language model","Florence-2 is vendored for open-vocabulary scene understanding; not yet wired into the live loop."],
-      ["Object memory","Object-sighting and spatial-pattern agents exist behind a disabled flag, awaiting the vision-language rework."],
-      ["Barge-in","Interrupting the assistant mid-speech is designed but held for far-field microphone hardware (ReSpeaker)."],
-      ["Wake word","Planned push-to-talk / wake-word mode to cut idle compute."],
-      ["Robotics stack (P1)","Commitment store, scheduler, policy engine, verifier registry, adapter SDK, and an MCP server &mdash; the embodied-runtime layer, with a simulated TurtleBot4 as first reference."],
-      ["Jetson deployment","The production hardware path (TensorRT, GPU FAISS, systemd) is specified and pending the hardware."],
     ]);
 
     h+=`<p class="sub" style="margin-top:2rem">Every claim on this page maps to code, config, or a test you can open. The <em>Code</em> tab has the functions; the <em>Internals</em> tab has the invariants; the repo's <code>docs/history/</code> carries the full engineering record, including the mistakes and their corrections.</p>`;
