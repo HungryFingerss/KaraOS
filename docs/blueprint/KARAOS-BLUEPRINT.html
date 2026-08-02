@@ -756,19 +756,35 @@ const GRAPH = {"subsystems": [{"id": "runtime", "name": "Runtime & Orchestration
     h+=`<h2>5 &middot; Remembers</h2>`;
     h+=F([
       ["Long-term per-person memory","Facts learned in conversation are extracted, attributed, confidence-scored, and stored per person &mdash; ask next week and it remembers."],
-      ["An eight-agent background brain","Triage, extraction, contradiction resolution, communication-preference learning, embeddings, pattern analysis, friction detection, and household extraction all run off the live path &mdash; the person never waits on learning."],
-      ["Contradiction resolution","&ldquo;Actually, I moved to Pune&rdquo; retires the old fact instead of coexisting with it &mdash; a dedicated agent adjudicates REPLACE vs COMPATIBLE."],
       ["Knowledge graph","An embedded property graph (Kuzu) holds entities and relationships with 1-hop traversal for &ldquo;how do these people connect&rdquo; questions &mdash; with privacy filtering built into the query layer."],
       ["Cross-session recall","A memory-search tool retrieves past-session facts and conversation excerpts on demand, including cross-person recall (&ldquo;who visited while I was out?&rdquo;)."],
       ["Room memory","Shared moments are retrievable room-wide, while personal facts stay scoped to their owner."],
-      ["Schema self-normalization","&ldquo;job&rdquo;, &ldquo;occupation&rdquo;, &ldquo;profession&rdquo; auto-merge as synonyms via embedding similarity &mdash; the knowledge base does not fragment as phrasing varies."],
-      ["Communication-preference learning","It learns per-person style preferences (brevity, formality, topics) across sessions and auto-confirms them after repeated evidence."],
-      ["Household model","Household facts, inter-person relationships, and people who are mentioned but never seen (&ldquo;shadow persons&rdquo;) are modeled explicitly."],
-      ["Routines","Typical arrival hours and visit durations are learned per person &mdash; the substrate for noticing when something is off."],
       ["Temporal facts","Facts can carry validity windows &mdash; &ldquo;my sister is visiting this week&rdquo; expires on its own."],
       ["Safety-critical memory","A protected class of attributes (health and safety disclosures) is append-only: nothing can silently overwrite them."],
-      ["Dream cycle","During idle time it prunes, decays, and consolidates memory on a cooldown &mdash; maintenance never competes with conversation."],
       ["Bounded growth","Knowledge is capped and pruned deliberately; storage cannot grow without limit."],
+    ]);
+    h+=`<h3>The background brain &mdash; one orchestrator, fifteen specialist agents</h3>
+      <p class="sub">This is what makes it a companion rather than a chatbot. After each turn is spoken, a separate background brain quietly works out what the moment <em>meant</em>. It is organized like a small newsroom: one editor and fifteen specialists, each with a single job. All of it runs off the live path &mdash; the person never waits on learning &mdash; and at shutdown a drain barrier waits for the work by name.</p>`;
+    h+=F([
+      ["Orchestrator","The editor. Watches the conversation log, routes each turn to the right specialists, runs the idle-time dream cycle, and drains cleanly at shutdown."],
+      ["Triage","The doorman. An instant, LLM-free filter that decides which turns contain anything worth learning &mdash; most small talk doesn't, and skipping it keeps the system cheap."],
+      ["Extraction","The note-taker. Reads a worthwhile turn and pulls out durable facts &mdash; choosing sensible attribute names itself rather than forcing facts into a fixed form."],
+      ["Contradiction","The fact-checker. Compares every new fact against stored beliefs and rules REPLACE or COMPATIBLE &mdash; &ldquo;actually, I moved to Pune&rdquo; retires the old city instead of coexisting with it."],
+      ["Schema normalizer","The librarian. Notices that &ldquo;job&rdquo;, &ldquo;occupation&rdquo;, and &ldquo;profession&rdquo; are the same shelf and merges them by embedding similarity, so knowledge never fragments across phrasings."],
+      ["Embedding","The indexer. Turns facts into vectors so memory can be searched by meaning, not just by keyword &mdash; running on a local model or the cloud, per profile."],
+      ["Household","The family historian. Builds the shared picture: household facts, who relates to whom, and &ldquo;shadow persons&rdquo; &mdash; people mentioned in conversation but never yet seen."],
+      ["Social graph","The relationship mapper. Catches mentions of other people (&ldquo;my sister Kavya&hellip;&rdquo;) and links them into the graph so later questions about them have somewhere to land."],
+      ["Identity","The registrar. When a stranger becomes &ldquo;Priya&rdquo;, it propagates the promotion through every store &mdash; facts, graph, history &mdash; so nothing is left filed under &ldquo;unknown visitor&rdquo;."],
+      ["Routine","The rhythm-keeper. Learns each person's normal &mdash; typical arrival hour, usual visit length &mdash; which is the substrate for one day noticing that something is off."],
+      ["Preference","The stylist. Learns how each person likes to be spoken to (brevity, formality, topics) across sessions, and only commits a preference after repeated evidence."],
+      ["Friction","The critic. Watches for moments where actual behaviour contradicts a learned preference and escalates the correction rather than letting a wrong preference calcify."],
+      ["Nudge","The gentle reminder. Queues well-timed prompts &mdash; a visitor alert, a follow-up worth raising &mdash; and surfaces them at the right moment instead of interrupting."],
+      ["Briefing","The chronicler. Composes &ldquo;while you were away&rdquo; summaries from the logged record of what actually happened."],
+      ["Insight","The reviewer. After a conversation ends, distills what mattered from it &mdash; the takeaways worth keeping beyond the raw transcript."],
+      ["Watchdog","The supervisor's supervisor. Watches the background brain itself for stuck or silent work and raises an alert instead of letting learning quietly stall."],
+    ]);
+    h+=F([
+      ["Dream cycle","During idle time the orchestrator prunes, decays, and consolidates memory on a cooldown &mdash; maintenance never competes with conversation."],
     ]);
 
     h+=`<h2>6 &middot; Acts, with guardrails</h2>`;
