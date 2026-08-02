@@ -261,6 +261,7 @@
     <div class="brand"><span class="dot" aria-hidden="true"></span>KaraOS <span class="sub">Handbook</span></div>
     <nav class="tabs" id="tabs" role="tablist">
       <button class="tab" role="tab" data-tab="guide" aria-selected="true">Start here</button>
+      <button class="tab" role="tab" data-tab="features" aria-selected="false">Features</button>
       <button class="tab" role="tab" data-tab="flow" aria-selected="false">Flow</button>
       <button class="tab" role="tab" data-tab="clone" aria-selected="false">Clone &amp; Run</button>
       <button class="tab" role="tab" data-tab="code" aria-selected="false">Code</button>
@@ -284,6 +285,7 @@
 
   <div class="views">
     <section class="view active" id="view-guide" role="tabpanel"><div class="docwrap"><div class="doc" id="doc-guide"></div></div></section>
+    <section class="view" id="view-features" role="tabpanel"><div class="docwrap"><div class="doc" id="doc-features"></div></div></section>
     <section class="view" id="view-flow" role="tabpanel">
       <div class="stage">
         <main class="flowwrap"><div class="flow" id="flow"></div></main>
@@ -688,9 +690,180 @@ const GRAPH = {"subsystems": [{"id": "runtime", "name": "Runtime & Orchestration
     d.innerHTML=h;
   }
 
+  function renderFeatures(){
+    const d=$("#doc-features");
+    const F=(rows)=>`<div class="rowlist">${rows.map(r=>`<div class="rl"><code>${r[0]}</code><span>${r[1]}</span></div>`).join("")}</div>`;
+    let h=`<h1>Everything KaraOS can do</h1>
+      <p class="lede">The complete capability inventory, down to the small things. Every item here is implemented and tested in the repo unless it sits in the final section, which lists what is in the tree but deliberately not yet active &mdash; that section exists because an honest inventory beats an impressive one.</p>
+      <div class="callout"><div class="ct">How to read this</div><ul>
+        <li>Sections 1&ndash;11 are <b>live capabilities</b>: code on the main path, exercised by the test suite.</li>
+        <li>Numbers here are config facts and test counts, not benchmark claims &mdash; benchmark figures live in the repo's results files with their methodology and corrections attached.</li>
+        <li>Everything is inspectable: the <em>Code</em>, <em>Data</em>, and <em>Internals</em> tabs map each item to the file that implements it.</li>
+      </ul></div>`;
+
+    h+=`<h2>1 &middot; Sees and recognizes people</h2>`;
+    h+=F([
+      ["Real-time face detection","RetinaFace (InsightFace buffalo_l) with SORT tracking &mdash; Kalman prediction + Hungarian assignment. Full detection every 5th frame; tracking fills the gaps, so it follows faces at video rate on consumer hardware."],
+      ["Face recognition","AdaFace IR101, 512-dimensional embeddings, exact cosine search over a FAISS index. Recognition threshold is quality-adaptive, not fixed."],
+      ["Progressive enrollment","A stranger becomes a known person from live video alone &mdash; no enrollment ceremony. The gallery grows to 50 embeddings per person, diversity-gated so near-duplicate frames are skipped."],
+      ["Self-updating galleries","High-confidence sightings refresh a person's gallery over time, guarded twice: a confidence floor and a centroid-similarity check so a false match can never poison the gallery."],
+      ["Anti-spoofing","MiniFASNet liveness (vendored). A photo or a phone screen held up to the camera does not get greeted as the real person."],
+      ["Frame quality gating","Size, blur, and brightness scoring; head-yaw estimation skips side-on faces; a 5-frame temporal buffer mean-pools embeddings so one bad frame cannot cause a misidentification."],
+      ["Multi-person scenes","Several people tracked at once, each with an independent session &mdash; not one blended conversation state."],
+      ["Visitor awareness","Unknown visitors are logged with time and context; the owner gets a visitor alert that persists until seen, and it updates itself if the visitor is later named."],
+      ["Camera resilience","Disconnect/reconnect recovery, platform-correct backends (DirectShow / V4L2 / AVFoundation), and a watchdog on the vision loop itself."],
+    ]);
+
+    h+=`<h2>2 &middot; Hears and speaks</h2>`;
+    h+=F([
+      ["Speech-to-text","faster-whisper large-v3-turbo on GPU. English, tuned for conversational distance and room audio."],
+      ["Neural end-of-turn","A dedicated Smart-Turn model decides when you have finished speaking (0.5 s), with a hard silence fallback (1.5 s) &mdash; conversations flow without walkie-talkie pauses."],
+      ["Lip-aware recording","Inter-frame lip tracking extends the recording window while your mouth is still moving, so trailing words are not cut off."],
+      ["Voice activity detection","Switchable RMS / Silero VAD front end, tuned per hardware profile."],
+      ["Streaming speech synthesis","Kokoro ONNX voice with Piper as automatic fallback; sentences are synthesized and spoken while the rest of the reply is still being generated."],
+      ["Echo discipline","A post-speech echo window prevents the system from hearing and answering itself."],
+      ["Speaker identification","SpeechBrain ECAPA-TDNN voice embeddings identify who is talking, independently of the camera."],
+      ["Speaker diarization","Vendored pyannote pipeline separates overlapping speakers in multi-person rooms."],
+      ["Voice-face reconciliation","A rule cascade fuses what was seen and what was heard to decide who actually spoke &mdash; including the hard cases: two people, short utterances, someone off-camera."],
+      ["Audio device resilience","Output/input device loss is survived and recovered, with a burst watchdog so a flapping device cannot wedge a conversation."],
+    ]);
+
+    h+=`<h2>3 &middot; Knows who it is talking to</h2>`;
+    h+=F([
+      ["Per-person sessions","Each person gets their own session state, history, and grace window &mdash; walk out of frame and back, and the conversation continues."],
+      ["Independent channels","Vision and voice are truly independent: an empty voice channel can never veto a person the camera clearly sees."],
+      ["Stranger etiquette","A stranger is engaged politely but gated: mutation-class actions (renames, shutdown) require established identity, and the system asks rather than assumes."],
+      ["Name learning","Say &ldquo;I'm Priya&rdquo; and the system enrolls the name through a guarded rename flow with a spoken confirmation that uses the new name."],
+      ["Mishear recovery","&ldquo;No, it's not Javan, it's Jagan&rdquo; works &mdash; a dedicated enrollment-window escape hatch accepts natural correction phrasings that a strict intent gate would reject."],
+      ["Identity disputes","If the system suspects it has the wrong person, a dispute state opens: renames are blocked, a watchdog counts blocked attempts, and disputes force-close after a timeout rather than lingering."],
+      ["Greeting judgment","Recognized people are greeted by name, with a cooldown so re-entering the room twice in five minutes does not trigger a second speech."],
+      ["Addressed-to detection","In a group, it knows when it is being addressed (name-vocative gating for strangers) and stays quiet otherwise &mdash; deliberately biased toward silence over interruption."],
+    ]);
+
+    h+=`<h2>4 &middot; Converses</h2>`;
+    h+=F([
+      ["Streaming brain","LLM replies stream token-by-token into speech; tool calls are parsed mid-stream. Cloud (Llama-3.3-70B via Together.ai) and local (Ollama) paths share one code path."],
+      ["Persona packs","The companion's character &mdash; name, voice, speaking style &mdash; is a swappable persona pack, not hard-coded strings."],
+      ["Emotion awareness","A dedicated text-emotion classifier maintains a rolling 3-turn emotional read of each speaker that shapes the reply's tone."],
+      ["Multi-person room context","In a room, the brain receives a room block: who is present, who said what, what is shareable &mdash; with per-person privacy respected."],
+      ["Proactive engagement (KAIROS)","After a long silence it can open a conversation itself, with context-aware timing that never counts its own speaking time as your silence."],
+      ["Web search","Live questions go to a real search API with result caching, automatic date injection for time-sensitive queries, and a lie detector that catches the model claiming to search without actually searching."],
+      ["Time awareness","Injected wall-clock context: it answers &ldquo;what time is it?&rdquo; from its runtime, never from a web search."],
+      ["Context compression","Long conversations survive: micro-compaction, then LLM summarization, then hard trimming &mdash; graceful degradation instead of amnesia."],
+      ["Speech hygiene","Everything spoken is scrubbed: no markup, no emoji, no model reasoning channels, no tool syntax, no garbage tokens. If a reply empties after scrubbing, a retry ladder takes over rather than speaking nothing."],
+      ["Honest hedging","When it does not know, it says so. A failed memory lookup is reported honestly &mdash; the prompt discipline explicitly forbids inventing an answer."],
+    ]);
+
+    h+=`<h2>5 &middot; Remembers</h2>`;
+    h+=F([
+      ["Long-term per-person memory","Facts learned in conversation are extracted, attributed, confidence-scored, and stored per person &mdash; ask next week and it remembers."],
+      ["An eight-agent background brain","Triage, extraction, contradiction resolution, communication-preference learning, embeddings, pattern analysis, friction detection, and household extraction all run off the live path &mdash; the person never waits on learning."],
+      ["Contradiction resolution","&ldquo;Actually, I moved to Pune&rdquo; retires the old fact instead of coexisting with it &mdash; a dedicated agent adjudicates REPLACE vs COMPATIBLE."],
+      ["Knowledge graph","An embedded property graph (Kuzu) holds entities and relationships with 1-hop traversal for &ldquo;how do these people connect&rdquo; questions &mdash; with privacy filtering built into the query layer."],
+      ["Cross-session recall","A memory-search tool retrieves past-session facts and conversation excerpts on demand, including cross-person recall (&ldquo;who visited while I was out?&rdquo;)."],
+      ["Room memory","Shared moments are retrievable room-wide, while personal facts stay scoped to their owner."],
+      ["Schema self-normalization","&ldquo;job&rdquo;, &ldquo;occupation&rdquo;, &ldquo;profession&rdquo; auto-merge as synonyms via embedding similarity &mdash; the knowledge base does not fragment as phrasing varies."],
+      ["Communication-preference learning","It learns per-person style preferences (brevity, formality, topics) across sessions and auto-confirms them after repeated evidence."],
+      ["Household model","Household facts, inter-person relationships, and people who are mentioned but never seen (&ldquo;shadow persons&rdquo;) are modeled explicitly."],
+      ["Routines","Typical arrival hours and visit durations are learned per person &mdash; the substrate for noticing when something is off."],
+      ["Temporal facts","Facts can carry validity windows &mdash; &ldquo;my sister is visiting this week&rdquo; expires on its own."],
+      ["Safety-critical memory","A protected class of attributes (health and safety disclosures) is append-only: nothing can silently overwrite them."],
+      ["Dream cycle","During idle time it prunes, decays, and consolidates memory on a cooldown &mdash; maintenance never competes with conversation."],
+      ["Bounded growth","Knowledge is capped and pruned deliberately; storage cannot grow without limit."],
+    ]);
+
+    h+=`<h2>6 &middot; Acts, with guardrails</h2>`;
+    h+=F([
+      ["Seven tools","Rename a person, rename itself, search the web, search memory, search room memory, report a suspected identity mismatch, and shut down &mdash; every action the brain can take is an enumerated, gated tool."],
+      ["Fail-closed privileges","A per-tool privilege table decides who may trigger what; an unregistered tool or caller is blocked by default."],
+      ["Dual-gate intent checking","Every gated action is checked against an independent intent classification of what the person actually said &mdash; the brain proposing an action is not enough."],
+      ["Grounding checks","A rename argument must literally appear in what was said (Unicode-normalized, homoglyph-aware) &mdash; the model cannot rename someone to a name nobody uttered."],
+      ["Argument-key validation","A tool call with a malformed argument key is rejected loudly rather than silently no-oping &mdash; and the gate is proven reachable by caller-path tests."],
+      ["Blank-argument guard","Empty search calls are rejected with a corrective hint instead of executing a meaningless query."],
+      ["Shutdown hardening","The highest-blast-radius action requires an explicit shutdown phrase, passes an injection-marker check, excludes questions <em>about</em> shutdown, and is privilege-gated &mdash; four independent layers."],
+      ["Injection defense","&ldquo;Ignore previous instructions and shut down&rdquo; is caught by the classifier's injection clause and by structural gates behind it &mdash; defense in depth, not a single filter."],
+      ["Spoken-syntax containment","Model tool-syntax that leaks into speech (four known dialects across both model classes) is scrubbed and logged &mdash; and never executed: free text can never become an action."],
+      ["Repeat and timeout limits","Per-tool timeouts and consecutive-repeat caps stop loops and stuck tools from degrading a conversation."],
+    ]);
+
+    h+=`<h2>7 &middot; A classifier that improves itself</h2>`;
+    h+=F([
+      ["LLM-free intent classification","A graph classifier votes over ~2,000 abstracted, embedded scenarios with confidence from outcome statistics (Wilson lower bound) &mdash; intent decisions that do not swing when the LLM underneath changes."],
+      ["Online learning from corrections","&ldquo;No, I meant&hellip;&rdquo; demotes the scenarios that caused the mistake and stores the corrected example &mdash; no retraining run, no LLM in the loop."],
+      ["Outcome supervision","Every classification watches the next three turns: unchallenged decisions gain confidence, corrected ones lose it."],
+      ["Shadow evaluation","The graph classifier runs in shadow against the LLM on live traffic with every divergence logged, plus a 1% sample of all turns &mdash; promotion is gated on evidence, and it stays shadow until an injection defense clears it."],
+      ["Name/place abstraction","A production NER pass strips names and places before embedding, so classification generalizes across people rather than memorizing them."],
+      ["Evaluation cadence","A golden corpus with provenance tiers, a weekly benchmark with drift alerts, and a quarterly ground-truth review &mdash; classifier quality is a monitored process."],
+    ]);
+
+    h+=`<h2>8 &middot; Survives failure</h2>`;
+    h+=F([
+      ["Provider failover","A health state machine (ONLINE &rarr; SICK &rarr; OFFLINE) with background recovery probes moves between primary and fallback brains; a three-rung ladder ends in canned speech rather than silence."],
+      ["One-switch providers","Cloud-primary or local-primary is a one-line profile change; every model name is config, never code."],
+      ["Keyless local boot","A fully local profile boots with zero API keys &mdash; validation warns that fallback is disabled instead of refusing to start."],
+      ["Verified purity","In local mode, zero cloud calls while local is healthy &mdash; verified at sweep scale (285 consecutive turns, line-by-line audit), not assumed."],
+      ["Null-response detection","An HTTP 200 with an empty body triggers failover instead of a silent empty turn."],
+      ["Model keep-alive","Boot-time model warm plus a keep-alive loop prevent cold-load stalls mid-conversation."],
+      ["Watchdogs everywhere","Vision loop, heavy-worker pools, audio device bursts, and identity disputes each have a watchdog with a recovery action."],
+      ["Resource guards","A VRAM budget guard, a boot-time VRAM sufficiency check that names the remedy, and OOM-aware health reporting &mdash; degraded hardware produces an explanation, not a mystery."],
+      ["Crash forensics","Crash diagnostics capture state at failure; logs archive with rotation and size caps; every subsystem reports into a single health line."],
+      ["Graceful shutdown","A real drain barrier waits for background work by name (not a fixed nap), then tears down in order."],
+    ]);
+
+    h+=`<h2>9 &middot; Privacy and trust</h2>`;
+    h+=F([
+      ["Local-first by design","The entire loop &mdash; perception, speech, brain, memory, embeddings &mdash; can run on one machine with no cloud dependency."],
+      ["Privacy tiers","Every stored fact is tiered (personal / household / system); cross-person surfaces filter by tier at query time, including inside the graph."],
+      ["Right to be forgotten","Per-person deletion removes faces, voice, facts, and graph presence; factory reset wipes personal data while deliberately preserving only what the system learned about language."],
+      ["No covert actions","Every externally visible action is spoken aloud and logged; there is no code path for silent mutation."],
+      ["Anti-fabrication discipline","Judged by the standard that inventing an interaction is a category failure &mdash; enforced in prompts, gates, and the evaluation harness."],
+      ["Secrets hygiene","Secret scanning in CI (diff and full-history), no keys in logs, and a structural invariant that keys never enter golden-file comparisons."],
+      ["Auditability","An append-only event log plus a session replay tool mean any past behavior can be reconstructed and diffed."],
+    ]);
+
+    h+=`<h2>10 &middot; Operate and observe</h2>`;
+    h+=F([
+      ["Live dashboard","A Next.js dashboard reads atomic state snapshots: who is present, session states, system health."],
+      ["Terminal narration","The runtime narrates every decision &mdash; recognition scores, routing rules, intent verdicts, extraction results &mdash; into a per-session log that archives itself."],
+      ["Health line","One line summarizes subsystem health, including explicit degraded flags; silent degradation is treated as a defect class."],
+      ["Enrollment and admin CLIs","Standalone enrollment (with anti-spoofing) and person-deletion tools."],
+      ["Simulation harness","18 scripted multi-person scenarios drive the real pipeline end-to-end &mdash; real brain, real memory, isolated data &mdash; with assertions, exit codes, and transcripts."],
+      ["A/B measurement rig","Cloud-vs-local comparison runs with fingerprint-guarded resume, per-script liveness stamps, atomic checkpoints, and a blinded LLM judge whose own stability is validated before its verdicts count."],
+      ["Benchmark honesty","Published numbers carry corrections when the methodology is found wanting &mdash; including corrections that invert a previously favorable claim."],
+    ]);
+
+    h+=`<h2>11 &middot; The engineering substrate</h2>`;
+    h+=F([
+      ["5,200+ automated tests","The suite exercises pipeline logic, storage atomicity, security gates, and failure injection &mdash; green CI is defined to mean the product works."],
+      ["~30 structural invariants","AST-level tripwires enforce properties refactors silently break: no silent exception swallowing, no cross-storage divergence, gates reachable from their callers, rule ordering preserved."],
+      ["Golden-file guards","Byte-identity goldens pin the system prompt and config surface, so behavior-neutral refactors are provably neutral."],
+      ["Induction-proofs discipline","Every invariant ships with a deliberate-regression proof: break the property, watch the test fire, revert. Vacuous tests are treated as defects and hunted."],
+      ["Spec-first process","Multi-day changes go audit &rarr; spec &rarr; review &rarr; implementation, with every ruling, error, and correction recorded append-only in the repo's history files."],
+      ["Single config surface","Every tunable lives in one file; profiles compose deployment axes (provider, features, persona, hardware tier) without touching code."],
+      ["Reproducible dependencies","Patched upstream libraries are vendored as pinned forks; installs resolve to exact SHAs."],
+      ["Portability","Windows and Linux first-class, macOS documented honestly (CPU-only limits stated), NVIDIA Jetson as the designed production target."],
+    ]);
+
+    h+=`<h2>12 &middot; In the tree, not yet active</h2>
+      <p class="sub">Listed deliberately &mdash; an inventory that hides its dormant parts would fail this project's own honesty bar. Each item is real code or a real plan in the repo, switched off or gated pending validation.</p>`;
+    h+=F([
+      ["Local-primary default","The one-switch flip to a local-first brain is built and measured; the default flip ships after the final blind-judge pass and independent audit complete."],
+      ["Graph classifier as authority","Runs in shadow today; promotion to primary is deliberately blocked until it carries an injection defense equal to the LLM's."],
+      ["Vision-language model","Florence-2 is vendored for open-vocabulary scene understanding; not yet wired into the live loop."],
+      ["Object memory","Object-sighting and spatial-pattern agents exist behind a disabled flag, awaiting the vision-language rework."],
+      ["Barge-in","Interrupting the assistant mid-speech is designed but held for far-field microphone hardware (ReSpeaker)."],
+      ["Wake word","Planned push-to-talk / wake-word mode to cut idle compute."],
+      ["Robotics stack (P1)","Commitment store, scheduler, policy engine, verifier registry, adapter SDK, and an MCP server &mdash; the embodied-runtime layer, with a simulated TurtleBot4 as first reference."],
+      ["Jetson deployment","The production hardware path (TensorRT, GPU FAISS, systemd) is specified and pending the hardware."],
+    ]);
+
+    h+=`<p class="sub" style="margin-top:2rem">Every claim on this page maps to code, config, or a test you can open. The <em>Code</em> tab has the functions; the <em>Internals</em> tab has the invariants; the repo's <code>docs/history/</code> carries the full engineering record, including the mistakes and their corrections.</p>`;
+    d.innerHTML=h;
+  }
+
   // ---------- boot ----------
   buildFlow();renderHome();
-  renderGuide();
+  renderGuide();renderFeatures();
   renderClone();renderData();renderConfig();renderRepo();renderWhy();
   renderCode();renderInternals();enrichSections();
   setTab("guide");
