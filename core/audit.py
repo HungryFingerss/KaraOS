@@ -9,7 +9,7 @@ which is the P0.5-correct paired-write site (SQL-first transaction + FAISS rebui
 duplicate; see `audit_person.py --repair` flag for CLI usage.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

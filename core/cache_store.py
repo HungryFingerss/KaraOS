@@ -23,7 +23,7 @@ Design contract (locked by spec at P0.6.7v2):
   the # OBSERVABILITY: annotations on the increment lines below.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

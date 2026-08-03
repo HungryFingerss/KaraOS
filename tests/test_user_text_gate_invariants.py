@@ -12,7 +12,7 @@ Plus 2 behavioral detector self-tests (stub-before-import pattern):
   Self-test 2: legitimate multi-word case is accepted
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import ast

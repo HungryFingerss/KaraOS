@@ -4,7 +4,7 @@ mocked here at sys.modules (load path) or as an injected fake callable in the
 module-level singleton (runtime paths). Part of the coverage-to-100 campaign
 (see COVERAGE.md)."""
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import sys

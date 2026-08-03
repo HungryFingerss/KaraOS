@@ -16,7 +16,7 @@ is gone; `config.TTS_VOICE_ID` (attribute access) is the single source.
 A6 (docs reframe) lands with the SEPARATE docs slice per D4 — not here.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

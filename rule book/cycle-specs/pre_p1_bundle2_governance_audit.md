@@ -64,11 +64,11 @@ Reference: https://www.apache.org/licenses/LICENSE-2.0
 Standard requirements when shipping Apache 2.0:
 - **LICENSE file**: full Apache 2.0 license text (~11 KB)
 - **NOTICE file**: copyright holder line + any "required" third-party attributions
-- **Per-file header** (RECOMMENDED, not required): boilerplate Apache header OR SPDX short-form (`SPDX-License-Identifier: Apache-2.0`). Apache prefers the boilerplate; SPDX short-form is the modern compact alternative (REUSE Software spec) and is increasingly accepted.
+- **Per-file header** (RECOMMENDED, not required): boilerplate Apache header OR SPDX short-form (`SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary`). Apache prefers the boilerplate; SPDX short-form is the modern compact alternative (REUSE Software spec) and is increasingly accepted.
 
 **Architect lean**: SPDX short-form headers (more compact, machine-readable, REUSE-compliant). One-liner per file:
 ```python
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 <copyright_holder>
 ```
 
@@ -148,7 +148,7 @@ Excluded: `pytest.ini`, `requirements.txt` (config files), `docs/architecture/CH
 
 Header format (2 lines, Q5 ADJUDICATED):
 ```python
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 ```
 

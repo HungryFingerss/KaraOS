@@ -7,7 +7,7 @@ touched.  The archive database is auto-created at
 ``<db_stem>_conversation_archive.db`` next to the main DB.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import time

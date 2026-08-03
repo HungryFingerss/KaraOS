@@ -5,7 +5,7 @@ test_pipeline.py. `import pipeline` stays lazy inside each test body (stubs are
 installed by tests/conftest.py).
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import asyncio

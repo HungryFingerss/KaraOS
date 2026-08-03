@@ -35,7 +35,7 @@ Exit codes:
 Spec: rule book/cycle-specs/p0_s11_factory_reset_cli_plan_v1.md
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

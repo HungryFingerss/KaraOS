@@ -24,7 +24,7 @@ DOES NOT IMPORT pipeline. Reads pipeline.py and core/*.py as raw text and
 ast.parse()s them. Avoids all Windows torchaudio DLL side-effects.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import ast

@@ -23,7 +23,7 @@ within 1 week per Plan v2 §11.10; that's the empirical signal that closes
 the loop on the canary failure mode.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

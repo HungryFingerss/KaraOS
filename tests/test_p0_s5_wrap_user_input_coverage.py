@@ -25,7 +25,7 @@ Spec: tests/p0_s5_audit.md §2.D2 + tests/p0_s5_plan_v1.md §1.P1 +
 tests/p0_s5_plan_v2.md §1 + tests/p0_s5_plan_v3.md §4 + §5.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

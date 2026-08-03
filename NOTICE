@@ -1,10 +1,16 @@
 KaraOS
 Copyright 2025-2026 The KaraOS Authors
 
+KaraOS is proprietary, source-available software. The source is published
+for evaluation and review only -- it is NOT open source. See LICENSE
+(LicenseRef-KaraOS-Proprietary). Versions distributed before 2026-08-03
+were licensed under the Apache License 2.0 and remain so for those
+versions only.
+
 This product includes software developed at HungryFingerss/Cognitive-System
 (https://github.com/HungryFingerss/Cognitive-System).
 
 Portions of this software are derived from:
-- pyannote.audio (MIT License) — fork at HungryFingerss/pyannote-audio with KaraOS patches
-- speechbrain (Apache License 2.0) — fork at HungryFingerss/speechbrain with KaraOS patches
-- MiniFASNet (MIT License) — vendored at core/_minifasnet/ (model architecture from minivision-ai/Silent-Face-Anti-Spoofing)
+- pyannote.audio (MIT License) - fork at HungryFingerss/pyannote-audio with KaraOS patches
+- speechbrain (Apache License 2.0) - fork at HungryFingerss/speechbrain with KaraOS patches
+- MiniFASNet (MIT License) - vendored at core/_minifasnet/ (model architecture from minivision-ai/Silent-Face-Anti-Spoofing)

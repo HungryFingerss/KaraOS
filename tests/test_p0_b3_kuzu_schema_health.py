@@ -17,7 +17,7 @@ DLL-safe for D1 anchor 1 (AST scan; no pipeline import).
 D1 anchors 2+3 are slow-tier behavioral (use real BrainOrchestrator + tmp_path).
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import ast

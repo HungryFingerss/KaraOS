@@ -11,7 +11,7 @@ P3 — AST tripwire scanning core/config.py + pipeline.py for undocumented
 Spec: tests/p0_s6_intent_gates_audit.md + _plan_v1.md + _plan_v2.md.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

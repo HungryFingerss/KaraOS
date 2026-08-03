@@ -5,7 +5,7 @@ Fast tier — no I/O, no network. AST-based checks enforce architectural rules
 so that future modifications can't silently violate the SessionStore contract.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import ast

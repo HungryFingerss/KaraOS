@@ -8,7 +8,7 @@ A1 = LICENSE | A2 = NOTICE | A3 = GOVERNANCE.md | A4 = CODE_OF_CONDUCT.md
 A5 = CONTRIBUTING.md | A7 = README License & Governance section
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations
@@ -25,15 +25,19 @@ README = REPO_ROOT / "README.md"
 MINIFASNET_LICENSE = REPO_ROOT / "core" / "_minifasnet" / "LICENSE"
 
 
-# A1 — D1: LICENSE file exists at repo root + Apache 2.0 verbatim markers.
-def test_a1_license_apache_2_0_at_repo_root():
+# A1 — D1: LICENSE file exists at repo root + proprietary source-available markers.
+# Re-pinned 2026-08-03 (license change, Jagan's instruction): KaraOS moved from
+# Apache-2.0 to LicenseRef-KaraOS-Proprietary. Pre-change snapshots stay Apache
+# for their recipients (LICENSE §4); this test now pins the NEW grant's anchors.
+def test_a1_license_proprietary_at_repo_root():
     assert LICENSE.is_file(), "LICENSE file missing at repo root"
     text = LICENSE.read_text(encoding="utf-8")
-    assert "Apache License" in text
-    assert "Version 2.0, January 2004" in text
-    assert "http://www.apache.org/licenses/" in text
-    assert "TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION" in text
-    assert "END OF TERMS AND CONDITIONS" in text
+    assert "KaraOS Source-Available License" in text
+    assert "LicenseRef-KaraOS-Proprietary" in text
+    assert "All rights reserved" in text
+    assert "Reservation of rights" in text
+    assert "Third-party components" in text
+    assert "Apache License 2.0" in text  # §4 prior-versions clause must stay honest
 
 
 # A2 — D2: NOTICE file exists + all 3 vendored attributions present.
@@ -99,7 +103,8 @@ def test_a7_readme_license_governance_section():
     assert README.is_file()
     text = README.read_text(encoding="utf-8")
     assert "License & Governance" in text
-    assert "Apache License 2.0" in text
+    # Re-pinned 2026-08-03: proprietary source-available (was "Apache License 2.0")
+    assert "proprietary, source-available" in text
     # 4 doc links present (LICENSE + NOTICE + GOVERNANCE.md + CODE_OF_CONDUCT.md + CONTRIBUTING.md)
     for ref in ("[LICENSE](LICENSE)", "[NOTICE](NOTICE)", "[GOVERNANCE.md](GOVERNANCE.md)",
                 "[CONTRIBUTING.md](CONTRIBUTING.md)", "[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)"):

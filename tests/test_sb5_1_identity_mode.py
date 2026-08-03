@@ -21,7 +21,7 @@ Plan: karaos-org-discussions/solidify-base/SB5-1-plan-v2.md §5 Step-1.
 Ratified findings: SB5-1-step1-pass3-findings.md (Q1 + Q2 + Finding 3).
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

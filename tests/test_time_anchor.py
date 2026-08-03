@@ -1,6 +1,6 @@
 """Tests for _format_time_anchor() — Wave 4 follow-up F1."""
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from datetime import datetime

@@ -13,7 +13,7 @@ Idempotent: skips if filtered_samples.jsonl already exists. Delete the
 file to re-run.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

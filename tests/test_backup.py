@@ -1,6 +1,6 @@
 """Tests for core/backup.py — Wave 0 Item 1."""
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import inspect

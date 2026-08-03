@@ -13,7 +13,7 @@ tests in this file: drop fan-out loop → 6a fails; drop disputed-skip → 6e
 fails; drop counter-example from extract prompt → 6d fails (canary).
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

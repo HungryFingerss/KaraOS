@@ -13,7 +13,7 @@ Not a pytest test — makes live API calls (~$0.01 total). Keep as a
 repeatable manual tool for future prompt revisions / 3A.3 re-verification.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

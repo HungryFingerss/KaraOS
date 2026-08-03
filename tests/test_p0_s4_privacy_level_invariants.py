@@ -17,7 +17,7 @@ Spec: tests/p0_s4_plan_v1.md §1.P1 + §2 (D2 + D3); tests/p0_s4_plan_v2.md §1
 (corrected site enumeration after Plan v1 auditor review).
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

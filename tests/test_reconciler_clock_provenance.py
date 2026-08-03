@@ -32,7 +32,7 @@ The conditions route through shared AST helpers so this guard is itself non-vacu
 #128 D1 discipline). Spec: tests/presence_fabric_clock_migration_spec.md §5.2.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

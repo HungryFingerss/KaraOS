@@ -11,7 +11,7 @@ Cross-references the audit at tests/p0_10_routing_audit.md deliverable 5.
 Each test names its contract id + source branch in the legacy router.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

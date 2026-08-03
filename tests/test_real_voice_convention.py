@@ -32,7 +32,7 @@ Scoping caveats (#123 D2b in-code-documentation precedent):
 Spec: tests/followup126_real_voice_vacuity_guard_spec.md.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

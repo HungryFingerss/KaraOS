@@ -1,7 +1,7 @@
 """100% coverage for tools/factory_reset.py — standalone factory reset CLI (P0.S11).
 Part of the coverage-to-100 campaign (every line exercised or pragma'd)."""
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

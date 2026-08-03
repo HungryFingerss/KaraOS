@@ -31,7 +31,7 @@ Kuzu write crashes are injected by monkeypatching GraphDB methods on the class;
 Python method lookup is per-call so class patches propagate to existing instances.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import asyncio

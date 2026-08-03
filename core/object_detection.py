@@ -24,7 +24,7 @@ Per Plan v1 §0 the dev-box suite proves the WIRING (Florence-2 stubbed); the
 real capability is the §3.6 Jetson benchmark gate (a Jagan hardware action item).
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

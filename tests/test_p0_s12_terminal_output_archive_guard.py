@@ -23,7 +23,7 @@ a pipeline-local and leave _log_drain staring at None.
 Spec: tests/p0_s12_terminal_output_archive_guard_plan_v1.md
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

@@ -9,7 +9,7 @@ untouched — D4: don't rewrite history — and the reframe must NOT leak into
 them. Prose-only slice: no behavior surface, never bundled with steps 1-6.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

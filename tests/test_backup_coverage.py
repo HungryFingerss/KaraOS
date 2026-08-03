@@ -5,7 +5,7 @@ missing dir, non-file entries, invalid-date + iterdir failures in the prune
 loop, the config-default db_paths branch, and the two error-collection
 handlers in run_daily_backup_pass."""
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import logging

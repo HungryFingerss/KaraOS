@@ -29,7 +29,7 @@ Three regression tests:
      was the S94 design that broke on promotion. S120 replaced it with the flag.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import pathlib

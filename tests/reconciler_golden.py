@@ -32,7 +32,7 @@ the config-relative band derivation, and that the list holds exactly
 ``EXPECTED_CASE_COUNT`` cases.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

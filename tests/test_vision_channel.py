@@ -7,7 +7,7 @@ shared module-level dict. Each test reflects one boundary or behavioral
 contract from VOICE_VISION_INDEPENDENCE_PHASES_2_5_SPEC.md.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

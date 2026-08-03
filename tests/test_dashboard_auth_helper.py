@@ -24,7 +24,7 @@ gate works in the Edge/Node runtime split. `Full-suite-run-is-the-universal-
 completeness-proof` applied at the dashboard layer.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

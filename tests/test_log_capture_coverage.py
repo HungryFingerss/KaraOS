@@ -18,7 +18,7 @@ with a ``KeyboardInterrupt`` — a BaseException the loop's ``except Exception``
 deliberately does not catch — which is the clean, deterministic way out.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

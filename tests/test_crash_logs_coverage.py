@@ -8,7 +8,7 @@ filesystem via tmp_path, and _crash_log_dir / Path.unlink via monkeypatch to
 simulate unwritable-dir / unlink-denied failure modes.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

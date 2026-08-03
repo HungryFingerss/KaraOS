@@ -58,6 +58,7 @@ and configuration that produced them.
 | `COMPLETED-SESSIONS.md` | Session-by-session table, Sessions 1-122 (2026-03 → 2026-04) |
 | `BUG-AUDIT-2026-04-10.md` | The full 2026-04-10 audit (B1-B8, A1-A8, G3-G6, I2-I5) — all resolved |
 | `BOARD-BUG-TRACK.md` | Board-bug remediation track, original 10-bug scope — CLOSED 2026-05-21 |
+| `LICENSE-CHANGE-2026-08-03.md` | Apache-2.0 → proprietary source-available; snapshot rule stated; repo stays public through the YC window |
 
 New cycle → new file, named for the cycle, linked in this table. Detailed
 specs stay in `rule book/cycle-specs/`; this directory is the record of what

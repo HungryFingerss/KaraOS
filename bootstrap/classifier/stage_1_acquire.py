@@ -14,7 +14,7 @@ them as bootstrap data would be data leakage).
 Run: python -m bootstrap.classifier.stage_1_acquire
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

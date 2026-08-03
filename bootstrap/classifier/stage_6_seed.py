@@ -16,7 +16,7 @@ Corpus-derived scenarios pass through with:
   initial_confidence = 0.6 (medium -- they came from 70B classification, not human)
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

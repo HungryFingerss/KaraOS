@@ -15,7 +15,7 @@ STATE_FILE is redirected to a pytest tmp_path and _persistent is reset per
 test, mirroring tests/test_state_race.py.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

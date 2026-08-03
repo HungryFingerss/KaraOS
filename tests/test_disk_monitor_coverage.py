@@ -2,7 +2,7 @@
 threshold alerts (Wave 5 / Item 20). Part of the coverage-to-100 campaign
 (see COVERAGE.md). Global alert state, so each test resets first."""
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import logging

@@ -43,7 +43,7 @@ cell — so a gate that is PRESENT but wired to the WRONG axis (the §4.a blind 
 fails here.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

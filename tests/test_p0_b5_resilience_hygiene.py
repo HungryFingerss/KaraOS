@@ -10,7 +10,7 @@ P0.B5 — Resilience Hygiene Bundle (Bugs 7+8+9+10).
           behavioral (4 threads × 250 calls = 1000 keys, zero lost updates)
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import ast

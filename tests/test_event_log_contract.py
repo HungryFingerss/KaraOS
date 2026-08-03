@@ -13,7 +13,7 @@ tests/test_event_log_invariants.py.
 Plan: tests/p0_07_plan_v2.md.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

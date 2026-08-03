@@ -14,7 +14,7 @@ Windows torchaudio DLL crash (OSError 0xc0000139). Same pattern as
 tests/test_multispeaker_integration.py and tests/test_dispute_auto_clear.py.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import sys

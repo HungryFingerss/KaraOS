@@ -11,7 +11,7 @@ Locks the lightweight deployment-intent mechanism landed in SB.1 D4.2:
 Heavy write-path enforcement is SB.5; this is documentation-only.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from pathlib import Path

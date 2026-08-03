@@ -36,7 +36,7 @@ ast.Attribute nodes, so a docstring/comment mentioning the gate name cannot sati
 it — the repeated AST-beats-substring lesson (P0.S12 A1, P0.S11 A5, P0.R3 A2).
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

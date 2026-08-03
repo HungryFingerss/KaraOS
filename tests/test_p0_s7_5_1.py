@@ -23,7 +23,7 @@ Plan v2 §5.1 — 5 Phase 1 tests:
   5. test_regex_replacement_handles_backslash_in_new_name (unit; defense-in-depth)
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

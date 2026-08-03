@@ -8,7 +8,7 @@ Verifies:
 4. _format_datetime_line() rounds to 5-minute boundaries
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import inspect

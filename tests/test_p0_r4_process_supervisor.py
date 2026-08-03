@@ -14,7 +14,7 @@ Plan v2 absorbs Plan v1 PI #1 by:
     + HF_TOKEN; now 4: + GROQ_API_KEY + TAVILY_API_KEY)
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

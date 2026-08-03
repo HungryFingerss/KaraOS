@@ -15,7 +15,7 @@ Tests covered (per Plan v1 §2 D2):
   - D6 test 24: failure does NOT delete .dashboard_auth_url (structural ordering)
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

@@ -8,7 +8,7 @@ queue edge cases, and the lifecycle helpers. Fully headless — no GPU, camera,
 model download, or network.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

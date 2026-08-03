@@ -3,7 +3,7 @@ and the unstable-pattern return in check_deviation(). The StatisticsError
 handlers are pragma'd (defensive: guarded inputs cannot raise). Part of the
 coverage-to-100 campaign."""
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from unittest.mock import MagicMock

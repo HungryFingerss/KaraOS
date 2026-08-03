@@ -52,7 +52,7 @@ Test split per Plan v2 §7.2:
     16. update_person_name on known session returns handled_noop (no canonical ack)
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

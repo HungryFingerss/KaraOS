@@ -16,7 +16,7 @@ Allowlisted legitimate uses:
     e.g. knowledge-row status columns in core/brain_agent.py)
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import ast

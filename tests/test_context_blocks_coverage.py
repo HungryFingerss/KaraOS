@@ -24,7 +24,7 @@ GPU/camera/network/model downloads. Session state is seeded on the REAL
 SessionStore; only `core.state.write` (a filesystem/IPC boundary) is mocked.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import pytest

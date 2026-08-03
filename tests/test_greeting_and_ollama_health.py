@@ -12,7 +12,7 @@ canary (the added empty-content log surfaces it there). The tools-removal is saf
 regardless (a greeting never needs a tool), per the spec.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

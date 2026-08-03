@@ -1,7 +1,7 @@
 """100% coverage for the EmbeddingAgent cache-eviction path + TriageAgent's
 defensive non-user role branch. Part of the coverage-to-100 campaign."""
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from core.brain_agent.agents.embedding import EmbeddingAgent

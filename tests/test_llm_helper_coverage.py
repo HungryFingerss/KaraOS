@@ -4,7 +4,7 @@ the full _parse_json_array body (71-83), and the two _call_llm_chat guard
 branches (130 no-API-key, 167 5xx HTTPStatusError). The only mock is the
 httpx.AsyncClient boundary; everything else runs real and headless."""
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import httpx

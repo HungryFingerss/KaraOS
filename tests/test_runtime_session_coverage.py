@@ -11,7 +11,7 @@ Hardware-free and headless: SessionStore + PipelineStateStore + the P0.6 stores
 only, with core.voice.identify/embed injected as fakes (no CUDA, camera, or
 model download)."""
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

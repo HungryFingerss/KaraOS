@@ -12,7 +12,7 @@ Cost: stages 1-2 free (download + filter); stage 3 ~$1.05 (Together.ai
 Total wallclock: ~15-20 minutes assuming a warm cache.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

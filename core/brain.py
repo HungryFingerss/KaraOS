@@ -4,7 +4,7 @@ Chat: CHAT_MODEL (config-driven — swap provider by changing config only)
 Offline fallback: Ollama qwen2.5:7b
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import json

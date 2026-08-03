@@ -1,7 +1,7 @@
 """Covers ConversationStore's clear_all_* mutators + the timestamp-prune helper
 (P0.6.3). Part of the coverage-to-100 campaign (see COVERAGE.md)."""
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from core.conversation_store import ConversationStore, _prune_timestamp_dict

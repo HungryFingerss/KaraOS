@@ -105,16 +105,16 @@ Uniform Apache-2.0 application to MIT-licensed vendored code would either misrep
 license, assert unauthorized sublicensing, or create ambiguous declaration. Hence EXCLUDED_PATHS.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 EXCLUDED_PATHS = ("core/_minifasnet/",)  # PI #3 absorption — vendored MIT compliance via Bundle 2.X
 
-HEADER_PYTHON = '''# SPDX-License-Identifier: Apache-2.0
+HEADER_PYTHON = '''# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 '''
 
-HEADER_YAML = '''# SPDX-License-Identifier: Apache-2.0
+HEADER_YAML = '''# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 '''
 
@@ -231,7 +231,7 @@ PI #3 absorbed at Plan v3: core/_minifasnet/*.py EXCLUDED per vendored MIT compl
 A8 STRENGTHENING locks EXCLUDED count = 2 invariant.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import pathlib
@@ -262,7 +262,7 @@ WHITELIST_LINES: list[str] = [
 def test_a6_file_has_spdx_header(path: str) -> None:
     """A6 — every in-scope file has SPDX-License-Identifier + SPDX-FileCopyrightText."""
     content = pathlib.Path(path).read_text(encoding="utf-8")
-    assert "SPDX-License-Identifier: Apache-2.0" in content, f"{path} missing SPDX-License-Identifier"
+    assert "SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary" in content, f"{path} missing SPDX-License-Identifier"
     assert "SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors" in content, f"{path} missing SPDX-FileCopyrightText"
 
 
@@ -293,7 +293,7 @@ Test file: `tests/test_spdx_script_idempotency.py` (NEW)
 PI #3 absorption (Plan v3 2026-05-28): vendored MIT exclusion contract verified across runs.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import subprocess

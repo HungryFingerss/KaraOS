@@ -3,7 +3,7 @@ core/state.py — Shared state between pipeline and dashboard
 Pipeline writes → dashboard reads via /api/status
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import json

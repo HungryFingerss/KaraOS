@@ -182,7 +182,7 @@ that does NOT swallow silently. Catches the silent-death failure mode per Skepti
 Single-function scope (NOT file-wide). Distinct from Bundle 3 D2/D4 STANDARD-scope.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import ast
@@ -346,7 +346,7 @@ def write(
 File-scoped to core/state.py production. Test files unrestricted per Q3 RATIFIED.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import ast

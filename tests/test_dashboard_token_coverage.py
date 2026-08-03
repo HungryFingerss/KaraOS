@@ -6,7 +6,7 @@ partial-write cleanup races, POSIX mode self-heal drift/chmod-fail, an
 unreadable existing token, and the corrupt-token copy-then-unlink fallback.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

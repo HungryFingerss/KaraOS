@@ -2,7 +2,7 @@
 identity-disputed skip branch (P1.A1 SP-7b.2). Part of the coverage-to-100
 campaign (see COVERAGE.md)."""
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from flows.companion.turn_flows import session_end_notify

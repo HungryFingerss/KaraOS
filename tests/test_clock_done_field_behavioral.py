@@ -23,7 +23,7 @@ reads are buried in `_background_vision_loop`/`run`/`conversation_turn`/`_cloud_
 plus runtime gate-logic correctness proofs against the REAL production stores (Part B).
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

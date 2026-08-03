@@ -16,7 +16,7 @@ All agents run async and are completely decoupled from the conversation pipeline
 The conversation never waits for the brain.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

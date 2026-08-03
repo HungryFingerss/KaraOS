@@ -9,7 +9,7 @@ branches, snapshot() (default + custom dir), _prune_snapshots (old-file prune
 + unlink-OSError swallow), and the WAL-checkpoint / close() error swallows.
 All tests run headless — real temp SQLite files, no GPU / camera / network."""
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

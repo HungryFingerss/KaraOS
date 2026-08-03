@@ -122,16 +122,19 @@ mandatory for spec-track work.
 
 ## License + copyright
 
-KaraOS is licensed under the **Apache License 2.0** (see
-[`LICENSE`](LICENSE) and [`NOTICE`](NOTICE)). Contributions are accepted
-under this license; by submitting a PR you agree to license your
-contribution under Apache 2.0.
+KaraOS is **proprietary, source-available** software (see
+[`LICENSE`](LICENSE) and [`NOTICE`](NOTICE)) — the source is published for
+evaluation and review only. External contributions are accepted only by
+prior arrangement with the maintainers; by submitting a PR you agree that
+your contribution is licensed to The KaraOS Authors for use, relicensing,
+and distribution as part of KaraOS. Versions published before 2026-08-03
+were Apache-2.0 and remain so for those snapshots only.
 
 New Python and YAML files must include the standard 2-line SPDX header
 (applied uniformly via `python tools/add_spdx_headers.py`; the script is
-idempotent so re-runs are safe). Vendored MIT-licensed code lives at
-`core/_minifasnet/` and is EXCLUDED from the project-wide Apache 2.0
-header per its upstream license terms.
+idempotent so re-runs are safe). Vendored third-party code (e.g.
+`core/_minifasnet/`, `core/_florence2/`) is EXCLUDED from the project-wide
+first-party header and keeps its upstream license terms.
 
 ---
 

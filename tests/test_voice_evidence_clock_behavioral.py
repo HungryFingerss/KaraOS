@@ -23,7 +23,7 @@ Slice-B tests rely on; monotonic never approaches the wall epoch on any real upt
 Spec: tests/presence_fabric_clock_migration_spec.md §1.4 / §3.D / §3.D.2 PI-1+PI-2.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

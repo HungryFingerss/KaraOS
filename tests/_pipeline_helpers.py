@@ -5,7 +5,7 @@ inside each helper body (the stub-before-import discipline; stubs are installed
 by tests/conftest.py). Includes a few orphaned-but-preserved helpers (behavior-neutral move: relocate dead code, never delete it).
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import asyncio

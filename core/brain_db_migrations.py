@@ -13,7 +13,7 @@ legacy 'private'→personal remediation, S95 P3A.4) has a stronger
 verify_post than verify_present — see the docstrings on _m_0010_*.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

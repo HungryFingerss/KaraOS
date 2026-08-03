@@ -10,7 +10,7 @@ Verifies:
 6. Stranger turn threshold crossing invalidates the cache
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import os

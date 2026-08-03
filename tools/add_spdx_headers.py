@@ -15,9 +15,10 @@ run total (the globs grow with the tree):
 - `.github/workflows/*.yml` ............................ 4 files
 
 Per REUSE Software spec semantics, SPDX-License-Identifier declares the file's
-actual license. Uniform Apache-2.0 application to MIT-licensed vendored code
-would either misrepresent the license, assert unauthorized sublicensing, or
-create ambiguous declaration. Hence EXCLUDED_PATHS.
+actual license. Uniform first-party license application to vendored third-party
+code would either misrepresent the license, assert unauthorized sublicensing,
+or create ambiguous declaration. Hence EXCLUDED_PATHS. (2026-08-03: the
+first-party license is LicenseRef-KaraOS-Proprietary; it was Apache-2.0 before.)
 
 Also performs idempotent `.gitignore` whitelist update for the 3 new governance
 markdown files (`!/GOVERNANCE.md`, `!/CODE_OF_CONDUCT.md`, `!/CONTRIBUTING.md`).
@@ -27,7 +28,7 @@ Usage:
     python tools/add_spdx_headers.py --check # report-only; non-zero exit on missing
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations
@@ -45,7 +46,7 @@ EXCLUDED_PATHS: tuple[str, ...] = (
     "core/_florence2/",  # SB.6 Resolution C — vendored Florence-2 (MIT repo / Apache-2.0 files)
 )
 
-SPDX_LICENSE_LINE = "# SPDX-License-Identifier: Apache-2.0"
+SPDX_LICENSE_LINE = "# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary"
 SPDX_COPYRIGHT_LINE = "# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors"
 HEADER_PYTHON = f"{SPDX_LICENSE_LINE}\n{SPDX_COPYRIGHT_LINE}\n"
 HEADER_YAML = f"{SPDX_LICENSE_LINE}\n{SPDX_COPYRIGHT_LINE}\n"

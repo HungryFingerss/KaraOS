@@ -9,7 +9,7 @@ The in-scope file list is derived dynamically from the same bucket logic as
 expands (e.g. new tools/ or tests/ files land naturally).
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-SPDX_LICENSE_LINE = "# SPDX-License-Identifier: Apache-2.0"
+SPDX_LICENSE_LINE = "# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary"
 SPDX_COPYRIGHT_LINE = "# SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors"
 
 EXCLUDED_PATHS = ("core/_minifasnet/", "core/_florence2/")  # vendored third-party (PI #3 + SB.6)

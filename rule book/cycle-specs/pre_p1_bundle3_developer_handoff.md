@@ -82,7 +82,7 @@ Store getter/setter pairs migrated together (e.g., set_last_face_seen() writer A
 peek_last_face_seen() reader both monotonic).
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 EXCLUDED_PATHS = ("core/_minifasnet/",)

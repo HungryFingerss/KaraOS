@@ -13,7 +13,7 @@ Minimum reliable utterance length: ~1.5 seconds of actual speech.
 Mirrors vision.py structure: lazy singleton load, thin wrapper, numpy I/O.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import asyncio

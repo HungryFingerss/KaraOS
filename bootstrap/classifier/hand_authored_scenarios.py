@@ -28,7 +28,7 @@ Each scenario is consumed in stage_6 and written to the seed JSONL with:
 spacy NER is NOT applied to these -- they're already abstracted by hand.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

@@ -10,7 +10,7 @@ tier, the hedge. (describe_frame deletion = Step 5; the SB.5 memory extension =
 Step 6 — NOT exercised here.)
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

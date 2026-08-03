@@ -9,7 +9,7 @@ Plan v2 §10 Phase 3 = 9 tests:
 9. cleanup (close_session AND stale-prune pop from rejection store).
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

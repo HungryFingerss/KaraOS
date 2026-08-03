@@ -4,7 +4,7 @@ Called by: python enroll.py --name "Jagan"
 Also used by the dashboard /api/enroll endpoint.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import argparse

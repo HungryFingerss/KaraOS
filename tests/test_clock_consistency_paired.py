@@ -42,7 +42,7 @@ store-getter-mediated class (the #2-#6/#4 fixes + future store-mediated mismatch
 Run standalone to inspect:  python tests/test_clock_consistency_paired.py
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

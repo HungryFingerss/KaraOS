@@ -3,7 +3,7 @@
 Extracted VERBATIM from core/brain_agent.py (P1.A1 SP-2 SP-3).
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

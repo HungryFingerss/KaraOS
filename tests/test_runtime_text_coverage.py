@@ -9,7 +9,7 @@ These are pure functions — ``core.sanitize`` (re + unicodedata) and
 network / model downloads, so nothing needs mocking.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import pytest

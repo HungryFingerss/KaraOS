@@ -18,7 +18,7 @@ Phase 3 tests (3) — AST invariants (version constant + signature kwarg +
 inverse-check for every `_create_edge` caller passing `privacy_level=`).
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

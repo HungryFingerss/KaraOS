@@ -1,6 +1,6 @@
 """100% coverage for core.abstraction — production-time PII abstraction for the graph classifier (coverage-to-100 campaign)."""
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import pytest

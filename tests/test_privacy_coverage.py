@@ -2,7 +2,7 @@
 _is_safety_critical_attribute and the no-http-client fail-closed path in
 _classify_privacy_level. Part of the coverage-to-100 campaign."""
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from core.brain_agent.privacy import (

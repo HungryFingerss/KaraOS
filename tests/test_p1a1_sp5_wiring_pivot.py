@@ -20,7 +20,7 @@ SP-6.3 heartbeats are WIRE-d (internal reads rewired to _wiring._X) but NOT forw
 external pipeline._X read), so they're in the read-completeness scan but NOT the whitelist.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import ast

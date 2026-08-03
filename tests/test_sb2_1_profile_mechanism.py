@@ -11,7 +11,7 @@ Behavior-neutral profile loader + schema + apply-at-config-load wiring. Gated by
 Plan: karaos-org-discussions/solidify-base/SB2-1-plan-v1.md §6.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

@@ -17,7 +17,7 @@ Plan v2 §5 (HIGH 1) Phase 2 deliverable list = 6 tests:
    reference the same `frame` variable.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

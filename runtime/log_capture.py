@@ -5,7 +5,7 @@ _LOG_PATH carries the ONE behavior-preserving non-verbatim line: .parent -> .par
 __file__ (now runtime/log_capture.py) resolves back to the repo root, identical to the original.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

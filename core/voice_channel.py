@@ -38,7 +38,7 @@ current coupled routing. No production change. After 1-2 weeks of
 divergence-log review, graduate to Phase 2 (vision channel extraction).
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

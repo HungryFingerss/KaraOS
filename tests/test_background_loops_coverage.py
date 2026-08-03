@@ -8,7 +8,7 @@ mocked so the suite runs headless (no GPU, camera, network, or model downloads).
 is `auto`, so the `async def test_*` bodies need no marker.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import asyncio

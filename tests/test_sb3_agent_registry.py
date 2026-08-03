@@ -6,7 +6,7 @@ guards over the full invocation surface, behavior-neutral for companion.
 Plan: karaos-org-discussions/solidify-base/SB3-1-plan-v1.md §7.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

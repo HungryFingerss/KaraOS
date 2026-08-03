@@ -12,7 +12,7 @@ BEFORE fix (P0.2): setdefault("prior_person_type", ... "known") → test FAILS
 AFTER fix:  transition_to_disputed captures actual person_type → test PASSES
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import asyncio

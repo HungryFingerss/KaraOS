@@ -4,7 +4,7 @@
 File-scoped to core/state.py production. Test files unrestricted per Q3 RATIFIED.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import ast

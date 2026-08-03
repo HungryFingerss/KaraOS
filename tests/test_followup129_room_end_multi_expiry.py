@@ -23,7 +23,7 @@ These are SessionStore / pipeline-state behavioral tests (no core.voice / core.a
 they are not vacuity-prone against the conftest stub and run on any box.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

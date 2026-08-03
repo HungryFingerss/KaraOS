@@ -14,7 +14,7 @@ DLL-prone on the dev box, so the gating matrix is verified by source-inspection
 (the Session-78 ``test_voice_bootstrap_replenishment`` precedent).
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

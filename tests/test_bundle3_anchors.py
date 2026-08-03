@@ -14,7 +14,7 @@ invariants by default — they're not slow/network/models so the default-
 exclude marker filter doesn't drop them).
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

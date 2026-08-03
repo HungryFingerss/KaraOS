@@ -13,7 +13,7 @@ the Path-A `face_age = now - ev.face_last_seen_ts` read was fixed in #5 Slice D 
 VoiceEvidence.face_last_seen_ts (§1.4/§3.D, the read-half of the deferred clock-fabric fix).
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

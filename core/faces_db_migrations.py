@@ -24,7 +24,7 @@ verify_post than verify_present, per Item 1's split semantic — see the
 docstrings on _m_0008_*.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

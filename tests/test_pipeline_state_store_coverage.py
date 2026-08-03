@@ -2,7 +2,7 @@
 heavy-worker-status setter + the sync cloud-state init helper (P0.6.6). Part of
 the coverage-to-100 campaign (see COVERAGE.md)."""
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from core.pipeline_state_store import PipelineStateStore

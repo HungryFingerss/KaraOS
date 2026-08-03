@@ -12,7 +12,7 @@ STRENGTHENED A8 asserts `Excluded: 6` is reported, proving the exclusion
 machinery is wired and would catch any future EXCLUDED_PATHS removal.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

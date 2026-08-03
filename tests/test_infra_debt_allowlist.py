@@ -25,7 +25,7 @@ To delete an entry after fixing:
   4. Confirm the test is now green in the full suite (passes, not xpasses).
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 INFRA_DEBT_FAILURES = frozenset({

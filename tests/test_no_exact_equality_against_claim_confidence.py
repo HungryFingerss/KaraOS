@@ -18,7 +18,7 @@ Self-tests: forward (synthetic `== 0.0` AND synthetic `!= 0.0` both fire) +
 inverse (flag-based predicate + `< 0.0` threshold both pass).
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

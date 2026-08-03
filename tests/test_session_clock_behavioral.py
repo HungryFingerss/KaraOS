@@ -22,7 +22,7 @@ never-expires; either way the wall/mono split breaks the timeout and the migrati
 Spec: tests/presence_fabric_clock_migration_spec.md §3.B / §6 Layer 1 / §0.1.2 / §0.1.3.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

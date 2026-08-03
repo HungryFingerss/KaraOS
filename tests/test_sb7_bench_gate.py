@@ -20,7 +20,7 @@ Discipline: tests write only under ``tmp_path`` (``_RUNS_DIR`` /
 ``_BASELINE_PATH`` monkeypatched); the committed baseline is READ-only here.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

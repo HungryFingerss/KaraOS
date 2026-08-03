@@ -24,7 +24,7 @@ D5 (MEDIUM) — STRANGER_IDENTITY_BLOCK_MIN_TURNS = 0 + restructure block
     report_identity_mismatch on turn 0/1.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

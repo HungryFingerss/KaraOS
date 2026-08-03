@@ -9,7 +9,7 @@ All scenarios are abstracted (PII stripped) at write time. Hot-path
 classification (Spec 2) reads via query_nearest().
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

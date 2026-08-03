@@ -1,7 +1,7 @@
 """100% coverage for core.env_validation — boot-time env-var validation (P0.S3).
 Part of the coverage-to-100 campaign (see COVERAGE.md)."""
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import pytest

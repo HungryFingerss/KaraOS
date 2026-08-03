@@ -17,7 +17,7 @@ Behavioral anchors that require CUDA at FaceEmbedder/FaceDetector `__init__` are
 `_require_cuda_or_skip()` run-time check (same pattern as `tests/test_p0_r1_onnx_session_wrap.py`).
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

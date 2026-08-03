@@ -16,7 +16,7 @@ GT-A/GT-B target the Q2 decision helper _voice_first_should_engage_stranger (RED
 the helper doesn't exist).
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

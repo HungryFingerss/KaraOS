@@ -2,7 +2,7 @@
 Tests for BrainDB.hard_delete_old_invalidated_knowledge — Wave 6 / Item 22.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import sqlite3

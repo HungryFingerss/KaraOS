@@ -31,7 +31,7 @@ shims + migrates the 130 test sites; same trigger as P0.S7.D-C Stage 2
 the class with whatever subset of deps the test context provides.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

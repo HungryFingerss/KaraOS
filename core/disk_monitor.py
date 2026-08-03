@@ -7,7 +7,7 @@ root_path. If KaraOS ever runs with faces/ and data/ on separate volumes, only
 the root volume's usage is tracked here.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import logging

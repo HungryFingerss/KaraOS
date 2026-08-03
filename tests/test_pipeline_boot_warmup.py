@@ -8,7 +8,7 @@ four heavy-worker pools, parallelized, and AWAITS it BEFORE '[Pipeline] All syst
 Spec: tests/pipeline_latency_fix_spec.md §2 D2 + §3 Layer 1.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

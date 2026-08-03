@@ -3,7 +3,7 @@ consent-gated Qwen-VL cloud tier (lines 194-235). Real numpy frames; only the
 httpx boundary and (one branch) cv2.imencode are mocked. Headless, no network.
 Part of the coverage-to-100 campaign (see COVERAGE.md)."""
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import numpy as np

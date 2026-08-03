@@ -71,7 +71,7 @@ Contributors are expected to:
 - **Document closures.** Every spec closure appends a narrative entry to the
   `CLAUDE.md` banner with doctrine count bumps and regression confirmations.
 - **Respect SPDX headers.** All new Python and YAML files require the
-  `SPDX-License-Identifier: Apache-2.0` + `SPDX-FileCopyrightText` headers.
+  `SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary` + `SPDX-FileCopyrightText` headers.
   Use `python tools/add_spdx_headers.py` to apply uniformly; the script is
   idempotent.
 

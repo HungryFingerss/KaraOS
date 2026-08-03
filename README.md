@@ -168,6 +168,6 @@ the rules were earned from.
 
 ## License & Governance
 
-KaraOS is licensed under the **Apache License 2.0** (see [LICENSE](LICENSE) and [NOTICE](NOTICE)).
+KaraOS is **proprietary, source-available** software (see [LICENSE](LICENSE) and [NOTICE](NOTICE)). The source is published so it can be read, evaluated, and reviewed — it is **not** open source: no use, copying, modification, or redistribution without written permission. Versions published before 2026-08-03 were Apache-2.0 and remain so for those snapshots only.
 
 Governance model documented in [GOVERNANCE.md](GOVERNANCE.md). Contributor onboarding in [CONTRIBUTING.md](CONTRIBUTING.md). Community standards in [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).

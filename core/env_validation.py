@@ -36,7 +36,7 @@ message.
 Spec: ``tests/p0_s3_plan_v1.md`` §1.P1, §1.P3, §1.P4.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

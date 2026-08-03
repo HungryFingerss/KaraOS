@@ -2,7 +2,7 @@
 set_last_face_seen + record_voice_spoke (P0.7 typed session state). Uses a
 fresh standalone SessionStore instance. Part of the coverage-to-100 campaign."""
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from core.session_state import SessionStore

@@ -17,7 +17,7 @@ Hybrid Q8 (a) surface:
 - A10: behavioral mocked (worker None-return propagation; CPU-only)
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

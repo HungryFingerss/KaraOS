@@ -7,7 +7,7 @@ P1.A1 SP-4.1: _log_drain relocated pipeline.py -> runtime/log_capture.py (byte-i
 this scanner reads log_capture.py now.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import ast

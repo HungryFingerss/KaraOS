@@ -6,7 +6,7 @@ The online backup API page-iterates with low pressure on writers; never use raw 
 for a WAL-mode DB because a mid-checkpoint copy produces silent corruption.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 import re

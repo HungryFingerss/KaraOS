@@ -25,7 +25,7 @@ P0.6.7v2's inverse writer enumeration — turning a coding discipline into
 a structurally enforced invariant.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

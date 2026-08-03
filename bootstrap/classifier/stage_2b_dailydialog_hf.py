@@ -20,7 +20,7 @@ Idempotent: skips utterances whose source_ref is already in the cache.
 Run: python -m bootstrap.classifier.stage_2b_dailydialog_hf
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations

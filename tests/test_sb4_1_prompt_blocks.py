@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 """SB.4.1 — the PROMPT_BLOCKS registry test battery (T1-T11).
 
@@ -31,7 +31,7 @@ FINDING D (Plan v1 §8): the battery exercises ``system_name ∈ {None, DEFAULT
 ``system_name_prose`` block AND the ``system_identity`` ``!= DEFAULT`` gate.
 """
 
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-KaraOS-Proprietary
 # SPDX-FileCopyrightText: 2025-2026 The KaraOS Authors
 
 from __future__ import annotations
